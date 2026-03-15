@@ -1,0 +1,10 @@
+{
+    "Henry": {
+        "password": "1234",
+        "profile_picture": "henry_20260314222126.jpeg"
+    },
+    "Admin": {
+        "password": "admin123",
+        "profile_picture": ""
+    }
+}

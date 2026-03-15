@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard - Stellar Seats</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="card-wide">
+        <div class="topbar">
+            <div>
+                <h1>Admin Dashboard</h1>
+                <p class="subtitle">Shift starts at {{ shift_start }} | Manage employees and monitor attendance</p>
+            </div>
+            <a href="/logout" class="btn btn-secondary logout-link">Logout</a>
+        </div>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="flash flash-{{ category }}">{{ message }}</div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-label">Total Employees</div>
+                <div class="stat-number">{{ total_employees }}</div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-label">Timed In Today</div>
+                <div class="stat-number">{{ timed_in_count }}</div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-label">On Break</div>
+                <div class="stat-number">{{ on_break_count }}</div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-label">Timed Out</div>
+                <div class="stat-number">{{ timed_out_count }}</div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-label">Overtime In Progress</div>
+                <div class="stat-number">{{ overtime_count }}</div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-label">No Time In Yet</div>
+                <div class="stat-number">{{ no_timein_yet_count }}</div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-label">Late Today</div>
+                <div class="stat-number">{{ late_count }}</div>
+            </div>
+        </div>
+
+        <div class="grid" style="margin-top: 24px;">
+            <div class="panel">
+                <h2>Add Employee</h2>
+
+                <form method="POST" action="/admin">
+                    <div class="form-group">
+                        <label for="name">Employee Name</label>
+                        <input id="name" name="name" type="text" placeholder="Enter employee name" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="password">Password</label>
+                        <input id="password" name="password" type="text" placeholder="Create password" required>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary">Add Employee</button>
+                </form>
+            </div>
+
+            <div class="panel">
+                <h2>Employee Overview</h2>
+
+                {% if employees %}
+                    <div class="employee-cards">
+                        {% for employee in employees %}
+                            <div class="employee-card">
+                                {% if employee.profile_picture %}
+                                    <img src="{{ url_for('uploaded_file', filename=employee.profile_picture) }}" alt="Profile Picture" class="employee-avatar">
+                                {% else %}
+                                    <div class="employee-avatar-placeholder">No Photo</div>
+                                {% endif %}
+
+                                <div class="employee-info">
+                                    <h3>{{ employee.name }}</h3>
+                                    <p><strong>Status:</strong> {{ employee.status }}</p>
+                                    <p><strong>Attendance:</strong> {{ employee.attendance_remark }}</p>
+
+                                    {% if employee.today_status %}
+                                        <p><strong>Latest Today:</strong></p>
+                                        <p>{{ employee.today_status.time }} - {{ employee.today_status.action }}</p>
+                                    {% else %}
+                                        <p>No attendance today.</p>
+                                    {% endif %}
+
+                                    <div style="margin-top: 10px; display: flex; gap: 10px; flex-wrap: wrap;">
+                                        <a href="/reset_password/{{ employee.name }}">
+                                            <button type="button" class="btn btn-primary">Reset Password</button>
+                                        </a>
+
+                                        <a href="/delete_employee/{{ employee.name }}" onclick="return confirm('Delete {{ employee.name }}?')">
+                                            <button type="button" class="btn btn-red">Delete</button>
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="empty-state">No employees yet.</div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</body>
+</html>

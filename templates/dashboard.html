@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Employee Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="card-wide">
+        <div class="topbar">
+            <div>
+                <h1>Employee Dashboard</h1>
+                <p class="subtitle">Welcome, {{ username }}</p>
+            </div>
+            <a href="/logout" class="btn btn-secondary logout-link">Logout</a>
+        </div>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="flash flash-{{ category }}">{{ message }}</div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <div class="grid">
+            <div class="panel">
+                <div class="profile-card">
+                    {% if profile_picture %}
+                        <img src="{{ url_for('uploaded_file', filename=profile_picture) }}" alt="Profile Picture" class="profile-image">
+                    {% else %}
+                        <div class="profile-placeholder">No Photo</div>
+                    {% endif %}
+
+                    <form action="/upload_profile" method="POST" enctype="multipart/form-data" class="upload-form">
+                        <input type="file" name="profile_picture" accept=".png,.jpg,.jpeg,.gif" required>
+                        <button type="submit" class="btn btn-primary">Upload Photo</button>
+                    </form>
+                </div>
+
+                <div class="clock-box">
+                    <div class="clock-time" id="liveTime">--:--:--</div>
+                    <div class="clock-date" id="liveDate">Loading date...</div>
+                </div>
+
+                <h2>Attendance Actions</h2>
+                <div class="actions">
+                    <a href="/record/timein"><button type="button" class="btn btn-green">Time In</button></a>
+                    <a href="/record/timeout"><button type="button" class="btn btn-red">Time Out</button></a>
+                    <a href="/record/breakstart"><button type="button" class="btn btn-orange">Break Start</button></a>
+                    <a href="/record/breakend"><button type="button" class="btn btn-orange">Break End</button></a>
+                    <a href="/record/overtimestart"><button type="button" class="btn btn-purple">Overtime Start</button></a>
+                    <a href="/record/overtimeend"><button type="button" class="btn btn-gray">Overtime End</button></a>
+                </div>
+            </div>
+
+            <div class="panel">
+                <h2>Current Status</h2>
+
+                {% if last_action == "Time In" %}
+                    <span class="status-badge status-green">Currently Timed In</span>
+                {% elif last_action == "Break Start" %}
+                    <span class="status-badge status-orange">Currently On Break</span>
+                {% elif last_action == "Break End" %}
+                    <span class="status-badge status-green">Back From Break</span>
+                {% elif last_action == "Time Out" %}
+                    <span class="status-badge status-red">Currently Timed Out</span>
+                {% elif last_action == "Overtime Start" %}
+                    <span class="status-badge status-purple">Overtime In Progress</span>
+                {% elif last_action == "Overtime End" %}
+                    <span class="status-badge status-default">Overtime Finished</span>
+                {% else %}
+                    <span class="status-badge status-default">No activity yet</span>
+                {% endif %}
+
+                <div class="empty-state" style="margin-top: 16px;">
+                    <strong>Attendance Remark:</strong><br>
+                    {{ attendance_remark }}
+                </div>
+
+                {% if today_status %}
+                    <div class="empty-state" style="margin-top: 16px;">
+                        <strong>Latest today:</strong><br>
+                        {{ today_status.date }}<br>
+                        {{ today_status.time }} - {{ today_status.action }}
+                    </div>
+                {% else %}
+                    <div class="empty-state" style="margin-top: 16px;">
+                        No attendance recorded today.
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="panel" style="margin-top: 22px;">
+            <h2>Attendance History</h2>
+
+            {% if history %}
+                <div class="table-wrap">
+                    <table>
+                        <tr>
+                            <th>Date</th>
+                            <th>Time</th>
+                            <th>Action</th>
+                            <th>Remarks</th>
+                        </tr>
+                        {% for item in history %}
+                        <tr>
+                            <td>{{ item.date }}</td>
+                            <td>{{ item.time }}</td>
+                            <td>{{ item.action }}</td>
+                            <td>{{ item.remarks }}</td>
+                        </tr>
+                        {% endfor %}
+                    </table>
+                </div>
+            {% else %}
+                <div class="empty-state">
+                    No attendance history yet.
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <script>
+        function updateClock() {
+            const now = new Date();
+
+            const time = now.toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+
+            const date = now.toLocaleDateString([], {
+                weekday: 'long',
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+            });
+
+            document.getElementById("liveTime").textContent = time;
+            document.getElementById("liveDate").textContent = date;
+        }
+
+        updateClock();
+        setInterval(updateClock, 1000);
+    </script>
+</body>
+</html>
