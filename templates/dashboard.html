@@ -4,148 +4,335 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Employee Dashboard</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-</head>
-<body>
-    <div class="card-wide">
-        <div class="topbar">
-            <div>
-                <h1>Employee Dashboard</h1>
-                <p class="subtitle">Welcome, {{ username }}</p>
-            </div>
-            <a href="/logout" class="btn btn-secondary logout-link">Logout</a>
-        </div>
-
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                {% for category, message in messages %}
-                    <div class="flash flash-{{ category }}">{{ message }}</div>
-                {% endfor %}
-            {% endif %}
-        {% endwith %}
-
-        <div class="grid">
-            <div class="panel">
-                <div class="profile-card">
-                    {% if profile_picture %}
-                        <img src="{{ url_for('uploaded_file', filename=profile_picture) }}" alt="Profile Picture" class="profile-image">
-                    {% else %}
-                        <div class="profile-placeholder">No Photo</div>
-                    {% endif %}
-
-                    <form action="/upload_profile" method="POST" enctype="multipart/form-data" class="upload-form">
-                        <input type="file" name="profile_picture" accept=".png,.jpg,.jpeg,.gif" required>
-                        <button type="submit" class="btn btn-primary">Upload Photo</button>
-                    </form>
-                </div>
-
-                <div class="clock-box">
-                    <div class="clock-time" id="liveTime">--:--:--</div>
-                    <div class="clock-date" id="liveDate">Loading date...</div>
-                </div>
-
-                <h2>Attendance Actions</h2>
-                <div class="actions">
-                    <a href="/record/timein"><button type="button" class="btn btn-green">Time In</button></a>
-                    <a href="/record/timeout"><button type="button" class="btn btn-red">Time Out</button></a>
-                    <a href="/record/breakstart"><button type="button" class="btn btn-orange">Break Start</button></a>
-                    <a href="/record/breakend"><button type="button" class="btn btn-orange">Break End</button></a>
-                    <a href="/record/overtimestart"><button type="button" class="btn btn-purple">Overtime Start</button></a>
-                    <a href="/record/overtimeend"><button type="button" class="btn btn-gray">Overtime End</button></a>
-                </div>
-            </div>
-
-            <div class="panel">
-                <h2>Current Status</h2>
-
-                {% if last_action == "Time In" %}
-                    <span class="status-badge status-green">Currently Timed In</span>
-                {% elif last_action == "Break Start" %}
-                    <span class="status-badge status-orange">Currently On Break</span>
-                {% elif last_action == "Break End" %}
-                    <span class="status-badge status-green">Back From Break</span>
-                {% elif last_action == "Time Out" %}
-                    <span class="status-badge status-red">Currently Timed Out</span>
-                {% elif last_action == "Overtime Start" %}
-                    <span class="status-badge status-purple">Overtime In Progress</span>
-                {% elif last_action == "Overtime End" %}
-                    <span class="status-badge status-default">Overtime Finished</span>
-                {% else %}
-                    <span class="status-badge status-default">No activity yet</span>
-                {% endif %}
-
-                <div class="empty-state" style="margin-top: 16px;">
-                    <strong>Attendance Remark:</strong><br>
-                    {{ attendance_remark }}
-                </div>
-
-                {% if today_status %}
-                    <div class="empty-state" style="margin-top: 16px;">
-                        <strong>Latest today:</strong><br>
-                        {{ today_status.date }}<br>
-                        {{ today_status.time }} - {{ today_status.action }}
-                    </div>
-                {% else %}
-                    <div class="empty-state" style="margin-top: 16px;">
-                        No attendance recorded today.
-                    </div>
-                {% endif %}
-            </div>
-        </div>
-
-        <div class="panel" style="margin-top: 22px;">
-            <h2>Attendance History</h2>
-
-            {% if history %}
-                <div class="table-wrap">
-                    <table>
-                        <tr>
-                            <th>Date</th>
-                            <th>Time</th>
-                            <th>Action</th>
-                            <th>Remarks</th>
-                        </tr>
-                        {% for item in history %}
-                        <tr>
-                            <td>{{ item.date }}</td>
-                            <td>{{ item.time }}</td>
-                            <td>{{ item.action }}</td>
-                            <td>{{ item.remarks }}</td>
-                        </tr>
-                        {% endfor %}
-                    </table>
-                </div>
-            {% else %}
-                <div class="empty-state">
-                    No attendance history yet.
-                </div>
-            {% endif %}
-        </div>
-    </div>
-
-    <script>
-        function updateClock() {
-            const now = new Date();
-
-            const time = now.toLocaleTimeString([], {
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit'
-            });
-
-            const date = now.toLocaleDateString([], {
-                weekday: 'long',
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric'
-            });
-
-            document.getElementById("liveTime").textContent = time;
-            document.getElementById("liveDate").textContent = date;
+    <style>
+        * {
+            box-sizing: border-box;
         }
 
-        updateClock();
-        setInterval(updateClock, 1000);
-    </script>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #f4f7fb;
+            color: #1f2937;
+        }
+
+        .layout {
+            display: flex;
+            min-height: 100vh;
+        }
+
+        .sidebar {
+            width: 230px;
+            background: #022b57;
+            color: white;
+            padding: 24px 0;
+            position: fixed;
+            top: 0;
+            left: 0;
+            bottom: 0;
+        }
+
+        .sidebar h2 {
+            margin: 0 20px 24px;
+            font-size: 24px;
+        }
+
+        .sidebar a {
+            display: block;
+            color: white;
+            text-decoration: none;
+            padding: 14px 20px;
+            margin: 4px 10px;
+            border-radius: 10px;
+            font-size: 15px;
+        }
+
+        .sidebar a:hover,
+        .sidebar a.active {
+            background: #1f86ff;
+        }
+
+        .main {
+            margin-left: 230px;
+            width: calc(100% - 230px);
+            padding: 24px;
+        }
+
+        .topbar {
+            background: white;
+            padding: 18px 22px;
+            border-radius: 16px;
+            box-shadow: 0 4px 18px rgba(0,0,0,0.06);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+
+        .card {
+            background: white;
+            padding: 20px;
+            border-radius: 16px;
+            box-shadow: 0 4px 18px rgba(0,0,0,0.06);
+            margin-bottom: 20px;
+        }
+
+        .cards-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+            gap: 16px;
+        }
+
+        .metric-box {
+            background: linear-gradient(135deg, #eef5ff, #ffffff);
+            border-radius: 14px;
+            padding: 16px;
+            border: 1px solid #e5edf8;
+        }
+
+        .metric-box h3 {
+            margin: 6px 0 0;
+            font-size: 28px;
+        }
+
+        .profile-wrap {
+            display: flex;
+            align-items: center;
+            gap: 18px;
+            flex-wrap: wrap;
+        }
+
+        .profile-pic {
+            width: 95px;
+            height: 95px;
+            object-fit: cover;
+            border-radius: 50%;
+            border: 4px solid #dbeafe;
+            background: #f8fafc;
+        }
+
+        .actions-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px;
+        }
+
+        .actions-grid a {
+            text-decoration: none;
+            text-align: center;
+            padding: 13px;
+            border-radius: 10px;
+            background: #1f86ff;
+            color: white;
+            font-weight: bold;
+        }
+
+        .actions-grid a:hover {
+            background: #0f6fe0;
+        }
+
+        .flash {
+            margin-bottom: 10px;
+            padding: 12px;
+            border-radius: 10px;
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .table-wrap {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 700px;
+        }
+
+        th, td {
+            padding: 12px 10px;
+            border-bottom: 1px solid #e5e7eb;
+            text-align: left;
+            font-size: 14px;
+        }
+
+        th {
+            background: #f8fafc;
+        }
+
+        input[type="file"] {
+            margin: 10px 0 14px;
+        }
+
+        button {
+            padding: 11px 16px;
+            border: none;
+            border-radius: 10px;
+            background: #1f86ff;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #0f6fe0;
+        }
+
+        .small {
+            font-size: 14px;
+            color: #64748b;
+        }
+
+        @media (max-width: 900px) {
+            .sidebar {
+                position: static;
+                width: 100%;
+            }
+
+            .main {
+                margin-left: 0;
+                width: 100%;
+            }
+
+            .layout {
+                display: block;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="layout">
+        <div class="sidebar">
+            <h2>Stellar Seats</h2>
+            <a href="#overview" class="active">Overview</a>
+            <a href="#actions">Actions</a>
+            <a href="#history">History</a>
+            <a href="/logout">Logout</a>
+        </div>
+
+        <div class="main">
+            <div class="topbar">
+                <div>
+                    <h2 style="margin:0;">Employee Dashboard</h2>
+                    <div class="small">Official Timezone: {{ timezone_name }}</div>
+                    <div class="small">Current ET: {{ current_et }}</div>
+                </div>
+                <div class="small">{{ username }}</div>
+            </div>
+
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% for category, message in messages %}
+                    <div class="flash">{{ message }}</div>
+                {% endfor %}
+            {% endwith %}
+
+            <div class="card" id="overview">
+                <div class="profile-wrap">
+                    {% if profile_picture %}
+                        <img src="{{ url_for('uploaded_file', filename=profile_picture) }}" class="profile-pic" alt="Profile Picture">
+                    {% else %}
+                        <div class="profile-pic"></div>
+                    {% endif %}
+
+                    <div>
+                        <h3 style="margin:0 0 8px;">{{ username }}</h3>
+                        <div class="small">Today’s Attendance Remark: {{ attendance_remark }}</div>
+                        <div class="small">Shift: {{ schedule_display_start }} - {{ schedule_display_end }}</div>
+                        <div class="small">Grace Minutes: {{ schedule.grace_minutes }}</div>
+                        <div class="small">Allowed Break Minutes: {{ schedule.allowed_break_minutes }}</div>
+                    </div>
+                </div>
+
+                <div style="margin-top: 18px;">
+                    {% if uploads_enabled %}
+                    <form action="/upload_profile" method="POST" enctype="multipart/form-data">
+                        <label>Upload Profile Picture</label><br>
+                        <input type="file" name="profile_picture" required>
+                        <br>
+                        <button type="submit">Upload</button>
+                    </form>
+                    {% else %}
+                    <p><strong>Profile upload is disabled on the live app.</strong></p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>Your Metrics</h3>
+                <div class="cards-grid">
+                    <div class="metric-box">
+                        <div>Late Count</div>
+                        <h3>{{ metrics.late_count }}</h3>
+                    </div>
+                    <div class="metric-box">
+                        <div>Over Break Count</div>
+                        <h3>{{ metrics.over_break_count }}</h3>
+                    </div>
+                    <div class="metric-box">
+                        <div>Total Breaks</div>
+                        <h3>{{ metrics.break_count }}</h3>
+                    </div>
+                    <div class="metric-box">
+                        <div>Total Break Minutes</div>
+                        <h3>{{ metrics.total_break_minutes }}</h3>
+                    </div>
+                    <div class="metric-box">
+                        <div>Overtime Sessions</div>
+                        <h3>{{ metrics.overtime_sessions }}</h3>
+                    </div>
+                    <div class="metric-box">
+                        <div>Total Time In</div>
+                        <h3>{{ metrics.time_in_count }}</h3>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card" id="actions">
+                <h3>Attendance Actions</h3>
+                <div class="actions-grid">
+                    <a href="/record/timein">Time In</a>
+                    <a href="/record/breakstart">Break Start</a>
+                    <a href="/record/breakend">Break End</a>
+                    <a href="/record/timeout">Time Out</a>
+                    <a href="/record/overtimestart">Overtime Start</a>
+                    <a href="/record/overtimeend">Overtime End</a>
+                </div>
+            </div>
+
+            <div class="card" id="history">
+                <h3>Attendance History</h3>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Time</th>
+                                <th>Action</th>
+                                <th>Remarks</th>
+                                <th>Shift Start</th>
+                                <th>Shift End</th>
+                                <th>Timezone</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in history|reverse %}
+                            <tr>
+                                <td>{{ item.date }}</td>
+                                <td>{{ item.time }}</td>
+                                <td>{{ item.action }}</td>
+                                <td>{{ item.remarks }}</td>
+                                <td>{{ item.shift_start }}</td>
+                                <td>{{ item.shift_end }}</td>
+                                <td>{{ item.timezone }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

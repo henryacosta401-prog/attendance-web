@@ -3,126 +3,487 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin Dashboard - Stellar Seats</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <title>Admin Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #f3f6fb;
+            color: #1f2937;
+        }
+
+        .layout {
+            display: flex;
+            min-height: 100vh;
+        }
+
+        .sidebar {
+            width: 230px;
+            background: #022b57;
+            color: white;
+            padding: 20px 0;
+            position: fixed;
+            top: 0;
+            left: 0;
+            bottom: 0;
+        }
+
+        .sidebar h2 {
+            margin: 0 20px 24px;
+            font-size: 24px;
+        }
+
+        .nav-link {
+            display: block;
+            color: white;
+            text-decoration: none;
+            padding: 14px 20px;
+            margin: 4px 10px;
+            border-radius: 10px;
+            font-size: 15px;
+            cursor: pointer;
+        }
+
+        .nav-link:hover,
+        .nav-link.active {
+            background: #1f86ff;
+        }
+
+        .main {
+            margin-left: 230px;
+            width: calc(100% - 230px);
+            padding: 24px;
+        }
+
+        .topbar {
+            background: white;
+            padding: 18px 22px;
+            border-radius: 16px;
+            box-shadow: 0 4px 18px rgba(0,0,0,0.06);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 4px 18px rgba(0,0,0,0.06);
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 16px;
+        }
+
+        .metric-box {
+            background: linear-gradient(135deg, #eef5ff, #ffffff);
+            border-radius: 14px;
+            padding: 16px;
+            border: 1px solid #e5edf8;
+        }
+
+        .metric-box h3 {
+            margin: 6px 0 0;
+            font-size: 28px;
+            color: #0f172a;
+        }
+
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 20px;
+        }
+
+        .chart-box {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 4px 18px rgba(0,0,0,0.06);
+            padding: 20px;
+        }
+
+        .employee-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+            gap: 18px;
+        }
+
+        .employee-card {
+            background: white;
+            padding: 18px;
+            border-radius: 16px;
+            box-shadow: 0 4px 18px rgba(0,0,0,0.06);
+        }
+
+        .profile-pic {
+            width: 72px;
+            height: 72px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 3px solid #dbeafe;
+            margin-bottom: 10px;
+        }
+
+        input, button {
+            width: 100%;
+            padding: 10px;
+            margin-top: 6px;
+            margin-bottom: 10px;
+            border-radius: 10px;
+            border: 1px solid #d1d5db;
+            box-sizing: border-box;
+        }
+
+        button {
+            background: #1f86ff;
+            color: white;
+            border: none;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #0f6fe0;
+        }
+
+        .flash {
+            margin-bottom: 10px;
+            padding: 12px;
+            border-radius: 10px;
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .danger {
+            color: #dc2626;
+            text-decoration: none;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+
+        .normal-link {
+            color: #2563eb;
+            text-decoration: none;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+
+        .small {
+            font-size: 14px;
+            color: #64748b;
+        }
+
+        .section-title {
+            margin-top: 0;
+            margin-bottom: 16px;
+        }
+
+        hr {
+            border: none;
+            border-top: 1px solid #e5e7eb;
+            margin: 16px 0;
+        }
+
+        .page-section {
+            display: none;
+        }
+
+        .page-section.active {
+            display: block;
+        }
+
+        @media (max-width: 900px) {
+            .sidebar {
+                position: static;
+                width: 100%;
+            }
+
+            .main {
+                margin-left: 0;
+                width: 100%;
+            }
+
+            .layout {
+                display: block;
+            }
+        }
+    </style>
 </head>
 <body>
-    <div class="card-wide">
-        <div class="topbar">
-            <div>
-                <h1>Admin Dashboard</h1>
-                <p class="subtitle">Shift starts at {{ shift_start }} | Manage employees and monitor attendance</p>
-            </div>
-            <a href="/logout" class="btn btn-secondary logout-link">Logout</a>
+    <div class="layout">
+        <div class="sidebar">
+            <h2>Stellar Seats</h2>
+            <a class="nav-link active" data-section="dashboard-section">Dashboard</a>
+            <a class="nav-link" data-section="charts-section">Charts</a>
+            <a class="nav-link" data-section="add-employee-section">Add Employee</a>
+            <a class="nav-link" data-section="employees-section">Employees</a>
+            <a class="nav-link" href="/logout">Logout</a>
         </div>
 
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
+        <div class="main">
+            <div class="topbar">
+                <div>
+                    <h2 style="margin:0;">Admin Dashboard</h2>
+                    <div class="small">Official Timezone: {{ timezone_name }}</div>
+                    <div class="small">Current ET: {{ current_et }}</div>
+                </div>
+                <div class="small">Admin: {{ session["user"] }}</div>
+            </div>
+
+            {% with messages = get_flashed_messages(with_categories=true) %}
                 {% for category, message in messages %}
-                    <div class="flash flash-{{ category }}">{{ message }}</div>
+                    <div class="flash">{{ message }}</div>
                 {% endfor %}
-            {% endif %}
-        {% endwith %}
+            {% endwith %}
 
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-label">Total Employees</div>
-                <div class="stat-number">{{ total_employees }}</div>
-            </div>
+            <div id="dashboard-section" class="page-section active">
+                <div class="card">
+                    <h3 class="section-title">Overview Metrics</h3>
+                    <div class="metrics">
+                        <div class="metric-box"><div>Total Employees</div><h3>{{ total_employees }}</h3></div>
+                        <div class="metric-box"><div>Timed In</div><h3>{{ timed_in_count }}</h3></div>
+                        <div class="metric-box"><div>On Break</div><h3>{{ on_break_count }}</h3></div>
+                        <div class="metric-box"><div>Timed Out</div><h3>{{ timed_out_count }}</h3></div>
+                        <div class="metric-box"><div>In Overtime</div><h3>{{ overtime_count }}</h3></div>
+                        <div class="metric-box"><div>No Time In Yet</div><h3>{{ no_timein_yet_count }}</h3></div>
+                        <div class="metric-box"><div>Late Today</div><h3>{{ late_count }}</h3></div>
+                        <div class="metric-box"><div>Total Over Break</div><h3>{{ total_over_break }}</h3></div>
+                        <div class="metric-box"><div>Total Break Sessions</div><h3>{{ total_breaks }}</h3></div>
+                    </div>
+                </div>
 
-            <div class="stat-card">
-                <div class="stat-label">Timed In Today</div>
-                <div class="stat-number">{{ timed_in_count }}</div>
-            </div>
-
-            <div class="stat-card">
-                <div class="stat-label">On Break</div>
-                <div class="stat-number">{{ on_break_count }}</div>
-            </div>
-
-            <div class="stat-card">
-                <div class="stat-label">Timed Out</div>
-                <div class="stat-number">{{ timed_out_count }}</div>
-            </div>
-
-            <div class="stat-card">
-                <div class="stat-label">Overtime In Progress</div>
-                <div class="stat-number">{{ overtime_count }}</div>
-            </div>
-
-            <div class="stat-card">
-                <div class="stat-label">No Time In Yet</div>
-                <div class="stat-number">{{ no_timein_yet_count }}</div>
-            </div>
-
-            <div class="stat-card">
-                <div class="stat-label">Late Today</div>
-                <div class="stat-number">{{ late_count }}</div>
-            </div>
-        </div>
-
-        <div class="grid" style="margin-top: 24px;">
-            <div class="panel">
-                <h2>Add Employee</h2>
-
-                <form method="POST" action="/admin">
-                    <div class="form-group">
-                        <label for="name">Employee Name</label>
-                        <input id="name" name="name" type="text" placeholder="Enter employee name" required>
+                <div class="charts-grid">
+                    <div class="chart-box">
+                        <h3>Late Count per Employee</h3>
+                        <canvas id="lateChartDashboard"></canvas>
                     </div>
 
-                    <div class="form-group">
-                        <label for="password">Password</label>
-                        <input id="password" name="password" type="text" placeholder="Create password" required>
+                    <div class="chart-box">
+                        <h3>Over Break Count per Employee</h3>
+                        <canvas id="overBreakChartDashboard"></canvas>
                     </div>
-
-                    <button type="submit" class="btn btn-primary">Add Employee</button>
-                </form>
+                </div>
             </div>
 
-            <div class="panel">
-                <h2>Employee Overview</h2>
+            <div id="charts-section" class="page-section">
+                <div class="card">
+                    <h3 class="section-title">Charts</h3>
+                    <div class="charts-grid">
+                        <div class="chart-box">
+                            <h3>Late Count per Employee</h3>
+                            <canvas id="lateChart"></canvas>
+                        </div>
 
-                {% if employees %}
-                    <div class="employee-cards">
+                        <div class="chart-box">
+                            <h3>Over Break Count per Employee</h3>
+                            <canvas id="overBreakChart"></canvas>
+                        </div>
+
+                        <div class="chart-box">
+                            <h3>Total Break Minutes per Employee</h3>
+                            <canvas id="breakMinutesChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="add-employee-section" class="page-section">
+                <div class="card">
+                    <h3 class="section-title">Add Employee</h3>
+                    <form method="POST" action="/admin">
+                        <input type="hidden" name="form_type" value="add_employee">
+
+                        <label>Name</label>
+                        <input type="text" name="name" required>
+
+                        <label>Password</label>
+                        <input type="text" name="password" required>
+
+                        <label>Shift Start</label>
+                        <input type="time" name="shift_start" value="21:00" required>
+
+                        <label>Shift End</label>
+                        <input type="time" name="shift_end" value="06:00" required>
+
+                        <label>Grace Minutes</label>
+                        <input type="number" name="grace_minutes" value="5" required>
+
+                        <label>Allowed Break Minutes</label>
+                        <input type="number" name="allowed_break_minutes" value="60" required>
+
+                        <button type="submit">Add Employee</button>
+                    </form>
+                </div>
+            </div>
+
+            <div id="employees-section" class="page-section">
+                <div class="card">
+                    <h3 class="section-title">Employees</h3>
+                    <div class="employee-grid">
                         {% for employee in employees %}
-                            <div class="employee-card">
-                                {% if employee.profile_picture %}
-                                    <img src="{{ url_for('uploaded_file', filename=employee.profile_picture) }}" alt="Profile Picture" class="employee-avatar">
-                                {% else %}
-                                    <div class="employee-avatar-placeholder">No Photo</div>
-                                {% endif %}
+                        <div class="employee-card">
+                            {% if employee.profile_picture %}
+                                <img src="{{ url_for('uploaded_file', filename=employee.profile_picture) }}" class="profile-pic" alt="Profile Picture">
+                            {% endif %}
 
-                                <div class="employee-info">
-                                    <h3>{{ employee.name }}</h3>
-                                    <p><strong>Status:</strong> {{ employee.status }}</p>
-                                    <p><strong>Attendance:</strong> {{ employee.attendance_remark }}</p>
+                            <h3 style="margin-bottom: 5px;">{{ employee.name }}</h3>
+                            <p><strong>Status:</strong> {{ employee.status }}</p>
+                            <p><strong>Today's Attendance:</strong> {{ employee.attendance_remark }}</p>
+                            <p><strong>Shift:</strong> {{ employee.shift_start }} - {{ employee.shift_end }}</p>
+                            <p><strong>Grace Minutes:</strong> {{ employee.grace_minutes }}</p>
+                            <p><strong>Allowed Break Minutes:</strong> {{ employee.allowed_break_minutes }}</p>
 
-                                    {% if employee.today_status %}
-                                        <p><strong>Latest Today:</strong></p>
-                                        <p>{{ employee.today_status.time }} - {{ employee.today_status.action }}</p>
-                                    {% else %}
-                                        <p>No attendance today.</p>
-                                    {% endif %}
+                            <hr>
 
-                                    <div style="margin-top: 10px; display: flex; gap: 10px; flex-wrap: wrap;">
-                                        <a href="/reset_password/{{ employee.name }}">
-                                            <button type="button" class="btn btn-primary">Reset Password</button>
-                                        </a>
+                            <p><strong>Late Count:</strong> {{ employee.metrics.late_count }}</p>
+                            <p><strong>Over Break Count:</strong> {{ employee.metrics.over_break_count }}</p>
+                            <p><strong>Break Count:</strong> {{ employee.metrics.break_count }}</p>
+                            <p><strong>Total Break Minutes:</strong> {{ employee.metrics.total_break_minutes }}</p>
+                            <p><strong>Overtime Sessions:</strong> {{ employee.metrics.overtime_sessions }}</p>
+                            <p><strong>Total Time In:</strong> {{ employee.metrics.time_in_count }}</p>
+                            <p><strong>Total Time Out:</strong> {{ employee.metrics.time_out_count }}</p>
 
-                                        <a href="/delete_employee/{{ employee.name }}" onclick="return confirm('Delete {{ employee.name }}?')">
-                                            <button type="button" class="btn btn-red">Delete</button>
-                                        </a>
-                                    </div>
-                                </div>
+                            <hr>
+
+                            <h4>Update Schedule</h4>
+                            <form method="POST" action="/admin">
+                                <input type="hidden" name="form_type" value="update_schedule">
+                                <input type="hidden" name="employee_name" value="{{ employee.name }}">
+
+                                <label>Shift Start</label>
+                                <input type="time" name="shift_start" value="{{ employee.shift_start }}" required>
+
+                                <label>Shift End</label>
+                                <input type="time" name="shift_end" value="{{ employee.shift_end }}" required>
+
+                                <label>Grace Minutes</label>
+                                <input type="number" name="grace_minutes" value="{{ employee.grace_minutes }}" required>
+
+                                <label>Allowed Break Minutes</label>
+                                <input type="number" name="allowed_break_minutes" value="{{ employee.allowed_break_minutes }}" required>
+
+                                <button type="submit">Update Schedule</button>
+                            </form>
+
+                            <div style="margin-top:10px;">
+                                <a class="normal-link" href="/reset_password/{{ employee.name }}">Reset Password</a>
+                                <a class="danger" href="/delete_employee/{{ employee.name }}">Delete Employee</a>
                             </div>
+                        </div>
                         {% endfor %}
                     </div>
-                {% else %}
-                    <div class="empty-state">No employees yet.</div>
-                {% endif %}
+                </div>
             </div>
         </div>
     </div>
+
+    <script id="chart-labels-data" type="application/json">{{ chart_labels | tojson }}</script>
+    <script id="late-chart-data" type="application/json">{{ late_chart_data | tojson }}</script>
+    <script id="over-break-chart-data" type="application/json">{{ over_break_chart_data | tojson }}</script>
+    <script id="break-minutes-chart-data" type="application/json">{{ break_minutes_chart_data | tojson }}</script>
+
+    <script>
+        const chartLabels = JSON.parse(document.getElementById("chart-labels-data").textContent);
+        const lateChartData = JSON.parse(document.getElementById("late-chart-data").textContent);
+        const overBreakChartData = JSON.parse(document.getElementById("over-break-chart-data").textContent);
+        const breakMinutesChartData = JSON.parse(document.getElementById("break-minutes-chart-data").textContent);
+
+        function createCharts() {
+            new Chart(document.getElementById('lateChartDashboard'), {
+                type: 'bar',
+                data: {
+                    labels: chartLabels,
+                    datasets: [{
+                        label: 'Late Count',
+                        data: lateChartData
+                    }]
+                },
+                options: { responsive: true }
+            });
+
+            new Chart(document.getElementById('overBreakChartDashboard'), {
+                type: 'doughnut',
+                data: {
+                    labels: chartLabels,
+                    datasets: [{
+                        label: 'Over Break Count',
+                        data: overBreakChartData
+                    }]
+                },
+                options: { responsive: true }
+            });
+
+            new Chart(document.getElementById('lateChart'), {
+                type: 'bar',
+                data: {
+                    labels: chartLabels,
+                    datasets: [{
+                        label: 'Late Count',
+                        data: lateChartData
+                    }]
+                },
+                options: { responsive: true }
+            });
+
+            new Chart(document.getElementById('overBreakChart'), {
+                type: 'doughnut',
+                data: {
+                    labels: chartLabels,
+                    datasets: [{
+                        label: 'Over Break Count',
+                        data: overBreakChartData
+                    }]
+                },
+                options: { responsive: true }
+            });
+
+            new Chart(document.getElementById('breakMinutesChart'), {
+                type: 'line',
+                data: {
+                    labels: chartLabels,
+                    datasets: [{
+                        label: 'Total Break Minutes',
+                        data: breakMinutesChartData,
+                        tension: 0.3
+                    }]
+                },
+                options: { responsive: true }
+            });
+        }
+
+        function showSection(sectionId) {
+            document.querySelectorAll('.page-section').forEach(section => {
+                section.classList.remove('active');
+            });
+
+            document.getElementById(sectionId).classList.add('active');
+
+            document.querySelectorAll('.nav-link[data-section]').forEach(link => {
+                link.classList.remove('active');
+            });
+
+            document.querySelector(`.nav-link[data-section="${sectionId}"]`).classList.add('active');
+        }
+
+        document.querySelectorAll('.nav-link[data-section]').forEach(link => {
+            link.addEventListener('click', function() {
+                const sectionId = this.getAttribute('data-section');
+                showSection(sectionId);
+            });
+        });
+
+        createCharts();
+    </script>
 </body>
 </html>

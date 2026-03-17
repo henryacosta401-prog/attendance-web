@@ -3,40 +3,130 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stellar Seats - Login</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <title>{{ company_name }} Login</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #022b57, #1f86ff);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .login-box {
+            width: 100%;
+            max-width: 400px;
+            background: #ffffff;
+            border-radius: 20px;
+            padding: 32px;
+            box-shadow: 0 18px 40px rgba(0, 0, 0, 0.18);
+        }
+
+        .brand {
+            text-align: center;
+            margin-bottom: 24px;
+        }
+
+        .brand h1 {
+            margin: 0;
+            color: #022b57;
+            font-size: 32px;
+        }
+
+        .brand p {
+            margin: 8px 0 0;
+            color: #64748b;
+            font-size: 14px;
+        }
+
+        label {
+            display: block;
+            font-size: 14px;
+            font-weight: bold;
+            margin-bottom: 8px;
+            color: #0f172a;
+        }
+
+        input {
+            width: 100%;
+            padding: 13px 14px;
+            margin-bottom: 16px;
+            border-radius: 10px;
+            border: 1px solid #cbd5e1;
+            font-size: 14px;
+            outline: none;
+        }
+
+        input:focus {
+            border-color: #1f86ff;
+            box-shadow: 0 0 0 3px rgba(31, 134, 255, 0.12);
+        }
+
+        button {
+            width: 100%;
+            padding: 13px;
+            border: none;
+            border-radius: 10px;
+            background: #1f86ff;
+            color: white;
+            font-weight: bold;
+            font-size: 15px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #0f6fe0;
+        }
+
+        .flash {
+            margin-bottom: 14px;
+            padding: 12px;
+            border-radius: 10px;
+            background: #fee2e2;
+            color: #991b1b;
+            font-size: 14px;
+        }
+
+        .footer-note {
+            text-align: center;
+            margin-top: 18px;
+            font-size: 12px;
+            color: #94a3b8;
+        }
+    </style>
 </head>
-<body class="login-page">
-    <div class="login-wrapper">
-        <div class="login-brand">
-            <h1>Stellar Seats</h1>
-            <p>Attendance and employee access portal</p>
+<body>
+    <div class="login-box">
+        <div class="brand">
+            <h1>{{ company_name }}</h1>
+            <p>Attendance System Login</p>
         </div>
 
-        <div class="login-card">
-            <h2>Login</h2>
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% for category, message in messages %}
+                <div class="flash">{{ message }}</div>
+            {% endfor %}
+        {% endwith %}
 
-            {% with messages = get_flashed_messages(with_categories=true) %}
-                {% if messages %}
-                    {% for category, message in messages %}
-                        <div class="flash flash-{{ category }}">{{ message }}</div>
-                    {% endfor %}
-                {% endif %}
-            {% endwith %}
+        <form method="POST">
+            <label>Name</label>
+            <input type="text" name="name" required>
 
-            <form method="POST" action="/">
-                <div class="form-group">
-                    <label for="name">Employee Name</label>
-                    <input id="name" name="name" type="text" placeholder="Enter your name" required>
-                </div>
+            <label>Password</label>
+            <input type="password" name="password" required>
 
-                <div class="form-group">
-                    <label for="password">Password</label>
-                    <input id="password" name="password" type="password" placeholder="Enter your password" required>
-                </div>
+            <button type="submit">Login</button>
+        </form>
 
-                <button type="submit" class="btn btn-primary">Login</button>
-            </form>
+        <div class="footer-note">
+            {{ company_name }} • Secure Access
         </div>
     </div>
 </body>

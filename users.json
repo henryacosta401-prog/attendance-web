@@ -1,10 +1,90 @@
 {
     "Henry": {
         "password": "1234",
-        "profile_picture": "henry_20260314222126.jpeg"
+        "profile_picture": "",
+        "shift_start": "16:00",
+        "shift_end": "00:00",
+        "grace_minutes": 5,
+        "allowed_break_minutes": 20
     },
     "Admin": {
         "password": "admin123",
-        "profile_picture": ""
+        "profile_picture": "",
+        "shift_start": "21:00",
+        "shift_end": "06:00",
+        "grace_minutes": 5,
+        "allowed_break_minutes": 60
+    },
+    "Eric": {
+        "password": "Eric123",
+        "profile_picture": "",
+        "shift_start": "16:00",
+        "shift_end": "00:00",
+        "grace_minutes": 5,
+        "allowed_break_minutes": 20
+    },
+    "Amy": {
+        "password": "Amy123",
+        "profile_picture": "",
+        "shift_start": "16:00",
+        "shift_end": "00:00",
+        "grace_minutes": 5,
+        "allowed_break_minutes": 20
+    },
+    "Ehman": {
+        "password": "ehman123",
+        "profile_picture": "",
+        "shift_start": "16:00",
+        "shift_end": "00:00",
+        "grace_minutes": 5,
+        "allowed_break_minutes": 20
+    },
+    "Nicole": {
+        "password": "nicole123",
+        "profile_picture": "",
+        "shift_start": "16:00",
+        "shift_end": "00:00",
+        "grace_minutes": 5,
+        "allowed_break_minutes": 20
+    },
+    "Janela": {
+        "password": "janela123",
+        "profile_picture": "",
+        "shift_start": "16:00",
+        "shift_end": "00:00",
+        "grace_minutes": 5,
+        "allowed_break_minutes": 20
+    },
+    "Michel": {
+        "password": "michel123",
+        "profile_picture": "",
+        "shift_start": "16:00",
+        "shift_end": "00:00",
+        "grace_minutes": 5,
+        "allowed_break_minutes": 20
+    },
+    "Lito": {
+        "password": "lito123",
+        "profile_picture": "",
+        "shift_start": "16:00",
+        "shift_end": "00:00",
+        "grace_minutes": 5,
+        "allowed_break_minutes": 20
+    },
+    "Bern": {
+        "password": "bern123",
+        "profile_picture": "",
+        "shift_start": "16:00",
+        "shift_end": "00:00",
+        "grace_minutes": 5,
+        "allowed_break_minutes": 20
+    },
+    "Gedion": {
+        "password": "gedion123",
+        "profile_picture": "",
+        "shift_start": "16:00",
+        "shift_end": "00:00",
+        "grace_minutes": 5,
+        "allowed_break_minutes": 20
     }
 }
