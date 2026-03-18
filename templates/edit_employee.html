@@ -23,16 +23,22 @@
         </div>
 
         <div class="grid grid-2" style="margin-top:12px;">
-            <div>
-                <label>Department</label>
-                <input class="input" type="text" name="department" value="{{ employee.department }}">
-            </div>
-            <div>
-                <label>Position</label>
-                <input class="input" type="text" name="position" value="{{ employee.position }}">
-            </div>
-        </div>
+    <div>
+        <label>Department</label>
+        <input class="input" type="text" name="department" value="{{ employee.department }}">
+    </div>
+    <div>
+        <label>Position</label>
+        <input class="input" type="text" name="position" value="{{ employee.position }}">
+    </div>
+</div>
 
+<div class="grid grid-2" style="margin-top:12px;">
+    <div>
+        <label>Shift Start</label>
+        <input class="input" type="time" name="shift_start" value="{{ employee.shift_start if employee else '09:00' }}">
+    </div>
+</div>
         <label style="display:block; margin-top:12px;">New Password</label>
         <input class="input" type="password" name="password" placeholder="Leave blank to keep current password">
 

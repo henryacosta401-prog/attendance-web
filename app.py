@@ -1,6 +1,7 @@
 import os
 import sqlite3
-from datetime import datetime, date
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from functools import wraps
 
 from flask import (
@@ -32,13 +33,34 @@ GOOGLE_CREDENTIALS_FILE = os.path.join(BASE_DIR, "attendance-credentials.json")
 GOOGLE_SHEET_NAME = "Attendance Tracker"
 GOOGLE_SHEET_TAB = "Attendance Logs"
 
-# Late config
-LATE_TIME = "09:05"  # change if needed. Example: 09:05 means late after 9:05 AM
+# Timezone + late config
+APP_TIMEZONE = ZoneInfo("America/New_York")
+DEFAULT_SHIFT_START = "09:00"   # fallback shift
+LATE_GRACE_MINUTES = 1          # 1 minute late rule
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "stellar-seats-2026-attendance-super-secure-key-938472")
+app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key")
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10MB
+
+
+# =========================
+# TIME HELPERS
+# =========================
+def now_dt():
+    return datetime.now(APP_TIMEZONE)
+
+
+def now_str():
+    return now_dt().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def today_str():
+    return now_dt().strftime("%Y-%m-%d")
+
+
+def now_timestamp():
+    return int(now_dt().timestamp())
 
 
 # =========================
@@ -56,22 +78,6 @@ def close_db(error=None):
     db = g.pop("db", None)
     if db is not None:
         db.close()
-
-
-def now_dt():
-    return datetime.now()
-
-
-def now_str():
-    return now_dt().strftime("%Y-%m-%d %H:%M:%S")
-
-
-def today_str():
-    return date.today().strftime("%Y-%m-%d")
-
-
-def format_dt(dt_obj):
-    return dt_obj.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def allowed_file(filename):
@@ -120,6 +126,7 @@ def init_db():
             profile_image TEXT,
             department TEXT DEFAULT 'Stellar Seats',
             position TEXT DEFAULT 'Employee',
+            shift_start TEXT DEFAULT '09:00',
             is_active INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL
         )
@@ -186,6 +193,8 @@ def init_db():
         cursor.execute("ALTER TABLE users ADD COLUMN department TEXT DEFAULT 'Stellar Seats'")
     if "position" not in existing_cols_users:
         cursor.execute("ALTER TABLE users ADD COLUMN position TEXT DEFAULT 'Employee'")
+    if "shift_start" not in existing_cols_users:
+        cursor.execute("ALTER TABLE users ADD COLUMN shift_start TEXT DEFAULT '09:00'")
     if "is_active" not in existing_cols_users:
         cursor.execute("ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
 
@@ -203,9 +212,9 @@ def init_db():
         cursor.execute("""
             INSERT INTO users (
                 full_name, username, password_hash, role,
-                profile_image, department, position, is_active, created_at
+                profile_image, department, position, shift_start, is_active, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             "Administrator",
             "admin",
@@ -214,6 +223,7 @@ def init_db():
             None,
             "Stellar Seats",
             "Administrator",
+            DEFAULT_SHIFT_START,
             1,
             now_str()
         ))
@@ -288,19 +298,46 @@ def get_user_live_status(user_id):
     return "Offline"
 
 
-def calculate_late_info(time_in_str):
+def parse_shift_start(shift_start):
     """
-    Returns (late_flag, late_minutes)
+    Accepts HH:MM only.
+    Falls back to DEFAULT_SHIFT_START.
+    """
+    shift_value = (shift_start or DEFAULT_SHIFT_START).strip()
+    try:
+        datetime.strptime(shift_value, "%H:%M")
+        return shift_value
+    except ValueError:
+        return DEFAULT_SHIFT_START
+
+
+def calculate_late_info(time_in_str, shift_start):
+    """
+    Flexible late checker per employee.
+
+    Example:
+    shift_start = 09:00
+    grace = 1 minute
+    09:00 = on time
+    09:01 = late by 1 minute
     """
     if not time_in_str:
         return 0, 0
 
-    time_in_dt = datetime.strptime(time_in_str, "%Y-%m-%d %H:%M:%S")
-    late_limit = datetime.strptime(f"{time_in_dt.strftime('%Y-%m-%d')} {LATE_TIME}:00", "%Y-%m-%d %H:%M:%S")
+    shift_start = parse_shift_start(shift_start)
 
-    if time_in_dt > late_limit:
-        late_minutes = int((time_in_dt - late_limit).total_seconds() // 60)
+    time_in_dt = datetime.strptime(time_in_str, "%Y-%m-%d %H:%M:%S")
+    shift_dt = datetime.strptime(
+        f"{time_in_dt.strftime('%Y-%m-%d')} {shift_start}:00",
+        "%Y-%m-%d %H:%M:%S"
+    )
+
+    late_threshold = shift_dt + timedelta(minutes=LATE_GRACE_MINUTES)
+
+    if time_in_dt >= late_threshold:
+        late_minutes = int((time_in_dt - shift_dt).total_seconds() // 60)
         return 1, late_minutes
+
     return 0, 0
 
 
@@ -347,7 +384,7 @@ def save_uploaded_file(file_obj, prefix="file"):
         return None
 
     safe_name = secure_filename(file_obj.filename)
-    filename = f"{prefix}_{int(datetime.now().timestamp())}_{safe_name}"
+    filename = f"{prefix}_{now_timestamp()}_{safe_name}"
     filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
     file_obj.save(filepath)
     return filename
@@ -357,12 +394,6 @@ def save_uploaded_file(file_obj, prefix="file"):
 # GOOGLE SHEETS SYNC (OPTIONAL)
 # =========================
 def append_attendance_to_google_sheet(user_row, attendance_row):
-    """
-    Optional. Only works if:
-    - gspread + google-auth installed
-    - attendance-credentials.json exists
-    - target Google Sheet exists and is shared with service account
-    """
     if not GOOGLE_SHEETS_ENABLED:
         return False, "Google Sheets libraries not installed."
 
@@ -386,7 +417,7 @@ def append_attendance_to_google_sheet(user_row, attendance_row):
         values = ws.get_all_values()
         if not values:
             ws.append_row([
-                "Employee ID", "Full Name", "Username", "Department", "Position",
+                "Employee ID", "Full Name", "Username", "Department", "Position", "Shift Start",
                 "Work Date", "Time In", "Time Out", "Status",
                 "Late", "Late Minutes", "Break Minutes", "Work Minutes",
                 "Notes", "Proof File"
@@ -401,6 +432,7 @@ def append_attendance_to_google_sheet(user_row, attendance_row):
             user_row["username"],
             user_row["department"] or "",
             user_row["position"] or "",
+            user_row["shift_start"] or DEFAULT_SHIFT_START,
             attendance_row["work_date"] or "",
             attendance_row["time_in"] or "",
             attendance_row["time_out"] or "",
@@ -612,6 +644,7 @@ def employee_profile():
 def time_in():
     user_id = session["user_id"]
     db = get_db()
+    user = get_user_by_id(user_id)
 
     existing = get_today_attendance(user_id)
     if existing and existing["time_in"] and not existing["time_out"]:
@@ -628,7 +661,8 @@ def time_in():
             return redirect(url_for("dashboard"))
 
     current_time = now_str()
-    late_flag, late_minutes = calculate_late_info(current_time)
+    shift_start = parse_shift_start(user["shift_start"] if user else DEFAULT_SHIFT_START)
+    late_flag, late_minutes = calculate_late_info(current_time, shift_start)
 
     if existing and existing["time_out"]:
         db.execute("""
@@ -690,11 +724,15 @@ def time_in():
     db.commit()
 
     if late_flag:
-        create_notification(user_id, "Late Time-In", f"You timed in late by {late_minutes} minutes.")
+        create_notification(
+            user_id,
+            "Late Time-In",
+            f"You timed in late by {late_minutes} minute(s). Shift start: {shift_start} ET."
+        )
     else:
-        create_notification(user_id, "Timed In", f"You timed in at {current_time}")
+        create_notification(user_id, "Timed In", f"You timed in at {current_time} ET.")
 
-    log_activity(user_id, "TIME IN", "Employee timed in")
+    log_activity(user_id, "TIME IN", f"Employee timed in. Shift: {shift_start}. Late: {late_flag}")
     flash("Time in successful.", "success")
     return redirect(url_for("dashboard"))
 
@@ -727,7 +765,7 @@ def start_break():
     """, ("On Break", now_str(), attendance["id"]))
 
     db.commit()
-    create_notification(user_id, "Break Started", f"You started break at {now_str()}")
+    create_notification(user_id, "Break Started", f"You started break at {now_str()} ET.")
     log_activity(user_id, "BREAK START", "Employee started break")
     flash("Break started.", "info")
     return redirect(url_for("dashboard"))
@@ -760,7 +798,7 @@ def end_break():
         """, ("Timed In", now_str(), attendance["id"]))
 
     db.commit()
-    create_notification(user_id, "Break Ended", f"You ended break at {now_str()}")
+    create_notification(user_id, "Break Ended", f"You ended break at {now_str()} ET.")
     log_activity(user_id, "BREAK END", "Employee ended break")
     flash("Break ended.", "success")
     return redirect(url_for("dashboard"))
@@ -797,12 +835,11 @@ def time_out():
 
     db.commit()
 
-    # Optional sheet sync on timeout
     user_row = get_user_by_id(user_id)
     updated_attendance = get_today_attendance(user_id)
     ok, msg = append_attendance_to_google_sheet(user_row, updated_attendance)
 
-    create_notification(user_id, "Timed Out", f"You timed out at {now_str()}")
+    create_notification(user_id, "Timed Out", f"You timed out at {now_str()} ET.")
     log_activity(user_id, "TIME OUT", f"Employee timed out. Sheets sync: {msg if ok else 'Skipped/Failed'}")
     flash("Time out successful.", "success")
     return redirect(url_for("dashboard"))
@@ -853,6 +890,7 @@ def get_admin_employee_rows(status_filter="", search=""):
             "username": user["username"],
             "department": user["department"],
             "position": user["position"],
+            "shift_start": user["shift_start"] or DEFAULT_SHIFT_START,
             "profile_image": user["profile_image"],
             "is_active": user["is_active"],
             "status": live_status,
@@ -868,7 +906,7 @@ def get_admin_employee_rows(status_filter="", search=""):
 
         if search:
             s = search.lower()
-            hay = f"{row['full_name']} {row['username']} {row['department']} {row['position']}".lower()
+            hay = f"{row['full_name']} {row['username']} {row['department']} {row['position']} {row['shift_start']}".lower()
             if s not in hay:
                 continue
 
@@ -1006,6 +1044,7 @@ def manage_employees():
         password = request.form.get("password", "").strip()
         department = request.form.get("department", "").strip() or "Stellar Seats"
         position = request.form.get("position", "").strip() or "Employee"
+        shift_start = parse_shift_start(request.form.get("shift_start", DEFAULT_SHIFT_START))
 
         if not full_name or not username or not password:
             flash("Full name, username, and password are required.", "danger")
@@ -1027,9 +1066,9 @@ def manage_employees():
         db.execute("""
             INSERT INTO users (
                 full_name, username, password_hash, role, profile_image,
-                department, position, is_active, created_at
+                department, position, shift_start, is_active, created_at
             )
-            VALUES (?, ?, ?, 'employee', ?, ?, ?, 1, ?)
+            VALUES (?, ?, ?, 'employee', ?, ?, ?, ?, 1, ?)
         """, (
             full_name,
             username,
@@ -1037,6 +1076,7 @@ def manage_employees():
             profile_image,
             department,
             position,
+            shift_start,
             now_str()
         ))
         db.commit()
@@ -1044,7 +1084,7 @@ def manage_employees():
         new_user = db.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
         if new_user:
             create_notification(new_user["id"], "Account Created", "Your account has been created by admin.")
-            log_activity(session["user_id"], "ADD EMPLOYEE", f"Added employee: {full_name}")
+            log_activity(session["user_id"], "ADD EMPLOYEE", f"Added employee: {full_name} | Shift: {shift_start}")
 
         flash("Employee added successfully.", "success")
         return redirect(url_for("manage_employees"))
@@ -1076,6 +1116,7 @@ def edit_employee(user_id):
         username = request.form.get("username", "").strip()
         department = request.form.get("department", "").strip() or "Stellar Seats"
         position = request.form.get("position", "").strip() or "Employee"
+        shift_start = parse_shift_start(request.form.get("shift_start", user["shift_start"] or DEFAULT_SHIFT_START))
         is_active = 1 if request.form.get("is_active") == "1" else 0
         password = request.form.get("password", "").strip()
 
@@ -1105,7 +1146,7 @@ def edit_employee(user_id):
             db.execute("""
                 UPDATE users
                 SET full_name = ?, username = ?, password_hash = ?, profile_image = ?,
-                    department = ?, position = ?, is_active = ?
+                    department = ?, position = ?, shift_start = ?, is_active = ?
                 WHERE id = ?
             """, (
                 full_name,
@@ -1114,6 +1155,7 @@ def edit_employee(user_id):
                 profile_image,
                 department,
                 position,
+                shift_start,
                 is_active,
                 user_id
             ))
@@ -1121,7 +1163,7 @@ def edit_employee(user_id):
             db.execute("""
                 UPDATE users
                 SET full_name = ?, username = ?, profile_image = ?,
-                    department = ?, position = ?, is_active = ?
+                    department = ?, position = ?, shift_start = ?, is_active = ?
                 WHERE id = ?
             """, (
                 full_name,
@@ -1129,12 +1171,13 @@ def edit_employee(user_id):
                 profile_image,
                 department,
                 position,
+                shift_start,
                 is_active,
                 user_id
             ))
 
         db.commit()
-        log_activity(session["user_id"], "EDIT EMPLOYEE", f"Edited employee: {full_name}")
+        log_activity(session["user_id"], "EDIT EMPLOYEE", f"Edited employee: {full_name} | Shift: {shift_start}")
         flash("Employee updated successfully.", "success")
         return redirect(url_for("manage_employees"))
 
