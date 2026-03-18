@@ -1,133 +1,32 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ company_name }} Login</title>
-    <style>
-        * {
-            box-sizing: border-box;
-        }
+{% extends "base.html" %}
+{% block title %}Login | Stellar Seats Attendance{% endblock %}
 
-        body {
-            margin: 0;
-            font-family: Arial, sans-serif;
-            min-height: 100vh;
-            background: linear-gradient(135deg, #022b57, #1f86ff);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-        }
-
-        .login-box {
-            width: 100%;
-            max-width: 400px;
-            background: #ffffff;
-            border-radius: 20px;
-            padding: 32px;
-            box-shadow: 0 18px 40px rgba(0, 0, 0, 0.18);
-        }
-
-        .brand {
-            text-align: center;
-            margin-bottom: 24px;
-        }
-
-        .brand h1 {
-            margin: 0;
-            color: #022b57;
-            font-size: 32px;
-        }
-
-        .brand p {
-            margin: 8px 0 0;
-            color: #64748b;
-            font-size: 14px;
-        }
-
-        label {
-            display: block;
-            font-size: 14px;
-            font-weight: bold;
-            margin-bottom: 8px;
-            color: #0f172a;
-        }
-
-        input {
-            width: 100%;
-            padding: 13px 14px;
-            margin-bottom: 16px;
-            border-radius: 10px;
-            border: 1px solid #cbd5e1;
-            font-size: 14px;
-            outline: none;
-        }
-
-        input:focus {
-            border-color: #1f86ff;
-            box-shadow: 0 0 0 3px rgba(31, 134, 255, 0.12);
-        }
-
-        button {
-            width: 100%;
-            padding: 13px;
-            border: none;
-            border-radius: 10px;
-            background: #1f86ff;
-            color: white;
-            font-weight: bold;
-            font-size: 15px;
-            cursor: pointer;
-        }
-
-        button:hover {
-            background: #0f6fe0;
-        }
-
-        .flash {
-            margin-bottom: 14px;
-            padding: 12px;
-            border-radius: 10px;
-            background: #fee2e2;
-            color: #991b1b;
-            font-size: 14px;
-        }
-
-        .footer-note {
-            text-align: center;
-            margin-top: 18px;
-            font-size: 12px;
-            color: #94a3b8;
-        }
-    </style>
-</head>
-<body>
-    <div class="login-box">
-        <div class="brand">
-            <h1>{{ company_name }}</h1>
-            <p>Attendance System Login</p>
+{% block content %}
+<div class="login-wrap">
+    <div class="login-card">
+        <div style="text-align:center; margin-bottom: 24px;">
+            <div class="brand-logo" style="margin:0 auto 14px;">S</div>
+            <h1 class="login-title">Welcome Back</h1>
+            <p class="muted" style="margin-top: 8px;">Sign in to Stellar Seats Attendance Tracker</p>
         </div>
-
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% for category, message in messages %}
-                <div class="flash">{{ message }}</div>
-            {% endfor %}
-        {% endwith %}
 
         <form method="POST">
-            <label>Name</label>
-            <input type="text" name="name" required>
+            <label>Username</label>
+            <input class="input" type="text" name="username" placeholder="Enter username" required>
 
-            <label>Password</label>
-            <input type="password" name="password" required>
+            <label style="display:block; margin-top: 14px;">Password</label>
+            <input class="input" type="password" name="password" placeholder="Enter password" required>
 
-            <button type="submit">Login</button>
+            <button class="btn btn-primary" type="submit" style="width:100%; margin-top: 18px;">
+                Login
+            </button>
         </form>
 
-        <div class="footer-note">
-            {{ company_name }} • Secure Access
+        <div class="divider"></div>
+
+        <div style="text-align:center;" class="small muted">
+            Default admin login: <strong>admin / admin123</strong>
         </div>
     </div>
-</body>
-</html>
+</div>
+{% endblock %}

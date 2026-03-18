@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% block title %}Employee Dashboard{% endblock %}
+
+{% block content %}
+<div class="hero-card" style="margin-bottom:20px;">
+    <div class="hero">
+        <div>
+            <h1>Welcome, {{ user.full_name }}</h1>
+            <p class="section-subtitle">Track attendance, break time, proof uploads, and notifications in one place.</p>
+        </div>
+        <div>
+            {% if current_status == "Timed In" %}
+                <span class="status status-green">● Timed In</span>
+            {% elif current_status == "On Break" %}
+                <span class="status status-yellow">● On Break</span>
+            {% elif current_status == "Timed Out" %}
+                <span class="status status-red">● Timed Out</span>
+            {% else %}
+                <span class="status status-gray">● Offline</span>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<div class="grid grid-3">
+    <div class="card">
+        <div class="section-title">My Profile</div>
+        <div class="row-user" style="align-items:flex-start;">
+            {% if user.profile_image %}
+                <img class="avatar-lg" src="{{ url_for('uploaded_file', filename=user.profile_image) }}" alt="profile">
+            {% else %}
+                <img class="avatar-lg" src="https://via.placeholder.com/88x88.png?text=U" alt="profile">
+            {% endif %}
+            <div>
+                <div style="font-size:22px; font-weight:900; color:white;">{{ user.full_name }}</div>
+                <div class="muted" style="margin-top:6px;">@{{ user.username }}</div>
+                <div class="small muted" style="margin-top:10px;">{{ user.department }} • {{ user.position }}</div>
+                <a href="{{ url_for('employee_profile') }}" class="btn btn-gray" style="display:inline-flex; margin-top:16px;">Edit Profile</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="section-title">Today's Overview</div>
+
+        <div class="metric-row">
+            <div class="metric-label">Time In</div>
+            <div class="metric-value">{{ today_attendance.time_in if today_attendance else '—' }}</div>
+        </div>
+
+        <div class="metric-row">
+            <div class="metric-label">Time Out</div>
+            <div class="metric-value">{{ today_attendance.time_out if today_attendance else '—' }}</div>
+        </div>
+
+        <div class="metric-row">
+            <div class="metric-label">Break Total</div>
+            <div class="metric-value">{{ minutes_to_hm(todays_break_minutes) }}</div>
+        </div>
+
+        <div class="metric-row">
+            <div class="metric-label">Work Total</div>
+            <div class="metric-value">{{ minutes_to_hm(todays_work_minutes) }}</div>
+        </div>
+
+        {% if today_attendance and today_attendance.late_flag == 1 %}
+            <div style="margin-top:14px;">
+                <span class="status status-red">Late by {{ today_attendance.late_minutes }} min</span>
+            </div>
+        {% endif %}
+
+        {% if today_attendance and today_attendance.proof_file %}
+            <div style="margin-top:18px;">
+                <div class="metric-label" style="margin-bottom:10px;">Proof File</div>
+                {% if is_image(today_attendance.proof_file) %}
+                    <a href="{{ url_for('uploaded_file', filename=today_attendance.proof_file) }}" target="_blank">
+                        <img src="{{ url_for('uploaded_file', filename=today_attendance.proof_file) }}" class="proof-preview" alt="proof">
+                    </a>
+                {% else %}
+                    <a href="{{ url_for('uploaded_file', filename=today_attendance.proof_file) }}" target="_blank" style="color:#93c5fd;">
+                        View Upload
+                    </a>
+                {% endif %}
+            </div>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <div class="section-title">Quick Actions</div>
+
+        <form method="POST" action="{{ url_for('time_in') }}" enctype="multipart/form-data">
+            <label>Notes</label>
+            <textarea class="textarea" name="notes" placeholder="Optional notes..."></textarea>
+
+            <label style="display:block; margin-top: 12px;">Upload Proof</label>
+            <input class="file-input" type="file" name="proof_file">
+
+            <button class="btn btn-success" type="submit" style="width:100%; margin-top:14px;">Time In</button>
+        </form>
+
+        <form method="POST" action="{{ url_for('start_break') }}" style="margin-top:12px;">
+            <button class="btn btn-warning" type="submit" style="width:100%;">Start Break</button>
+        </form>
+
+        <form method="POST" action="{{ url_for('end_break') }}" style="margin-top:12px;">
+            <button class="btn btn-primary" type="submit" style="width:100%;">End Break</button>
+        </form>
+
+        <form method="POST" action="{{ url_for('time_out') }}" style="margin-top:12px;">
+            <button class="btn btn-danger" type="submit" style="width:100%;">Time Out</button>
+        </form>
+    </div>
+</div>
+
+<div class="grid grid-2" style="margin-top:18px;">
+    <div class="card soft">
+        <div class="section-title">Latest Notifications</div>
+        {% if notifications %}
+            {% for notif in notifications %}
+                <div class="notif-item">
+                    <div style="display:flex; justify-content:space-between; gap:12px;">
+                        <div>
+                            <div style="font-weight:900; color:white;">{{ notif.title }}</div>
+                            <div class="muted small" style="margin-top:5px;">{{ notif.message }}</div>
+                            <div class="small muted" style="margin-top:8px;">{{ notif.created_at }}</div>
+                        </div>
+                        <div>
+                            {% if notif.is_read == 0 %}
+                            <form method="POST" action="{{ url_for('read_notification', notif_id=notif.id) }}">
+                                <button class="btn btn-dark" type="submit">Mark Read</button>
+                            </form>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            {% endfor %}
+        {% else %}
+            <p class="muted">No notifications yet.</p>
+        {% endif %}
+    </div>
+
+    <div class="card soft">
+        <div class="section-title">Recent Activity</div>
+        {% if logs %}
+            {% for log in logs %}
+                <div class="log-item">
+                    <div style="font-weight:900; color:white;">{{ log.action }}</div>
+                    <div class="muted small" style="margin-top:5px;">{{ log.details }}</div>
+                    <div class="small muted" style="margin-top:8px;">{{ log.created_at }}</div>
+                </div>
+            {% endfor %}
+        {% else %}
+            <p class="muted">No activity yet.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}My Profile{% endblock %}
+
+{% block content %}
+<div class="hero">
+    <div>
+        <h1>My Profile</h1>
+        <p class="muted" style="margin-top:8px;">Update your name, password, and profile image.</p>
+    </div>
+</div>
+
+<div class="card" style="max-width:800px;">
+    <form method="POST" enctype="multipart/form-data">
+        <label>Full Name</label>
+        <input class="input" type="text" name="full_name" value="{{ user.full_name }}" required>
+
+        <label style="display:block; margin-top:12px;">New Password</label>
+        <input class="input" type="password" name="password" placeholder="Leave blank to keep current password">
+
+        <label style="display:block; margin-top:12px;">Profile Image</label>
+        <input class="file-input" type="file" name="profile_image">
+
+        {% if user.profile_image %}
+            <div style="margin-top:12px;">
+                <img class="avatar-lg" src="{{ url_for('uploaded_file', filename=user.profile_image) }}" alt="profile">
+            </div>
+        {% endif %}
+
+        <div class="top-actions" style="margin-top:16px;">
+            <button class="btn btn-success" type="submit">Save Profile</button>
+            <a class="btn btn-gray" href="{{ url_for('dashboard') }}">Back</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

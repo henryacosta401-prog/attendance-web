@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Admin Attendance History{% endblock %}
+
+{% block content %}
+<div class="hero">
+    <div>
+        <h1>Attendance History</h1>
+        <p class="muted" style="margin-top:8px;">Review employee logs, late records, and proof uploads.</p>
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:18px;">
+    <form method="GET">
+        <div class="grid grid-4">
+            <div>
+                <label>Search Employee</label>
+                <input class="input" type="text" name="search" value="{{ search }}" placeholder="Name or username">
+            </div>
+            <div>
+                <label>Date From</label>
+                <input class="input" type="date" name="date_from" value="{{ date_from }}">
+            </div>
+            <div>
+                <label>Date To</label>
+                <input class="input" type="date" name="date_to" value="{{ date_to }}">
+            </div>
+            <div>
+                <label>Late Only</label>
+                <select class="input" name="late_only">
+                    <option value="">All</option>
+                    <option value="1" {% if late_only == '1' %}selected{% endif %}>Late only</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="top-actions" style="margin-top:16px;">
+            <button class="btn btn-primary" type="submit">Filter</button>
+            <a class="btn btn-gray" href="{{ url_for('admin_history') }}">Reset</a>
+        </div>
+    </form>
+</div>
+
+<div class="card">
+    {% if records %}
+        <div style="overflow-x:auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Employee</th>
+                        <th>Date</th>
+                        <th>Time In</th>
+                        <th>Time Out</th>
+                        <th>Status</th>
+                        <th>Late</th>
+                        <th>Break</th>
+                        <th>Work</th>
+                        <th>Proof</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in records %}
+                    <tr>
+                        <td>
+                            <strong>{{ item.row.full_name }}</strong><br>
+                            <span class="small muted">@{{ item.row.username }}</span>
+                        </td>
+                        <td>{{ item.row.work_date }}</td>
+                        <td>{{ item.row.time_in or '—' }}</td>
+                        <td>{{ item.row.time_out or '—' }}</td>
+                        <td>{{ item.row.status }}</td>
+                        <td>
+                            {% if item.row.late_flag == 1 %}
+                                <span class="status status-red">{{ item.row.late_minutes }} min</span>
+                            {% else %}
+                                —
+                            {% endif %}
+                        </td>
+                        <td>{{ minutes_to_hm(item.break_minutes) }}</td>
+                        <td>{{ minutes_to_hm(item.work_minutes) }}</td>
+                        <td>
+                            {% if item.row.proof_file %}
+                                {% if is_image(item.row.proof_file) %}
+                                    <a href="{{ url_for('uploaded_file', filename=item.row.proof_file) }}" target="_blank">
+                                        <img src="{{ url_for('uploaded_file', filename=item.row.proof_file) }}" class="proof-preview" style="width:58px;height:58px;border-radius:12px;">
+                                    </a>
+                                {% else %}
+                                    <a href="{{ url_for('uploaded_file', filename=item.row.proof_file) }}" target="_blank">View</a>
+                                {% endif %}
+                            {% else %}
+                                —
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <p class="muted">No attendance records found.</p>
+    {% endif %}
+</div>
+{% endblock %}

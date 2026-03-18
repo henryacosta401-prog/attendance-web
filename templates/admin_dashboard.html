@@ -1,0 +1,234 @@
+{% extends "base.html" %}
+{% block title %}Admin Dashboard{% endblock %}
+
+{% block extra_head %}
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    async function refreshLiveStatus() {
+        try {
+            const searchVal = document.getElementById("searchBox") ? document.getElementById("searchBox").value : "";
+            const statusVal = document.getElementById("statusFilter") ? document.getElementById("statusFilter").value : "";
+
+            const response = await fetch(`/admin/live-status?search=${encodeURIComponent(searchVal)}&status=${encodeURIComponent(statusVal)}`);
+            const data = await response.json();
+
+            const tbody = document.getElementById("liveStatusBody");
+            tbody.innerHTML = "";
+
+            data.forEach(emp => {
+                let statusClass = "status-gray";
+                if (emp.status === "Timed In") statusClass = "status-green";
+                else if (emp.status === "On Break") statusClass = "status-yellow";
+                else if (emp.status === "Timed Out") statusClass = "status-red";
+
+                const profileImage = emp.profile_image
+                    ? `/uploads/${emp.profile_image}`
+                    : "https://via.placeholder.com/48x48.png?text=U";
+
+                let proofHtml = "—";
+                if (emp.proof_file) {
+                    const isImg = /\.(png|jpg|jpeg|gif|webp)$/i.test(emp.proof_file);
+                    if (isImg) {
+                        proofHtml = `<a href="/uploads/${emp.proof_file}" target="_blank"><img src="/uploads/${emp.proof_file}" class="proof-preview" style="width:58px;height:58px;border-radius:14px;"></a>`;
+                    } else {
+                        proofHtml = `<a href="/uploads/${emp.proof_file}" target="_blank" style="color:#93c5fd;">View</a>`;
+                    }
+                }
+
+                let lateHtml = emp.late_flag ? `<span class="status status-red">Late ${emp.late_minutes}m</span>` : "—";
+
+                tbody.innerHTML += `
+                    <tr>
+                        <td>
+                            <div class="row-user">
+                                <img class="avatar" src="${profileImage}" alt="avatar">
+                                <div>
+                                    <div style="font-weight:900;color:white;">${emp.full_name}</div>
+                                    <div class="small muted">@${emp.username}</div>
+                                </div>
+                            </div>
+                        </td>
+                        <td>${emp.department || "—"}</td>
+                        <td>${emp.position || "—"}</td>
+                        <td><span class="status ${statusClass}">● ${emp.status}</span></td>
+                        <td>${emp.time_in || "—"}</td>
+                        <td>${emp.time_out || "—"}</td>
+                        <td>${lateHtml}</td>
+                        <td>${proofHtml}</td>
+                    </tr>
+                `;
+            });
+        } catch (error) {
+            console.error("Live status refresh failed:", error);
+        }
+    }
+
+    refreshLiveStatus();
+    setInterval(refreshLiveStatus, 10000);
+
+    const searchBox = document.getElementById("searchBox");
+    const statusFilter = document.getElementById("statusFilter");
+
+    if (searchBox) searchBox.addEventListener("input", refreshLiveStatus);
+    if (statusFilter) statusFilter.addEventListener("change", refreshLiveStatus);
+});
+</script>
+{% endblock %}
+
+{% block content %}
+<div class="hero-card" style="margin-bottom:20px;">
+    <div class="hero">
+        <div>
+            <h1>Admin Control Center</h1>
+            <p class="section-subtitle">Monitor live attendance, late employees, proofs, logs, and notifications.</p>
+        </div>
+        <div class="status status-purple">● Live Monitoring</div>
+    </div>
+</div>
+
+<div class="grid grid-4">
+    <div class="stat-box">
+        <div class="stat-label">Total Employees</div>
+        <div class="stat-number">{{ stats.total_employees }}</div>
+    </div>
+    <div class="stat-box">
+        <div class="stat-label">Timed In</div>
+        <div class="stat-number">{{ stats.timed_in }}</div>
+    </div>
+    <div class="stat-box">
+        <div class="stat-label">On Break</div>
+        <div class="stat-number">{{ stats.on_break }}</div>
+    </div>
+    <div class="stat-box">
+        <div class="stat-label">Late Today</div>
+        <div class="stat-number">{{ stats.late_today }}</div>
+    </div>
+</div>
+
+<div class="grid grid-2" style="margin-top:18px;">
+    <div class="card">
+        <div class="section-title">Live Employee Status</div>
+
+        <div class="grid grid-2" style="margin-bottom:12px;">
+            <div>
+                <label>Search</label>
+                <input id="searchBox" class="input" type="text" value="{{ search }}" placeholder="Search employee...">
+            </div>
+            <div>
+                <label>Status Filter</label>
+                <select id="statusFilter" class="input">
+                    <option value="">All</option>
+                    <option value="Timed In" {% if status_filter == 'Timed In' %}selected{% endif %}>Timed In</option>
+                    <option value="On Break" {% if status_filter == 'On Break' %}selected{% endif %}>On Break</option>
+                    <option value="Timed Out" {% if status_filter == 'Timed Out' %}selected{% endif %}>Timed Out</option>
+                    <option value="Offline" {% if status_filter == 'Offline' %}selected{% endif %}>Offline</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Employee</th>
+                        <th>Department</th>
+                        <th>Position</th>
+                        <th>Status</th>
+                        <th>Time In</th>
+                        <th>Time Out</th>
+                        <th>Late</th>
+                        <th>Proof</th>
+                    </tr>
+                </thead>
+                <tbody id="liveStatusBody">
+                    {% for emp in employees %}
+                    <tr>
+                        <td>{{ emp.full_name }}</td>
+                        <td>{{ emp.department }}</td>
+                        <td>{{ emp.position }}</td>
+                        <td>{{ emp.status }}</td>
+                        <td>{{ emp.time_in or '—' }}</td>
+                        <td>{{ emp.time_out or '—' }}</td>
+                        <td>
+                            {% if emp.late_flag == 1 %}
+                                <span class="status status-red">Late {{ emp.late_minutes }}m</span>
+                            {% else %}
+                                —
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if emp.proof_file %}
+                                {% if is_image(emp.proof_file) %}
+                                    <a href="{{ url_for('uploaded_file', filename=emp.proof_file) }}" target="_blank">
+                                        <img src="{{ url_for('uploaded_file', filename=emp.proof_file) }}" class="proof-preview" style="width:58px;height:58px;border-radius:14px;">
+                                    </a>
+                                {% else %}
+                                    <a href="{{ url_for('uploaded_file', filename=emp.proof_file) }}" target="_blank">View</a>
+                                {% endif %}
+                            {% else %}
+                                —
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <p class="small muted" style="margin-top:10px;">Auto-refreshes every 10 seconds.</p>
+    </div>
+
+    <div class="card">
+        <div class="section-title">Send Notification</div>
+        <form method="POST" action="{{ url_for('send_admin_notification') }}">
+            <label>Employee</label>
+            <select name="user_id" class="input" required>
+                <option value="">Select employee</option>
+                {% for emp in employees %}
+                    <option value="{{ emp.id }}">{{ emp.full_name }}</option>
+                {% endfor %}
+            </select>
+
+            <label style="display:block; margin-top:12px;">Title</label>
+            <input class="input" type="text" name="title" placeholder="Notification title" required>
+
+            <label style="display:block; margin-top:12px;">Message</label>
+            <textarea class="textarea" name="message" placeholder="Write your message..." required></textarea>
+
+            <button class="btn btn-purple" type="submit" style="width:100%; margin-top:14px;">
+                Send Notification
+            </button>
+        </form>
+    </div>
+</div>
+
+<div class="card soft" style="margin-top:18px;">
+    <div class="section-title">Recent Activity Logs</div>
+    {% if logs %}
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Employee</th>
+                        <th>Action</th>
+                        <th>Details</th>
+                        <th>Date/Time</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for log in logs %}
+                    <tr>
+                        <td>{{ log.full_name }}</td>
+                        <td>{{ log.action }}</td>
+                        <td>{{ log.details }}</td>
+                        <td>{{ log.created_at }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <p class="muted">No logs yet.</p>
+    {% endif %}
+</div>
+{% endblock %}

@@ -1,936 +1,1191 @@
-from flask import Flask, render_template, request, redirect, session, flash, send_from_directory
-import json
 import os
-import datetime
-from zoneinfo import ZoneInfo
-import gspread
-from google.oauth2.service_account import Credentials
+import sqlite3
+from datetime import datetime, date
+from functools import wraps
+
+from flask import (
+    Flask, render_template, request, redirect, url_for,
+    session, flash, g, send_from_directory, jsonify
+)
+from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
+# Optional Google Sheets sync
+GOOGLE_SHEETS_ENABLED = False
+try:
+    import gspread
+    from google.oauth2.service_account import Credentials
+    GOOGLE_SHEETS_ENABLED = True
+except Exception:
+    GOOGLE_SHEETS_ENABLED = False
 
-def is_render():
-    return os.environ.get("RENDER") == "true"
+# =========================
+# CONFIG
+# =========================
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+DATABASE = os.path.join(BASE_DIR, "attendance.db")
+UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
+ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "pdf", "webp"}
 
+# Google Sheets config (optional)
+GOOGLE_CREDENTIALS_FILE = os.path.join(BASE_DIR, "attendance-credentials.json")
+GOOGLE_SHEET_NAME = "Attendance Tracker"
+GOOGLE_SHEET_TAB = "Attendance Logs"
+
+# Late config
+LATE_TIME = "09:05"  # change if needed. Example: 09:05 means late after 9:05 AM
 
 app = Flask(__name__)
-app.secret_key = "attendance_secret"
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-USERS_FILE = os.path.join(BASE_DIR, "users.json")
-LOCAL_CREDENTIALS_FILE = os.path.join(BASE_DIR, "attendance-credentials.json")
-SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1j6TLjNOSifsVxHFHyLVvevyqyOza1RUq0-dt2dWcQ5g/edit"
-UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
-ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif"}
-
-if not os.path.exists(UPLOAD_FOLDER):
-    os.makedirs(UPLOAD_FOLDER)
-
-COMPANY_NAME = "Stellar Seats"
-
-ATTENDANCE_TIMEZONE = "America/New_York"
-ATTENDANCE_TZ = ZoneInfo(ATTENDANCE_TIMEZONE)
-
-DEFAULT_SHIFT_START = "21:00"
-DEFAULT_SHIFT_END = "06:00"
-DEFAULT_GRACE_MINUTES = 5
-DEFAULT_ALLOWED_BREAK_MINUTES = 60
-
+app.secret_key = os.environ.get("SECRET_KEY", "stellar-seats-2026-attendance-super-secure-key-938472")
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
-
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive"
-]
-
-HISTORY_CACHE = {}
-CACHE_TTL_SECONDS = 60
-
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10MB
 
 
-def now_et():
-    return datetime.datetime.now(ATTENDANCE_TZ)
+# =========================
+# BASIC HELPERS
+# =========================
+def get_db():
+    if "db" not in g:
+        g.db = sqlite3.connect(DATABASE)
+        g.db.row_factory = sqlite3.Row
+    return g.db
 
 
-def today_et_str():
-    return now_et().strftime("%Y-%m-%d")
+@app.teardown_appcontext
+def close_db(error=None):
+    db = g.pop("db", None)
+    if db is not None:
+        db.close()
 
 
-def current_timestamp_for_filename():
-    return now_et().strftime("%Y%m%d%H%M%S")
+def now_dt():
+    return datetime.now()
 
 
-def parse_hhmm(value, default_value):
-    try:
-        if not value:
-            value = default_value
-        hour, minute = value.split(":")
-        hour = int(hour)
-        minute = int(minute)
-        if 0 <= hour <= 23 and 0 <= minute <= 59:
-            return f"{hour:02d}:{minute:02d}"
-    except Exception:
-        pass
-    return default_value
+def now_str():
+    return now_dt().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def hhmm_to_display(value):
-    try:
-        hour, minute = map(int, value.split(":"))
-        dt = datetime.datetime(2000, 1, 1, hour, minute)
-        return dt.strftime("%I:%M %p")
-    except Exception:
-        return value
+def today_str():
+    return date.today().strftime("%Y-%m-%d")
 
 
-def parse_sheet_datetime(date_str, time_str):
-    try:
-        naive = datetime.datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %I:%M:%S %p")
-        return naive.replace(tzinfo=ATTENDANCE_TZ)
-    except Exception:
-        return None
-
-
-def get_google_credentials():
-    env_creds = os.environ.get("GOOGLE_CREDENTIALS", "").strip()
-    if env_creds:
-        try:
-            google_creds = json.loads(env_creds)
-            return Credentials.from_service_account_info(google_creds, scopes=SCOPES)
-        except Exception as e:
-            raise RuntimeError(f"Invalid GOOGLE_CREDENTIALS environment variable: {e}")
-
-    if os.path.exists(LOCAL_CREDENTIALS_FILE):
-        try:
-            return Credentials.from_service_account_file(
-                LOCAL_CREDENTIALS_FILE,
-                scopes=SCOPES
-            )
-        except Exception as e:
-            raise RuntimeError(f"Local credentials file could not be read: {e}")
-
-    raise RuntimeError(
-        "Google credentials not found. Set GOOGLE_CREDENTIALS in environment variables or place "
-        "'attendance-credentials.json' in the project folder."
-    )
-
-
-_gc = None
-_spreadsheet = None
-_google_init_error = None
-
-
-def get_spreadsheet():
-    global _gc, _spreadsheet, _google_init_error
-
-    if _spreadsheet is not None:
-        return _spreadsheet
-
-    if _google_init_error is not None:
-        raise RuntimeError(_google_init_error)
-
-    try:
-        creds = get_google_credentials()
-        _gc = gspread.authorize(creds)
-        _spreadsheet = _gc.open_by_url(SPREADSHEET_URL)
-        return _spreadsheet
-    except Exception as e:
-        _google_init_error = str(e)
-        raise RuntimeError(_google_init_error)
-
-
-def load_users():
-    if os.path.exists(USERS_FILE):
-        with open(USERS_FILE, "r", encoding="utf-8") as file:
-            return json.load(file)
-
-    return {
-        "Henry": {
-            "password": "1234",
-            "profile_picture": "",
-            "shift_start": DEFAULT_SHIFT_START,
-            "shift_end": DEFAULT_SHIFT_END,
-            "grace_minutes": DEFAULT_GRACE_MINUTES,
-            "allowed_break_minutes": DEFAULT_ALLOWED_BREAK_MINUTES
-        },
-        "Admin": {
-            "password": "admin123",
-            "profile_picture": "",
-            "shift_start": DEFAULT_SHIFT_START,
-            "shift_end": DEFAULT_SHIFT_END,
-            "grace_minutes": DEFAULT_GRACE_MINUTES,
-            "allowed_break_minutes": DEFAULT_ALLOWED_BREAK_MINUTES
-        }
-    }
-
-
-def save_users(users):
-    with open(USERS_FILE, "w", encoding="utf-8") as file:
-        json.dump(users, file, indent=4)
-
-
-def normalize_users(users):
-    normalized = {}
-    for name, value in users.items():
-        if isinstance(value, str):
-            normalized[name] = {
-                "password": value,
-                "profile_picture": "",
-                "shift_start": DEFAULT_SHIFT_START,
-                "shift_end": DEFAULT_SHIFT_END,
-                "grace_minutes": DEFAULT_GRACE_MINUTES,
-                "allowed_break_minutes": DEFAULT_ALLOWED_BREAK_MINUTES
-            }
-        else:
-            normalized[name] = {
-                "password": value.get("password", ""),
-                "profile_picture": value.get("profile_picture", ""),
-                "shift_start": parse_hhmm(value.get("shift_start", DEFAULT_SHIFT_START), DEFAULT_SHIFT_START),
-                "shift_end": parse_hhmm(value.get("shift_end", DEFAULT_SHIFT_END), DEFAULT_SHIFT_END),
-                "grace_minutes": int(value.get("grace_minutes", DEFAULT_GRACE_MINUTES)),
-                "allowed_break_minutes": int(value.get("allowed_break_minutes", DEFAULT_ALLOWED_BREAK_MINUTES))
-            }
-    return normalized
+def format_dt(dt_obj):
+    return dt_obj.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
-def get_or_create_user_sheet(name):
-    spreadsheet = get_spreadsheet()
-    sheet_name = name.replace(" ", "_")
+def is_image(filename):
+    if not filename:
+        return False
+    ext = filename.rsplit(".", 1)[1].lower() if "." in filename else ""
+    return ext in {"png", "jpg", "jpeg", "gif", "webp"}
+
+
+def login_required(role=None):
+    def decorator(f):
+        @wraps(f)
+        def wrapped(*args, **kwargs):
+            if "user_id" not in session:
+                flash("Please log in first.", "warning")
+                return redirect(url_for("login"))
+
+            if role and session.get("role") != role:
+                flash("Access denied.", "danger")
+                if session.get("role") == "admin":
+                    return redirect(url_for("admin_dashboard"))
+                return redirect(url_for("dashboard"))
+            return f(*args, **kwargs)
+        return wrapped
+    return decorator
+
+
+# =========================
+# DATABASE INIT / MIGRATION
+# =========================
+def init_db():
+    db = sqlite3.connect(DATABASE)
+    cursor = db.cursor()
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            full_name TEXT NOT NULL,
+            username TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'employee',
+            profile_image TEXT,
+            department TEXT DEFAULT 'Stellar Seats',
+            position TEXT DEFAULT 'Employee',
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS attendance (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            work_date TEXT NOT NULL,
+            time_in TEXT,
+            time_out TEXT,
+            status TEXT DEFAULT 'Offline',
+            proof_file TEXT,
+            notes TEXT,
+            late_flag INTEGER NOT NULL DEFAULT 0,
+            late_minutes INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS breaks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            attendance_id INTEGER,
+            work_date TEXT NOT NULL,
+            break_start TEXT,
+            break_end TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users (id),
+            FOREIGN KEY (attendance_id) REFERENCES attendance (id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            message TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            is_read INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS activity_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            action TEXT NOT NULL,
+            details TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    """)
+
+    # Safe migration for older DBs
+    existing_cols_users = [row[1] for row in cursor.execute("PRAGMA table_info(users)").fetchall()]
+    if "department" not in existing_cols_users:
+        cursor.execute("ALTER TABLE users ADD COLUMN department TEXT DEFAULT 'Stellar Seats'")
+    if "position" not in existing_cols_users:
+        cursor.execute("ALTER TABLE users ADD COLUMN position TEXT DEFAULT 'Employee'")
+    if "is_active" not in existing_cols_users:
+        cursor.execute("ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
+
+    existing_cols_att = [row[1] for row in cursor.execute("PRAGMA table_info(attendance)").fetchall()]
+    if "late_flag" not in existing_cols_att:
+        cursor.execute("ALTER TABLE attendance ADD COLUMN late_flag INTEGER NOT NULL DEFAULT 0")
+    if "late_minutes" not in existing_cols_att:
+        cursor.execute("ALTER TABLE attendance ADD COLUMN late_minutes INTEGER NOT NULL DEFAULT 0")
+
+    db.commit()
+
+    # default admin
+    admin = cursor.execute("SELECT * FROM users WHERE username = ?", ("admin",)).fetchone()
+    if not admin:
+        cursor.execute("""
+            INSERT INTO users (
+                full_name, username, password_hash, role,
+                profile_image, department, position, is_active, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            "Administrator",
+            "admin",
+            generate_password_hash("admin123"),
+            "admin",
+            None,
+            "Stellar Seats",
+            "Administrator",
+            1,
+            now_str()
+        ))
+        db.commit()
+
+    db.close()
+
+
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+init_db()
+
+
+# =========================
+# APP HELPERS
+# =========================
+def create_notification(user_id, title, message):
+    db = get_db()
+    db.execute("""
+        INSERT INTO notifications (user_id, title, message, created_at, is_read)
+        VALUES (?, ?, ?, ?, 0)
+    """, (user_id, title, message, now_str()))
+    db.commit()
+
+
+def log_activity(user_id, action, details=""):
+    db = get_db()
+    db.execute("""
+        INSERT INTO activity_logs (user_id, action, details, created_at)
+        VALUES (?, ?, ?, ?)
+    """, (user_id, action, details, now_str()))
+    db.commit()
+
+
+def get_user_by_id(user_id):
+    db = get_db()
+    return db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+
+
+def get_today_attendance(user_id):
+    db = get_db()
+    return db.execute("""
+        SELECT * FROM attendance
+        WHERE user_id = ? AND work_date = ?
+        ORDER BY id DESC LIMIT 1
+    """, (user_id, today_str())).fetchone()
+
+
+def get_open_break(user_id):
+    db = get_db()
+    return db.execute("""
+        SELECT * FROM breaks
+        WHERE user_id = ? AND work_date = ? AND break_end IS NULL
+        ORDER BY id DESC LIMIT 1
+    """, (user_id, today_str())).fetchone()
+
+
+def get_user_live_status(user_id):
+    attendance = get_today_attendance(user_id)
+    open_break = get_open_break(user_id)
+
+    if not attendance:
+        return "Offline"
+
+    if attendance["time_in"] and not attendance["time_out"]:
+        if open_break:
+            return "On Break"
+        return "Timed In"
+
+    if attendance["time_out"]:
+        return "Timed Out"
+
+    return "Offline"
+
+
+def calculate_late_info(time_in_str):
+    """
+    Returns (late_flag, late_minutes)
+    """
+    if not time_in_str:
+        return 0, 0
+
+    time_in_dt = datetime.strptime(time_in_str, "%Y-%m-%d %H:%M:%S")
+    late_limit = datetime.strptime(f"{time_in_dt.strftime('%Y-%m-%d')} {LATE_TIME}:00", "%Y-%m-%d %H:%M:%S")
+
+    if time_in_dt > late_limit:
+        late_minutes = int((time_in_dt - late_limit).total_seconds() // 60)
+        return 1, late_minutes
+    return 0, 0
+
+
+def total_break_minutes(attendance_id):
+    db = get_db()
+    breaks = db.execute("""
+        SELECT * FROM breaks
+        WHERE attendance_id = ?
+        ORDER BY id ASC
+    """, (attendance_id,)).fetchall()
+
+    total_minutes = 0
+    for br in breaks:
+        if br["break_start"] and br["break_end"]:
+            start = datetime.strptime(br["break_start"], "%Y-%m-%d %H:%M:%S")
+            end = datetime.strptime(br["break_end"], "%Y-%m-%d %H:%M:%S")
+            total_minutes += int((end - start).total_seconds() // 60)
+    return total_minutes
+
+
+def total_work_minutes(attendance_row):
+    if not attendance_row or not attendance_row["time_in"] or not attendance_row["time_out"]:
+        return 0
+
+    start = datetime.strptime(attendance_row["time_in"], "%Y-%m-%d %H:%M:%S")
+    end = datetime.strptime(attendance_row["time_out"], "%Y-%m-%d %H:%M:%S")
+    raw_minutes = int((end - start).total_seconds() // 60)
+    break_minutes = total_break_minutes(attendance_row["id"])
+    final_minutes = max(raw_minutes - break_minutes, 0)
+    return final_minutes
+
+
+def minutes_to_hm(minutes):
+    h = minutes // 60
+    m = minutes % 60
+    return f"{h}h {m}m"
+
+
+def save_uploaded_file(file_obj, prefix="file"):
+    if not file_obj or not file_obj.filename:
+        return None
+
+    if not allowed_file(file_obj.filename):
+        return None
+
+    safe_name = secure_filename(file_obj.filename)
+    filename = f"{prefix}_{int(datetime.now().timestamp())}_{safe_name}"
+    filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+    file_obj.save(filepath)
+    return filename
+
+
+# =========================
+# GOOGLE SHEETS SYNC (OPTIONAL)
+# =========================
+def append_attendance_to_google_sheet(user_row, attendance_row):
+    """
+    Optional. Only works if:
+    - gspread + google-auth installed
+    - attendance-credentials.json exists
+    - target Google Sheet exists and is shared with service account
+    """
+    if not GOOGLE_SHEETS_ENABLED:
+        return False, "Google Sheets libraries not installed."
+
+    if not os.path.exists(GOOGLE_CREDENTIALS_FILE):
+        return False, "attendance-credentials.json not found."
+
     try:
-        ws = spreadsheet.worksheet(sheet_name)
-    except gspread.WorksheetNotFound:
-        ws = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=8)
-        ws.append_row(["Name", "Date", "Time", "Action", "Remarks", "Shift Start", "Shift End", "Timezone"])
-    return ws
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+        creds = Credentials.from_service_account_file(GOOGLE_CREDENTIALS_FILE, scopes=scopes)
+        client = gspread.authorize(creds)
+        sheet = client.open(GOOGLE_SHEET_NAME)
+
+        try:
+            ws = sheet.worksheet(GOOGLE_SHEET_TAB)
+        except Exception:
+            ws = sheet.add_worksheet(title=GOOGLE_SHEET_TAB, rows=1000, cols=20)
+
+        values = ws.get_all_values()
+        if not values:
+            ws.append_row([
+                "Employee ID", "Full Name", "Username", "Department", "Position",
+                "Work Date", "Time In", "Time Out", "Status",
+                "Late", "Late Minutes", "Break Minutes", "Work Minutes",
+                "Notes", "Proof File"
+            ])
+
+        break_minutes = total_break_minutes(attendance_row["id"])
+        work_minutes = total_work_minutes(attendance_row)
+
+        ws.append_row([
+            user_row["id"],
+            user_row["full_name"],
+            user_row["username"],
+            user_row["department"] or "",
+            user_row["position"] or "",
+            attendance_row["work_date"] or "",
+            attendance_row["time_in"] or "",
+            attendance_row["time_out"] or "",
+            attendance_row["status"] or "",
+            "YES" if attendance_row["late_flag"] else "NO",
+            attendance_row["late_minutes"] or 0,
+            break_minutes,
+            work_minutes,
+            attendance_row["notes"] or "",
+            attendance_row["proof_file"] or ""
+        ])
+        return True, "Synced to Google Sheets."
+    except Exception as e:
+        return False, str(e)
 
 
-def ensure_sheet_headers(ws):
-    expected_headers = ["Name", "Date", "Time", "Action", "Remarks", "Shift Start", "Shift End", "Timezone"]
-    current_headers = ws.row_values(1)
-    if current_headers[:len(expected_headers)] != expected_headers:
-        ws.update("A1:H1", [expected_headers])
+# =========================
+# TEMPLATE GLOBALS
+# =========================
+@app.context_processor
+def inject_globals():
+    user = None
+    unread_count = 0
 
+    if session.get("user_id"):
+        user = get_user_by_id(session["user_id"])
+        db = get_db()
+        unread = db.execute("""
+            SELECT COUNT(*) AS cnt FROM notifications
+            WHERE user_id = ? AND is_read = 0
+        """, (session["user_id"],)).fetchone()
+        unread_count = unread["cnt"] if unread else 0
 
-def fetch_history_from_sheet(name):
-    ws = get_or_create_user_sheet(name)
-    ensure_sheet_headers(ws)
-    records = ws.get_all_values()
-    history = []
-
-    for row in records[1:]:
-        history.append({
-            "name": row[0] if len(row) > 0 else "",
-            "date": row[1] if len(row) > 1 else "",
-            "time": row[2] if len(row) > 2 else "",
-            "action": row[3] if len(row) > 3 else "",
-            "remarks": row[4] if len(row) > 4 else "",
-            "shift_start": row[5] if len(row) > 5 else "",
-            "shift_end": row[6] if len(row) > 6 else "",
-            "timezone": row[7] if len(row) > 7 else ATTENDANCE_TIMEZONE
-        })
-
-    return history
-
-
-def get_history(name, force_refresh=False):
-    now_ts = datetime.datetime.now().timestamp()
-
-    if not force_refresh and name in HISTORY_CACHE:
-        cached = HISTORY_CACHE[name]
-        if now_ts - cached["timestamp"] < CACHE_TTL_SECONDS:
-            return cached["data"]
-
-    history = fetch_history_from_sheet(name)
-    HISTORY_CACHE[name] = {
-        "timestamp": now_ts,
-        "data": history
-    }
-    return history
-
-
-def clear_employee_cache(name=None):
-    if name is None:
-        HISTORY_CACHE.clear()
-    else:
-        HISTORY_CACHE.pop(name, None)
-
-
-def get_last_action(name):
-    history = get_history(name)
-    if history:
-        return history[-1]["action"]
-    return None
-
-
-def get_today_history(name):
-    today = today_et_str()
-    history = get_history(name)
-    return [item for item in history if item["date"] == today]
-
-
-def has_action_today(name, action_name):
-    today_history = get_today_history(name)
-    return any(item["action"] == action_name for item in today_history)
-
-
-def get_today_status(name):
-    today_history = get_today_history(name)
-    if today_history:
-        return today_history[-1]
-    return None
-
-
-def get_today_timein_record(name):
-    today_history = get_today_history(name)
-    for item in today_history:
-        if item["action"] == "Time In":
-            return item
-    return None
-
-
-def get_user_schedule(name):
-    users_data = normalize_users(load_users())
-    user = users_data.get(name, {})
-    return {
-        "shift_start": parse_hhmm(user.get("shift_start", DEFAULT_SHIFT_START), DEFAULT_SHIFT_START),
-        "shift_end": parse_hhmm(user.get("shift_end", DEFAULT_SHIFT_END), DEFAULT_SHIFT_END),
-        "grace_minutes": int(user.get("grace_minutes", DEFAULT_GRACE_MINUTES)),
-        "allowed_break_minutes": int(user.get("allowed_break_minutes", DEFAULT_ALLOWED_BREAK_MINUTES))
-    }
-
-
-def is_late_timein(now_value, username):
-    schedule = get_user_schedule(username)
-    shift_start = schedule["shift_start"]
-    grace_minutes = schedule["grace_minutes"]
-
-    shift_hour, shift_minute = map(int, shift_start.split(":"))
-    shift_time = now_value.replace(
-        hour=shift_hour,
-        minute=shift_minute,
-        second=0,
-        microsecond=0
+    return dict(
+        current_user=user,
+        unread_count=unread_count,
+        is_image=is_image
     )
 
-    allowed_latest_time = shift_time + datetime.timedelta(minutes=grace_minutes)
-    return now_value > allowed_latest_time
+
+# =========================
+# AUTH / HOME
+# =========================
+@app.route("/")
+def home():
+    if "user_id" in session:
+        if session.get("role") == "admin":
+            return redirect(url_for("admin_dashboard"))
+        return redirect(url_for("dashboard"))
+    return redirect(url_for("login"))
 
 
-def get_attendance_remark(name):
-    timein_record = get_today_timein_record(name)
-    if not timein_record:
-        return "No Time In Yet"
-    return timein_record["remarks"] if timein_record["remarks"] else "On Time"
-
-
-def is_action_allowed(last_action, new_action):
-    if last_action is None:
-        if new_action == "Time In":
-            return True, ""
-        return False, "First action must be Time In."
-
-    rules = {
-        "Time In": ["Break Start", "Time Out", "Overtime Start"],
-        "Break Start": ["Break End"],
-        "Break End": ["Break Start", "Time Out", "Overtime Start"],
-        "Time Out": ["Overtime Start"],
-        "Overtime Start": ["Overtime End"],
-        "Overtime End": []
-    }
-
-    allowed_actions = rules.get(last_action, [])
-    if new_action in allowed_actions:
-        return True, ""
-
-    return False, f"Action not allowed after '{last_action}'."
-
-
-def is_duplicate_daily_action(name, action_name):
-    one_time_daily_actions = ["Time In", "Time Out", "Overtime Start", "Overtime End"]
-    return action_name in one_time_daily_actions and has_action_today(name, action_name)
-
-
-def get_status_label(last_action):
-    if last_action == "Time In":
-        return "Timed In"
-    if last_action == "Break Start":
-        return "On Break"
-    if last_action == "Break End":
-        return "Back From Break"
-    if last_action == "Time Out":
-        return "Timed Out"
-    if last_action == "Overtime Start":
-        return "In Overtime"
-    if last_action == "Overtime End":
-        return "Overtime Finished"
-    return "No Activity"
-
-
-def calculate_employee_metrics(name):
-    history = get_history(name)
-
-    metrics = {
-        "late_count": 0,
-        "over_break_count": 0,
-        "break_count": 0,
-        "total_break_minutes": 0,
-        "overtime_sessions": 0,
-        "time_in_count": 0,
-        "time_out_count": 0
-    }
-
-    schedule = get_user_schedule(name)
-    allowed_break_minutes = schedule["allowed_break_minutes"]
-
-    active_break_start = None
-
-    for row in history:
-        action = row["action"]
-
-        if action == "Time In":
-            metrics["time_in_count"] += 1
-            if row["remarks"] == "Late":
-                metrics["late_count"] += 1
-
-        elif action == "Time Out":
-            metrics["time_out_count"] += 1
-
-        elif action == "Overtime Start":
-            metrics["overtime_sessions"] += 1
-
-        elif action == "Break Start":
-            active_break_start = parse_sheet_datetime(row["date"], row["time"])
-
-        elif action == "Break End":
-            break_end_dt = parse_sheet_datetime(row["date"], row["time"])
-            if active_break_start and break_end_dt:
-                minutes = int((break_end_dt - active_break_start).total_seconds() // 60)
-                if minutes < 0:
-                    minutes = 0
-                metrics["break_count"] += 1
-                metrics["total_break_minutes"] += minutes
-                if minutes > allowed_break_minutes:
-                    metrics["over_break_count"] += 1
-            active_break_start = None
-
-    return metrics
-
-
-users = normalize_users(load_users())
-save_users(users)
-
-
-@app.route("/", methods=["GET", "POST"])
+@app.route("/login", methods=["GET", "POST"])
 def login():
-    global users
-    users = normalize_users(load_users())
-
     if request.method == "POST":
-        session.clear()
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "").strip()
 
-        name = request.form["name"].strip()
-        password = request.form["password"].strip()
+        db = get_db()
+        user = db.execute("""
+            SELECT * FROM users
+            WHERE username = ? AND is_active = 1
+        """, (username,)).fetchone()
 
-        if name in users and users[name]["password"] == password:
-            session["user"] = name
-            if name == "Admin":
-                return redirect("/admin")
-            return redirect("/dashboard")
+        if user and check_password_hash(user["password_hash"], password):
+            session["user_id"] = user["id"]
+            session["role"] = user["role"]
+            session["full_name"] = user["full_name"]
 
-        flash("Invalid name or password.", "error")
+            log_activity(user["id"], "LOGIN", f"{user['full_name']} logged in")
 
-    return render_template("login.html", company_name=COMPANY_NAME)
+            if user["role"] == "admin":
+                flash("Welcome Admin.", "success")
+                return redirect(url_for("admin_dashboard"))
 
+            flash("Login successful.", "success")
+            return redirect(url_for("dashboard"))
 
-@app.route("/dashboard")
-def dashboard():
-    if "user" not in session:
-        return redirect("/")
+        flash("Invalid username or password.", "danger")
 
-    if session["user"] == "Admin":
-        return redirect("/admin")
-
-    try:
-        username = session["user"]
-        users_data = normalize_users(load_users())
-        history = get_history(username)
-        last_action = get_last_action(username)
-        today_status = get_today_status(username)
-        profile_picture = users_data.get(username, {}).get("profile_picture", "")
-        attendance_remark = get_attendance_remark(username)
-        schedule = get_user_schedule(username)
-        metrics = calculate_employee_metrics(username)
-
-        return render_template(
-            "dashboard.html",
-            username=username,
-            history=history,
-            last_action=last_action,
-            today_status=today_status,
-            profile_picture=profile_picture,
-            attendance_remark=attendance_remark,
-            timezone_name=ATTENDANCE_TIMEZONE,
-            current_et=now_et().strftime("%Y-%m-%d %I:%M:%S %p"),
-            schedule=schedule,
-            schedule_display_start=hhmm_to_display(schedule["shift_start"]),
-            schedule_display_end=hhmm_to_display(schedule["shift_end"]),
-            metrics=metrics,
-            uploads_enabled=not is_render()
-        )
-    except Exception as e:
-        flash(f"Google Sheets error: {e}", "error")
-        fallback_schedule = get_user_schedule(session["user"])
-        return render_template(
-            "dashboard.html",
-            username=session["user"],
-            history=[],
-            last_action=None,
-            today_status=None,
-            profile_picture="",
-            attendance_remark="Unavailable",
-            timezone_name=ATTENDANCE_TIMEZONE,
-            current_et=now_et().strftime("%Y-%m-%d %I:%M:%S %p"),
-            schedule=fallback_schedule,
-            schedule_display_start=hhmm_to_display(fallback_schedule["shift_start"]),
-            schedule_display_end=hhmm_to_display(fallback_schedule["shift_end"]),
-            metrics={
-                "late_count": 0,
-                "over_break_count": 0,
-                "break_count": 0,
-                "total_break_minutes": 0,
-                "overtime_sessions": 0,
-                "time_in_count": 0,
-                "time_out_count": 0
-            },
-            uploads_enabled=not is_render()
-        )
-
-
-@app.route("/upload_profile", methods=["POST"])
-def upload_profile():
-    if is_render():
-        flash("Profile upload is disabled on live app.", "error")
-        return redirect("/dashboard")
-
-    if "user" not in session:
-        return redirect("/")
-
-    username = session["user"]
-
-    if username == "Admin":
-        return redirect("/admin")
-
-    if "profile_picture" not in request.files:
-        flash("No file selected.", "error")
-        return redirect("/dashboard")
-
-    file = request.files["profile_picture"]
-
-    if file.filename == "":
-        flash("No file selected.", "error")
-        return redirect("/dashboard")
-
-    if not allowed_file(file.filename):
-        flash("Invalid file type. Use png, jpg, jpeg, or gif.", "error")
-        return redirect("/dashboard")
-
-    filename = secure_filename(file.filename)
-    extension = filename.rsplit(".", 1)[1].lower()
-    timestamp = current_timestamp_for_filename()
-    new_filename = f"{username.replace(' ', '_').lower()}_{timestamp}.{extension}"
-
-    filepath = os.path.join(app.config["UPLOAD_FOLDER"], new_filename)
-    file.save(filepath)
-
-    users_data = normalize_users(load_users())
-
-    old_picture = users_data[username].get("profile_picture", "")
-    if old_picture:
-        old_path = os.path.join(app.config["UPLOAD_FOLDER"], old_picture)
-        if os.path.exists(old_path):
-            os.remove(old_path)
-
-    users_data[username]["profile_picture"] = new_filename
-    save_users(users_data)
-
-    flash("Profile picture uploaded successfully.", "success")
-    return redirect("/dashboard")
-
-
-@app.route("/uploads/<filename>")
-def uploaded_file(filename):
-    return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
-
-
-@app.route("/admin", methods=["GET", "POST"])
-def admin():
-    global users
-    users = normalize_users(load_users())
-
-    if "user" not in session or session["user"] != "Admin":
-        return redirect("/")
-
-    try:
-        if request.method == "POST":
-            action_type = request.form.get("form_type", "").strip()
-
-            if action_type == "add_employee":
-                new_name = request.form["name"].strip()
-                new_password = request.form["password"].strip()
-                shift_start = parse_hhmm(request.form.get("shift_start", DEFAULT_SHIFT_START), DEFAULT_SHIFT_START)
-                shift_end = parse_hhmm(request.form.get("shift_end", DEFAULT_SHIFT_END), DEFAULT_SHIFT_END)
-
-                try:
-                    grace_minutes = int(request.form.get("grace_minutes", DEFAULT_GRACE_MINUTES))
-                except ValueError:
-                    grace_minutes = DEFAULT_GRACE_MINUTES
-
-                try:
-                    allowed_break_minutes = int(request.form.get("allowed_break_minutes", DEFAULT_ALLOWED_BREAK_MINUTES))
-                except ValueError:
-                    allowed_break_minutes = DEFAULT_ALLOWED_BREAK_MINUTES
-
-                if not new_name or not new_password:
-                    flash("Please fill in both name and password.", "error")
-                elif new_name in users:
-                    flash("Employee already exists.", "error")
-                else:
-                    users[new_name] = {
-                        "password": new_password,
-                        "profile_picture": "",
-                        "shift_start": shift_start,
-                        "shift_end": shift_end,
-                        "grace_minutes": grace_minutes,
-                        "allowed_break_minutes": allowed_break_minutes
-                    }
-                    save_users(users)
-                    clear_employee_cache(new_name)
-                    get_or_create_user_sheet(new_name)
-                    flash(f"Employee '{new_name}' added successfully.", "success")
-                    return redirect("/admin")
-
-            elif action_type == "update_schedule":
-                employee_name = request.form["employee_name"].strip()
-
-                if employee_name in users and employee_name != "Admin":
-                    users[employee_name]["shift_start"] = parse_hhmm(
-                        request.form.get("shift_start", DEFAULT_SHIFT_START),
-                        DEFAULT_SHIFT_START
-                    )
-                    users[employee_name]["shift_end"] = parse_hhmm(
-                        request.form.get("shift_end", DEFAULT_SHIFT_END),
-                        DEFAULT_SHIFT_END
-                    )
-
-                    try:
-                        users[employee_name]["grace_minutes"] = int(
-                            request.form.get("grace_minutes", DEFAULT_GRACE_MINUTES)
-                        )
-                    except ValueError:
-                        users[employee_name]["grace_minutes"] = DEFAULT_GRACE_MINUTES
-
-                    try:
-                        users[employee_name]["allowed_break_minutes"] = int(
-                            request.form.get("allowed_break_minutes", DEFAULT_ALLOWED_BREAK_MINUTES)
-                        )
-                    except ValueError:
-                        users[employee_name]["allowed_break_minutes"] = DEFAULT_ALLOWED_BREAK_MINUTES
-
-                    save_users(users)
-                    clear_employee_cache(employee_name)
-                    flash(f"Schedule updated for {employee_name}.", "success")
-                    return redirect("/admin")
-                else:
-                    flash("Employee not found.", "error")
-
-        # ===============================
-        # DASHBOARD DATA (OPTIMIZED)
-        # ===============================
-
-        employee_cards = []
-        chart_labels = []
-        late_chart_data = []
-        over_break_chart_data = []
-        break_minutes_chart_data = []
-
-        total_employees = 0
-        timed_in_count = 0
-        on_break_count = 0
-        timed_out_count = 0
-        overtime_count = 0
-        no_timein_yet_count = 0
-        late_count = 0
-        total_over_break = 0
-        total_breaks = 0
-
-        today = today_et_str()
-
-        for name, info in users.items():
-            if name == "Admin":
-                continue
-
-            total_employees += 1
-
-            # 🔥 ONLY ONE GOOGLE SHEETS READ PER EMPLOYEE
-            history = get_history(name)
-
-            today_history = [h for h in history if h["date"] == today]
-            last_action = today_history[-1]["action"] if today_history else None
-
-            attendance_remark = "No Time In Yet"
-            for item in today_history:
-                if item["action"] == "Time In":
-                    attendance_remark = item["remarks"] or "On Time"
-                    break
-
-            schedule = get_user_schedule(name)
-            allowed_break_minutes = schedule["allowed_break_minutes"]
-
-            metrics = {
-                "late_count": 0,
-                "over_break_count": 0,
-                "break_count": 0,
-                "total_break_minutes": 0,
-                "overtime_sessions": 0,
-                "time_in_count": 0,
-                "time_out_count": 0
-            }
-
-            active_break_start = None
-
-            for row in history:
-                action = row["action"]
-
-                if action == "Time In":
-                    metrics["time_in_count"] += 1
-                    if row["remarks"] == "Late":
-                        metrics["late_count"] += 1
-
-                elif action == "Time Out":
-                    metrics["time_out_count"] += 1
-
-                elif action == "Overtime Start":
-                    metrics["overtime_sessions"] += 1
-
-                elif action == "Break Start":
-                    active_break_start = parse_sheet_datetime(row["date"], row["time"])
-
-                elif action == "Break End":
-                    break_end = parse_sheet_datetime(row["date"], row["time"])
-                    if active_break_start and break_end:
-                        minutes = int((break_end - active_break_start).total_seconds() // 60)
-                        if minutes < 0:
-                            minutes = 0
-                        metrics["break_count"] += 1
-                        metrics["total_break_minutes"] += minutes
-                        if minutes > allowed_break_minutes:
-                            metrics["over_break_count"] += 1
-                    active_break_start = None
-
-            status = get_status_label(last_action)
-            timed_in_today = any(h["action"] == "Time In" for h in today_history)
-
-            if status == "Timed In":
-                timed_in_count += 1
-            if status == "On Break":
-                on_break_count += 1
-            if status == "Timed Out":
-                timed_out_count += 1
-            if status == "In Overtime":
-                overtime_count += 1
-            if not timed_in_today:
-                no_timein_yet_count += 1
-            if attendance_remark == "Late":
-                late_count += 1
-
-            total_over_break += metrics["over_break_count"]
-            total_breaks += metrics["break_count"]
-
-            employee_cards.append({
-                "name": name,
-                "status": status,
-                "profile_picture": info.get("profile_picture", ""),
-                "attendance_remark": attendance_remark,
-                "shift_start": info.get("shift_start"),
-                "shift_end": info.get("shift_end"),
-                "grace_minutes": info.get("grace_minutes"),
-                "allowed_break_minutes": info.get("allowed_break_minutes"),
-                "metrics": metrics
-            })
-
-            chart_labels.append(name)
-            late_chart_data.append(metrics["late_count"])
-            over_break_chart_data.append(metrics["over_break_count"])
-            break_minutes_chart_data.append(metrics["total_break_minutes"])
-
-        return render_template(
-            "admin.html",
-            employees=employee_cards,
-            total_employees=total_employees,
-            timed_in_count=timed_in_count,
-            on_break_count=on_break_count,
-            timed_out_count=timed_out_count,
-            overtime_count=overtime_count,
-            no_timein_yet_count=no_timein_yet_count,
-            late_count=late_count,
-            total_over_break=total_over_break,
-            total_breaks=total_breaks,
-            timezone_name=ATTENDANCE_TIMEZONE,
-            current_et=now_et().strftime("%Y-%m-%d %I:%M:%S %p"),
-            chart_labels=chart_labels,
-            late_chart_data=late_chart_data,
-            over_break_chart_data=over_break_chart_data,
-            break_minutes_chart_data=break_minutes_chart_data
-        )
-
-    except Exception as e:
-        flash(f"Google Sheets error: {e}", "error")
-        return render_template(
-            "admin.html",
-            employees=[],
-            total_employees=0,
-            timed_in_count=0,
-            on_break_count=0,
-            timed_out_count=0,
-            overtime_count=0,
-            no_timein_yet_count=0,
-            late_count=0,
-            total_over_break=0,
-            total_breaks=0,
-            timezone_name=ATTENDANCE_TIMEZONE,
-            current_et=now_et().strftime("%Y-%m-%d %I:%M:%S %p"),
-            chart_labels=[],
-            late_chart_data=[],
-            over_break_chart_data=[],
-            break_minutes_chart_data=[]
-        )
-
-@app.route("/reset_password/<name>")
-def reset_password(name):
-    if "user" not in session or session["user"] != "Admin":
-        return redirect("/")
-
-    users_data = normalize_users(load_users())
-
-    if name in users_data:
-        users_data[name]["password"] = "1234"
-        save_users(users_data)
-        flash(f"{name}'s password reset to 1234.", "success")
-    else:
-        flash("Employee not found.", "error")
-
-    return redirect("/admin#employees")
-
-
-@app.route("/delete_employee/<name>")
-def delete_employee(name):
-    if "user" not in session or session["user"] != "Admin":
-        return redirect("/")
-
-    users_data = normalize_users(load_users())
-
-    if name in users_data:
-        if name == "Admin":
-            flash("Admin account cannot be deleted.", "error")
-            return redirect("/admin#employees")
-
-        profile_picture = users_data[name].get("profile_picture", "")
-        if profile_picture:
-            profile_path = os.path.join(app.config["UPLOAD_FOLDER"], profile_picture)
-            if os.path.exists(profile_path):
-                os.remove(profile_path)
-
-        del users_data[name]
-        clear_employee_cache(name)
-        save_users(users_data)
-        flash(f"{name} deleted successfully.", "success")
-    else:
-        flash("Employee not found.", "error")
-
-    return redirect("/admin#employees")
-
-
-@app.route("/record/<action>")
-def record(action):
-    if "user" not in session:
-        return redirect("/")
-
-    username = session["user"]
-    if username == "Admin":
-        return redirect("/admin")
-
-    action_map = {
-        "timein": "Time In",
-        "timeout": "Time Out",
-        "breakstart": "Break Start",
-        "breakend": "Break End",
-        "overtimestart": "Overtime Start",
-        "overtimeend": "Overtime End"
-    }
-
-    if action not in action_map:
-        flash("Invalid action.", "error")
-        return redirect("/dashboard")
-
-    final_action = action_map[action]
-
-    try:
-        if is_duplicate_daily_action(username, final_action):
-            flash(f"{final_action} has already been recorded today.", "error")
-            return redirect("/dashboard")
-
-        last_action = get_last_action(username)
-        allowed, message = is_action_allowed(last_action, final_action)
-
-        if not allowed:
-            flash(message, "error")
-            return redirect("/dashboard")
-
-        now_value = now_et()
-        date = now_value.strftime("%Y-%m-%d")
-        time = now_value.strftime("%I:%M:%S %p")
-        remarks = ""
-
-        schedule = get_user_schedule(username)
-
-        if final_action == "Time In":
-            remarks = "Late" if is_late_timein(now_value, username) else "On Time"
-
-        ws = get_or_create_user_sheet(username)
-        ensure_sheet_headers(ws)
-        ws.append_row([
-            username,
-            date,
-            time,
-            final_action,
-            remarks,
-            schedule["shift_start"],
-            schedule["shift_end"],
-            ATTENDANCE_TIMEZONE
-        ])
-
-        clear_employee_cache(username)
-
-        if remarks:
-            flash(f"{final_action} recorded successfully. Status: {remarks}", "success")
-        else:
-            flash(f"{final_action} recorded successfully.", "success")
-
-    except Exception as e:
-        flash(f"Failed to record attendance: {e}", "error")
-
-    return redirect("/dashboard")
+    return render_template("login.html")
 
 
 @app.route("/logout")
 def logout():
+    user_id = session.get("user_id")
+    if user_id:
+        log_activity(user_id, "LOGOUT", "User logged out")
     session.clear()
-    return redirect("/")
+    flash("Logged out successfully.", "info")
+    return redirect(url_for("login"))
 
 
+# =========================
+# EMPLOYEE
+# =========================
+@app.route("/dashboard")
+@login_required(role="employee")
+def dashboard():
+    user = get_user_by_id(session["user_id"])
+    today_attendance = get_today_attendance(user["id"])
+    open_break = get_open_break(user["id"])
+
+    db = get_db()
+    notifications = db.execute("""
+        SELECT * FROM notifications
+        WHERE user_id = ?
+        ORDER BY id DESC
+        LIMIT 10
+    """, (user["id"],)).fetchall()
+
+    logs = db.execute("""
+        SELECT * FROM activity_logs
+        WHERE user_id = ?
+        ORDER BY id DESC
+        LIMIT 10
+    """, (user["id"],)).fetchall()
+
+    current_status = get_user_live_status(user["id"])
+    todays_break_minutes = total_break_minutes(today_attendance["id"]) if today_attendance else 0
+    todays_work_minutes = total_work_minutes(today_attendance) if today_attendance else 0
+
+    return render_template(
+        "employee_dashboard.html",
+        user=user,
+        today_attendance=today_attendance,
+        open_break=open_break,
+        notifications=notifications,
+        logs=logs,
+        current_status=current_status,
+        todays_break_minutes=todays_break_minutes,
+        todays_work_minutes=todays_work_minutes,
+        minutes_to_hm=minutes_to_hm
+    )
+
+
+@app.route("/history")
+@login_required(role="employee")
+def employee_history():
+    user_id = session["user_id"]
+    db = get_db()
+
+    records = db.execute("""
+        SELECT * FROM attendance
+        WHERE user_id = ?
+        ORDER BY work_date DESC, id DESC
+        LIMIT 60
+    """, (user_id,)).fetchall()
+
+    enriched = []
+    for row in records:
+        enriched.append({
+            "row": row,
+            "break_minutes": total_break_minutes(row["id"]),
+            "work_minutes": total_work_minutes(row)
+        })
+
+    return render_template("employee_history.html", records=enriched, minutes_to_hm=minutes_to_hm)
+
+
+@app.route("/profile", methods=["GET", "POST"])
+@login_required(role="employee")
+def employee_profile():
+    db = get_db()
+    user = get_user_by_id(session["user_id"])
+
+    if request.method == "POST":
+        full_name = request.form.get("full_name", "").strip()
+
+        if not full_name:
+            flash("Full name is required.", "danger")
+            return redirect(url_for("employee_profile"))
+
+        password = request.form.get("password", "").strip()
+
+        profile_image = user["profile_image"]
+        file = request.files.get("profile_image")
+        if file and file.filename:
+            saved = save_uploaded_file(file, prefix=f"profile_{user['id']}")
+            if not saved:
+                flash("Invalid profile image type.", "danger")
+                return redirect(url_for("employee_profile"))
+            profile_image = saved
+
+        if password:
+            db.execute("""
+                UPDATE users
+                SET full_name = ?, password_hash = ?, profile_image = ?
+                WHERE id = ?
+            """, (full_name, generate_password_hash(password), profile_image, user["id"]))
+        else:
+            db.execute("""
+                UPDATE users
+                SET full_name = ?, profile_image = ?
+                WHERE id = ?
+            """, (full_name, profile_image, user["id"]))
+
+        db.commit()
+        session["full_name"] = full_name
+        log_activity(user["id"], "UPDATE PROFILE", "Employee updated profile")
+        flash("Profile updated successfully.", "success")
+        return redirect(url_for("employee_profile"))
+
+    return render_template("employee_profile.html", user=user)
+
+
+@app.route("/time-in", methods=["POST"])
+@login_required(role="employee")
+def time_in():
+    user_id = session["user_id"]
+    db = get_db()
+
+    existing = get_today_attendance(user_id)
+    if existing and existing["time_in"] and not existing["time_out"]:
+        flash("You are already timed in.", "warning")
+        return redirect(url_for("dashboard"))
+
+    file = request.files.get("proof_file")
+    proof_filename = None
+
+    if file and file.filename:
+        proof_filename = save_uploaded_file(file, prefix=f"proof_{user_id}")
+        if not proof_filename:
+            flash("Invalid upload file type.", "danger")
+            return redirect(url_for("dashboard"))
+
+    current_time = now_str()
+    late_flag, late_minutes = calculate_late_info(current_time)
+
+    if existing and existing["time_out"]:
+        db.execute("""
+            INSERT INTO attendance (
+                user_id, work_date, time_in, time_out, status, proof_file, notes,
+                late_flag, late_minutes, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            user_id,
+            today_str(),
+            current_time,
+            None,
+            "Timed In",
+            proof_filename,
+            request.form.get("notes", "").strip(),
+            late_flag,
+            late_minutes,
+            now_str(),
+            now_str()
+        ))
+    elif not existing:
+        db.execute("""
+            INSERT INTO attendance (
+                user_id, work_date, time_in, time_out, status, proof_file, notes,
+                late_flag, late_minutes, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            user_id,
+            today_str(),
+            current_time,
+            None,
+            "Timed In",
+            proof_filename,
+            request.form.get("notes", "").strip(),
+            late_flag,
+            late_minutes,
+            now_str(),
+            now_str()
+        ))
+    else:
+        db.execute("""
+            UPDATE attendance
+            SET time_in = ?, status = ?, proof_file = ?, notes = ?,
+                late_flag = ?, late_minutes = ?, updated_at = ?
+            WHERE id = ?
+        """, (
+            current_time,
+            "Timed In",
+            proof_filename,
+            request.form.get("notes", "").strip(),
+            late_flag,
+            late_minutes,
+            now_str(),
+            existing["id"]
+        ))
+
+    db.commit()
+
+    if late_flag:
+        create_notification(user_id, "Late Time-In", f"You timed in late by {late_minutes} minutes.")
+    else:
+        create_notification(user_id, "Timed In", f"You timed in at {current_time}")
+
+    log_activity(user_id, "TIME IN", "Employee timed in")
+    flash("Time in successful.", "success")
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/start-break", methods=["POST"])
+@login_required(role="employee")
+def start_break():
+    user_id = session["user_id"]
+    db = get_db()
+
+    attendance = get_today_attendance(user_id)
+    if not attendance or not attendance["time_in"] or attendance["time_out"]:
+        flash("You must be timed in first.", "danger")
+        return redirect(url_for("dashboard"))
+
+    open_break = get_open_break(user_id)
+    if open_break:
+        flash("You are already on break.", "warning")
+        return redirect(url_for("dashboard"))
+
+    db.execute("""
+        INSERT INTO breaks (user_id, attendance_id, work_date, break_start, created_at)
+        VALUES (?, ?, ?, ?, ?)
+    """, (user_id, attendance["id"], today_str(), now_str(), now_str()))
+
+    db.execute("""
+        UPDATE attendance
+        SET status = ?, updated_at = ?
+        WHERE id = ?
+    """, ("On Break", now_str(), attendance["id"]))
+
+    db.commit()
+    create_notification(user_id, "Break Started", f"You started break at {now_str()}")
+    log_activity(user_id, "BREAK START", "Employee started break")
+    flash("Break started.", "info")
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/end-break", methods=["POST"])
+@login_required(role="employee")
+def end_break():
+    user_id = session["user_id"]
+    db = get_db()
+
+    open_break = get_open_break(user_id)
+    attendance = get_today_attendance(user_id)
+
+    if not open_break:
+        flash("No active break found.", "warning")
+        return redirect(url_for("dashboard"))
+
+    db.execute("""
+        UPDATE breaks
+        SET break_end = ?
+        WHERE id = ?
+    """, (now_str(), open_break["id"]))
+
+    if attendance:
+        db.execute("""
+            UPDATE attendance
+            SET status = ?, updated_at = ?
+            WHERE id = ?
+        """, ("Timed In", now_str(), attendance["id"]))
+
+    db.commit()
+    create_notification(user_id, "Break Ended", f"You ended break at {now_str()}")
+    log_activity(user_id, "BREAK END", "Employee ended break")
+    flash("Break ended.", "success")
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/time-out", methods=["POST"])
+@login_required(role="employee")
+def time_out():
+    user_id = session["user_id"]
+    db = get_db()
+
+    attendance = get_today_attendance(user_id)
+    if not attendance or not attendance["time_in"]:
+        flash("You are not timed in.", "danger")
+        return redirect(url_for("dashboard"))
+
+    if attendance["time_out"]:
+        flash("You are already timed out.", "warning")
+        return redirect(url_for("dashboard"))
+
+    open_break = get_open_break(user_id)
+    if open_break:
+        db.execute("""
+            UPDATE breaks
+            SET break_end = ?
+            WHERE id = ?
+        """, (now_str(), open_break["id"]))
+
+    db.execute("""
+        UPDATE attendance
+        SET time_out = ?, status = ?, updated_at = ?
+        WHERE id = ?
+    """, (now_str(), "Timed Out", now_str(), attendance["id"]))
+
+    db.commit()
+
+    # Optional sheet sync on timeout
+    user_row = get_user_by_id(user_id)
+    updated_attendance = get_today_attendance(user_id)
+    ok, msg = append_attendance_to_google_sheet(user_row, updated_attendance)
+
+    create_notification(user_id, "Timed Out", f"You timed out at {now_str()}")
+    log_activity(user_id, "TIME OUT", f"Employee timed out. Sheets sync: {msg if ok else 'Skipped/Failed'}")
+    flash("Time out successful.", "success")
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/notifications/read/<int:notif_id>", methods=["POST"])
+@login_required()
+def read_notification(notif_id):
+    db = get_db()
+    db.execute("""
+        UPDATE notifications
+        SET is_read = 1
+        WHERE id = ? AND user_id = ?
+    """, (notif_id, session["user_id"]))
+    db.commit()
+
+    if session.get("role") == "admin":
+        return redirect(request.referrer or url_for("admin_dashboard"))
+    return redirect(request.referrer or url_for("dashboard"))
+
+
+@app.route("/uploads/<path:filename>")
+@login_required()
+def uploaded_file(filename):
+    return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
+
+
+# =========================
+# ADMIN
+# =========================
+def get_admin_employee_rows(status_filter="", search=""):
+    db = get_db()
+
+    users = db.execute("""
+        SELECT * FROM users
+        WHERE role = 'employee'
+        ORDER BY full_name ASC
+    """).fetchall()
+
+    employees = []
+    for user in users:
+        live_status = get_user_live_status(user["id"])
+        attendance = get_today_attendance(user["id"])
+
+        row = {
+            "id": user["id"],
+            "full_name": user["full_name"],
+            "username": user["username"],
+            "department": user["department"],
+            "position": user["position"],
+            "profile_image": user["profile_image"],
+            "is_active": user["is_active"],
+            "status": live_status,
+            "time_in": attendance["time_in"] if attendance else None,
+            "time_out": attendance["time_out"] if attendance else None,
+            "proof_file": attendance["proof_file"] if attendance else None,
+            "late_flag": attendance["late_flag"] if attendance else 0,
+            "late_minutes": attendance["late_minutes"] if attendance else 0
+        }
+
+        if status_filter and row["status"] != status_filter:
+            continue
+
+        if search:
+            s = search.lower()
+            hay = f"{row['full_name']} {row['username']} {row['department']} {row['position']}".lower()
+            if s not in hay:
+                continue
+
+        employees.append(row)
+
+    return employees
+
+
+@app.route("/admin")
+@login_required(role="admin")
+def admin_dashboard():
+    status_filter = request.args.get("status", "").strip()
+    search = request.args.get("search", "").strip()
+
+    employees = get_admin_employee_rows(status_filter=status_filter, search=search)
+    db = get_db()
+
+    all_users = db.execute("""
+        SELECT * FROM users
+        WHERE role = 'employee'
+        ORDER BY full_name ASC
+    """).fetchall()
+
+    logs = db.execute("""
+        SELECT a.*, u.full_name
+        FROM activity_logs a
+        JOIN users u ON u.id = a.user_id
+        ORDER BY a.id DESC
+        LIMIT 25
+    """).fetchall()
+
+    late_today = db.execute("""
+        SELECT COUNT(*) AS cnt
+        FROM attendance
+        WHERE work_date = ? AND late_flag = 1
+    """, (today_str(),)).fetchone()["cnt"]
+
+    stats_employees = []
+    for user in all_users:
+        stats_employees.append(get_user_live_status(user["id"]))
+
+    stats = {
+        "total_employees": len(all_users),
+        "timed_in": len([x for x in stats_employees if x == "Timed In"]),
+        "on_break": len([x for x in stats_employees if x == "On Break"]),
+        "timed_out": len([x for x in stats_employees if x == "Timed Out"]),
+        "offline": len([x for x in stats_employees if x == "Offline"]),
+        "late_today": late_today
+    }
+
+    return render_template(
+        "admin_dashboard.html",
+        employees=employees,
+        logs=logs,
+        stats=stats,
+        status_filter=status_filter,
+        search=search
+    )
+
+
+@app.route("/admin/live-status")
+@login_required(role="admin")
+def admin_live_status():
+    search = request.args.get("search", "").strip()
+    status_filter = request.args.get("status", "").strip()
+    employees = get_admin_employee_rows(status_filter=status_filter, search=search)
+    return jsonify(employees)
+
+
+@app.route("/admin/history")
+@login_required(role="admin")
+def admin_history():
+    db = get_db()
+
+    search = request.args.get("search", "").strip()
+    late_only = request.args.get("late_only", "").strip()
+    date_from = request.args.get("date_from", "").strip()
+    date_to = request.args.get("date_to", "").strip()
+
+    sql = """
+        SELECT a.*, u.full_name, u.username
+        FROM attendance a
+        JOIN users u ON u.id = a.user_id
+        WHERE 1=1
+    """
+    params = []
+
+    if search:
+        sql += " AND (LOWER(u.full_name) LIKE ? OR LOWER(u.username) LIKE ?)"
+        s = f"%{search.lower()}%"
+        params.extend([s, s])
+
+    if late_only == "1":
+        sql += " AND a.late_flag = 1"
+
+    if date_from:
+        sql += " AND a.work_date >= ?"
+        params.append(date_from)
+
+    if date_to:
+        sql += " AND a.work_date <= ?"
+        params.append(date_to)
+
+    sql += " ORDER BY a.work_date DESC, a.id DESC LIMIT 200"
+
+    rows = db.execute(sql, params).fetchall()
+
+    enriched = []
+    for row in rows:
+        enriched.append({
+            "row": row,
+            "break_minutes": total_break_minutes(row["id"]),
+            "work_minutes": total_work_minutes(row)
+        })
+
+    return render_template(
+        "admin_history.html",
+        records=enriched,
+        search=search,
+        late_only=late_only,
+        date_from=date_from,
+        date_to=date_to,
+        minutes_to_hm=minutes_to_hm
+    )
+
+
+@app.route("/admin/employees", methods=["GET", "POST"])
+@login_required(role="admin")
+def manage_employees():
+    db = get_db()
+
+    if request.method == "POST":
+        full_name = request.form.get("full_name", "").strip()
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "").strip()
+        department = request.form.get("department", "").strip() or "Stellar Seats"
+        position = request.form.get("position", "").strip() or "Employee"
+
+        if not full_name or not username or not password:
+            flash("Full name, username, and password are required.", "danger")
+            return redirect(url_for("manage_employees"))
+
+        existing = db.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
+        if existing:
+            flash("Username already exists.", "warning")
+            return redirect(url_for("manage_employees"))
+
+        profile_image = None
+        file = request.files.get("profile_image")
+        if file and file.filename:
+            profile_image = save_uploaded_file(file, prefix="profile")
+            if not profile_image:
+                flash("Invalid profile image file type.", "danger")
+                return redirect(url_for("manage_employees"))
+
+        db.execute("""
+            INSERT INTO users (
+                full_name, username, password_hash, role, profile_image,
+                department, position, is_active, created_at
+            )
+            VALUES (?, ?, ?, 'employee', ?, ?, ?, 1, ?)
+        """, (
+            full_name,
+            username,
+            generate_password_hash(password),
+            profile_image,
+            department,
+            position,
+            now_str()
+        ))
+        db.commit()
+
+        new_user = db.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
+        if new_user:
+            create_notification(new_user["id"], "Account Created", "Your account has been created by admin.")
+            log_activity(session["user_id"], "ADD EMPLOYEE", f"Added employee: {full_name}")
+
+        flash("Employee added successfully.", "success")
+        return redirect(url_for("manage_employees"))
+
+    employees = db.execute("""
+        SELECT * FROM users
+        WHERE role = 'employee'
+        ORDER BY id DESC
+    """).fetchall()
+
+    return render_template("manage_employees.html", employees=employees)
+
+
+@app.route("/admin/edit-employee/<int:user_id>", methods=["GET", "POST"])
+@login_required(role="admin")
+def edit_employee(user_id):
+    db = get_db()
+    user = db.execute("""
+        SELECT * FROM users
+        WHERE id = ? AND role = 'employee'
+    """, (user_id,)).fetchone()
+
+    if not user:
+        flash("Employee not found.", "danger")
+        return redirect(url_for("manage_employees"))
+
+    if request.method == "POST":
+        full_name = request.form.get("full_name", "").strip()
+        username = request.form.get("username", "").strip()
+        department = request.form.get("department", "").strip() or "Stellar Seats"
+        position = request.form.get("position", "").strip() or "Employee"
+        is_active = 1 if request.form.get("is_active") == "1" else 0
+        password = request.form.get("password", "").strip()
+
+        if not full_name or not username:
+            flash("Full name and username are required.", "danger")
+            return redirect(url_for("edit_employee", user_id=user_id))
+
+        existing = db.execute("""
+            SELECT id FROM users
+            WHERE username = ? AND id != ?
+        """, (username, user_id)).fetchone()
+
+        if existing:
+            flash("Username already used by another employee.", "warning")
+            return redirect(url_for("edit_employee", user_id=user_id))
+
+        profile_image = user["profile_image"]
+        file = request.files.get("profile_image")
+        if file and file.filename:
+            saved = save_uploaded_file(file, prefix=f"profile_{user_id}")
+            if not saved:
+                flash("Invalid profile image file type.", "danger")
+                return redirect(url_for("edit_employee", user_id=user_id))
+            profile_image = saved
+
+        if password:
+            db.execute("""
+                UPDATE users
+                SET full_name = ?, username = ?, password_hash = ?, profile_image = ?,
+                    department = ?, position = ?, is_active = ?
+                WHERE id = ?
+            """, (
+                full_name,
+                username,
+                generate_password_hash(password),
+                profile_image,
+                department,
+                position,
+                is_active,
+                user_id
+            ))
+        else:
+            db.execute("""
+                UPDATE users
+                SET full_name = ?, username = ?, profile_image = ?,
+                    department = ?, position = ?, is_active = ?
+                WHERE id = ?
+            """, (
+                full_name,
+                username,
+                profile_image,
+                department,
+                position,
+                is_active,
+                user_id
+            ))
+
+        db.commit()
+        log_activity(session["user_id"], "EDIT EMPLOYEE", f"Edited employee: {full_name}")
+        flash("Employee updated successfully.", "success")
+        return redirect(url_for("manage_employees"))
+
+    return render_template("edit_employee.html", employee=user)
+
+
+@app.route("/admin/delete-employee/<int:user_id>", methods=["POST"])
+@login_required(role="admin")
+def delete_employee(user_id):
+    db = get_db()
+
+    user = db.execute("""
+        SELECT * FROM users
+        WHERE id = ? AND role = 'employee'
+    """, (user_id,)).fetchone()
+
+    if not user:
+        flash("Employee not found.", "danger")
+        return redirect(url_for("manage_employees"))
+
+    db.execute("DELETE FROM notifications WHERE user_id = ?", (user_id,))
+    db.execute("DELETE FROM breaks WHERE user_id = ?", (user_id,))
+    db.execute("DELETE FROM attendance WHERE user_id = ?", (user_id,))
+    db.execute("DELETE FROM activity_logs WHERE user_id = ?", (user_id,))
+    db.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    db.commit()
+
+    log_activity(session["user_id"], "DELETE EMPLOYEE", f"Deleted employee: {user['full_name']}")
+    flash("Employee deleted successfully.", "info")
+    return redirect(url_for("manage_employees"))
+
+
+@app.route("/admin/send-notification", methods=["POST"])
+@login_required(role="admin")
+def send_admin_notification():
+    user_id = request.form.get("user_id")
+    title = request.form.get("title", "").strip()
+    message = request.form.get("message", "").strip()
+
+    if not user_id or not title or not message:
+        flash("All notification fields are required.", "danger")
+        return redirect(url_for("admin_dashboard"))
+
+    create_notification(user_id, title, message)
+    log_activity(session["user_id"], "SEND NOTIFICATION", f"Sent notification to user ID {user_id}")
+    flash("Notification sent successfully.", "success")
+    return redirect(url_for("admin_dashboard"))
+
+
+# =========================
+# MAIN
+# =========================
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000, debug=True)
+    app.run(debug=True)

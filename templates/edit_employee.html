@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Edit Employee{% endblock %}
+
+{% block content %}
+<div class="hero">
+    <div>
+        <h1>Edit Employee</h1>
+        <p class="muted" style="margin-top:8px;">Update employee information and account status.</p>
+    </div>
+</div>
+
+<div class="card" style="max-width:800px;">
+    <form method="POST" enctype="multipart/form-data">
+        <div class="grid grid-2">
+            <div>
+                <label>Full Name</label>
+                <input class="input" type="text" name="full_name" value="{{ employee.full_name }}" required>
+            </div>
+            <div>
+                <label>Username</label>
+                <input class="input" type="text" name="username" value="{{ employee.username }}" required>
+            </div>
+        </div>
+
+        <div class="grid grid-2" style="margin-top:12px;">
+            <div>
+                <label>Department</label>
+                <input class="input" type="text" name="department" value="{{ employee.department }}">
+            </div>
+            <div>
+                <label>Position</label>
+                <input class="input" type="text" name="position" value="{{ employee.position }}">
+            </div>
+        </div>
+
+        <label style="display:block; margin-top:12px;">New Password</label>
+        <input class="input" type="password" name="password" placeholder="Leave blank to keep current password">
+
+        <label style="display:block; margin-top:12px;">Profile Image</label>
+        <input class="file-input" type="file" name="profile_image">
+
+        {% if employee.profile_image %}
+            <div style="margin-top:12px;">
+                <img class="avatar-lg" src="{{ url_for('uploaded_file', filename=employee.profile_image) }}" alt="profile">
+            </div>
+        {% endif %}
+
+        <label style="display:block; margin-top:12px;">Account Status</label>
+        <select class="input" name="is_active">
+            <option value="1" {% if employee.is_active == 1 %}selected{% endif %}>Active</option>
+            <option value="0" {% if employee.is_active == 0 %}selected{% endif %}>Inactive</option>
+        </select>
+
+        <div class="top-actions" style="margin-top:16px;">
+            <button class="btn btn-success" type="submit">Save Changes</button>
+            <a class="btn btn-gray" href="{{ url_for('manage_employees') }}">Back</a>
+        </div>
+    </form>
+</div>
+{% endblock %}
