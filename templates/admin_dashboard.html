@@ -4,6 +4,28 @@
 {% block extra_head %}
 <script>
 document.addEventListener("DOMContentLoaded", function () {
+
+    function formatDateTime12h(value) {
+        if (!value) return "";
+        try {
+            const [datePart, timePart] = value.split(" ");
+            if (!datePart || !timePart) return value;
+
+            let [hour, minute, second] = timePart.split(":").map(Number);
+            const ampm = hour >= 12 ? "PM" : "AM";
+            hour = hour % 12;
+            if (hour === 0) hour = 12;
+
+            const hh = String(hour).padStart(2, "0");
+            const mm = String(minute).padStart(2, "0");
+            const ss = String(second).padStart(2, "0");
+
+            return `${datePart} ${hh}:${mm}:${ss} ${ampm}`;
+        } catch (e) {
+            return value;
+        }
+    }
+
     async function refreshLiveStatus() {
         try {
             const searchVal = document.getElementById("searchBox") ? document.getElementById("searchBox").value : "";
@@ -147,8 +169,8 @@ document.addEventListener("DOMContentLoaded", function () {
                         <td>{{ emp.department }}</td>
                         <td>{{ emp.position }}</td>
                         <td>{{ emp.status }}</td>
-                        <td>{{ emp.time_in or '—' }}</td>
-                        <td>{{ emp.time_out or '—' }}</td>
+                        <td>{{ format_datetime_12h(emp.time_in) if emp.time_in else '—' }}</td>
+                        <td>{{ format_datetime_12h(emp.time_out) if emp.time_out else '—' }}</td>
                         <td>
                             {% if emp.late_flag == 1 %}
                                 <span class="status status-red">Late {{ emp.late_minutes }}m</span>
@@ -221,7 +243,7 @@ document.addEventListener("DOMContentLoaded", function () {
                         <td>{{ log.full_name }}</td>
                         <td>{{ log.action }}</td>
                         <td>{{ log.details }}</td>
-                        <td>{{ log.created_at }}</td>
+                        <td>{{ format_datetime_12h(log.created_at) }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>

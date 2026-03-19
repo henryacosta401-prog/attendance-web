@@ -514,6 +514,26 @@ def minutes_to_hm(minutes):
     return f"{h}h {m}m"
 
 
+def format_datetime_12h(datetime_str):
+    if not datetime_str:
+        return ""
+    try:
+        dt = datetime.strptime(datetime_str, "%Y-%m-%d %H:%M:%S")
+        return dt.strftime("%Y-%m-%d %I:%M:%S %p")
+    except Exception:
+        return datetime_str
+
+
+def format_time_12h(datetime_str):
+    if not datetime_str:
+        return ""
+    try:
+        dt = datetime.strptime(datetime_str, "%Y-%m-%d %H:%M:%S")
+        return dt.strftime("%I:%M:%S %p")
+    except Exception:
+        return datetime_str
+
+
 def save_uploaded_file(file_obj, prefix="file"):
     if not file_obj or not file_obj.filename:
         return None
@@ -603,7 +623,9 @@ def inject_globals():
     return dict(
         current_user=user,
         unread_count=unread_count,
-        is_image=is_image
+        is_image=is_image,
+        format_datetime_12h=format_datetime_12h,
+        format_time_12h=format_time_12h
     )
 
 
@@ -804,10 +826,6 @@ def time_in():
             flash("Invalid upload file type.", "danger")
             return redirect(url_for("dashboard"))
 
-    current_time = now_str()
-    shift_start = parse_shift_start(user["shift_start"] if user else DEFAULT_SHIFT_START)
-    late_flag, late_minutes = calculate_late_info(current_time, shift_start)
-
     execute_db("""
         INSERT INTO attendance (
             user_id, work_date, time_in, time_out, status, proof_file, notes,
@@ -815,16 +833,31 @@ def time_in():
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
-        user_id, today_str(), current_time, None, "Timed In", proof_filename,
-        request.form.get("notes", "").strip(), late_flag, late_minutes, now_str(), now_str()
+        user_id,
+        today_str(),
+        now_str(),
+        None,
+        "Timed In",
+        proof_filename,
+        request.form.get("notes", "").strip(),
+        *calculate_late_info(now_str(), parse_shift_start(user["shift_start"] if user else DEFAULT_SHIFT_START)),
+        now_str(),
+        now_str()
     ), commit=True)
 
-    if late_flag:
-        create_notification(user_id, "Late Time-In", f"You timed in late by {late_minutes} minute(s). Shift start: {shift_start} ET.")
-    else:
-        create_notification(user_id, "Timed In", f"You timed in at {current_time} ET.")
+    shift_start = parse_shift_start(user["shift_start"] if user else DEFAULT_SHIFT_START)
+    latest_attendance = get_today_attendance(user_id)
 
-    log_activity(user_id, "TIME IN", f"Employee timed in. Shift: {shift_start}. Late: {late_flag}")
+    if latest_attendance and latest_attendance["late_flag"]:
+        create_notification(
+            user_id,
+            "Late Time-In",
+            f"You timed in late by {latest_attendance['late_minutes']} minute(s). Shift start: {shift_start} ET."
+        )
+    else:
+        create_notification(user_id, "Timed In", f"You timed in at {now_str()} ET.")
+
+    log_activity(user_id, "TIME IN", f"Employee timed in. Shift: {shift_start}")
     flash("Time in successful.", "success")
     return redirect(url_for("dashboard"))
 
