@@ -73,8 +73,8 @@ document.addEventListener("DOMContentLoaded", function () {
                         <td>${emp.department || "—"}</td>
                         <td>${emp.position || "—"}</td>
                         <td><span class="status ${statusClass}">● ${emp.status}</span></td>
-                        <td>${emp.time_in || "—"}</td>
-                        <td>${emp.time_out || "—"}</td>
+                        <td>${emp.time_in ? formatDateTime12h(emp.time_in) : "—"}</td>
+                        <td>${emp.time_out ? formatDateTime12h(emp.time_out) : "—"}</td>
                         <td>${lateHtml}</td>
                         <td>${proofHtml}</td>
                     </tr>

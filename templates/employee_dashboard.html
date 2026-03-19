@@ -45,12 +45,12 @@
 
         <div class="metric-row">
             <div class="metric-label">Time In</div>
-            <div class="metric-value">{{ today_attendance.time_in if today_attendance else '—' }}</div>
+            <div class="metric-value">{{ format_datetime_12h(today_attendance.time_in) if today_attendance else '—' }}</div>
         </div>
 
         <div class="metric-row">
             <div class="metric-label">Time Out</div>
-            <div class="metric-value">{{ today_attendance.time_out if today_attendance else '—' }}</div>
+            <div class="metric-value">{{ format_datetime_12h(today_attendance.time_out) if today_attendance else '—' }}</div>
         </div>
 
         <div class="metric-row">
@@ -122,7 +122,7 @@
                         <div>
                             <div style="font-weight:900; color:white;">{{ notif.title }}</div>
                             <div class="muted small" style="margin-top:5px;">{{ notif.message }}</div>
-                            <div class="small muted" style="margin-top:8px;">{{ notif.created_at }}</div>
+                            <div class="small muted" style="margin-top:8px;">{{ format_datetime_12h(notif.created_at) }}</div>
                         </div>
                         <div>
                             {% if notif.is_read == 0 %}
@@ -146,7 +146,7 @@
                 <div class="log-item">
                     <div style="font-weight:900; color:white;">{{ log.action }}</div>
                     <div class="muted small" style="margin-top:5px;">{{ log.details }}</div>
-                    <div class="small muted" style="margin-top:8px;">{{ log.created_at }}</div>
+                    <div class="small muted" style="margin-top:8px;">{{ format_datetime_12h(log.created_at) }}</div>
                 </div>
             {% endfor %}
         {% else %}
