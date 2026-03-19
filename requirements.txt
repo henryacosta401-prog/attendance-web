@@ -1,5 +1,4 @@
 Flask
-gspread
-google-auth
-gunicorn
 Werkzeug
+gunicorn
+psycopg2-binary
