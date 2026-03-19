@@ -97,6 +97,10 @@ def close_db(error=None):
         db.close()
 
 
+def convert_query(query: str) -> str:
+    return query.replace("?", "%s")
+
+
 def fetchone(query, params=()):
     db = get_db()
     if using_postgres():
@@ -130,15 +134,6 @@ def execute_db(query, params=(), commit=False):
             db.commit()
 
 
-def convert_query(query):
-    # Convert sqlite ? placeholders to postgres %s placeholders
-    return query.replace("?", "%s")
-
-
-def db_commit():
-    get_db().commit()
-
-
 # =========================
 # BASIC HELPERS
 # =========================
@@ -161,6 +156,12 @@ def login_required(role=None):
                 flash("Please log in first.", "warning")
                 return redirect(url_for("login"))
 
+            user = get_user_by_id(session["user_id"])
+            if not user:
+                session.clear()
+                flash("Your session expired. Please log in again.", "warning")
+                return redirect(url_for("login"))
+
             if role and session.get("role") != role:
                 flash("Access denied.", "danger")
                 if session.get("role") == "admin":
@@ -169,18 +170,6 @@ def login_required(role=None):
             return f(*args, **kwargs)
         return wrapped
     return decorator
-
-
-def pg_table_exists(table_name):
-    row = fetchone("""
-        SELECT EXISTS (
-            SELECT FROM information_schema.tables
-            WHERE table_schema = 'public' AND table_name = ?
-        ) AS exists
-    """, (table_name,))
-    if not row:
-        return False
-    return bool(row["exists"] if isinstance(row, dict) else row["exists"])
 
 
 # =========================
@@ -379,7 +368,6 @@ def init_postgres_db():
                 created_at TEXT NOT NULL
             )
         """)
-
     db.commit()
 
     admin = fetchone("SELECT * FROM users WHERE username = ?", ("admin",))
@@ -405,7 +393,6 @@ def init_postgres_db():
 
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-
 with app.app_context():
     init_db()
 
@@ -606,11 +593,12 @@ def inject_globals():
 
     if session.get("user_id"):
         user = get_user_by_id(session["user_id"])
-        unread = fetchone("""
-            SELECT COUNT(*) AS cnt FROM notifications
-            WHERE user_id = ? AND is_read = 0
-        """, (session["user_id"],))
-        unread_count = unread["cnt"] if unread else 0
+        if user:
+            unread = fetchone("""
+                SELECT COUNT(*) AS cnt FROM notifications
+                WHERE user_id = ? AND is_read = 0
+            """, (session["user_id"],))
+            unread_count = unread["cnt"] if unread else 0
 
     return dict(
         current_user=user,
@@ -625,6 +613,11 @@ def inject_globals():
 @app.route("/")
 def home():
     if "user_id" in session:
+        user = get_user_by_id(session["user_id"])
+        if not user:
+            session.clear()
+            return redirect(url_for("login"))
+
         if session.get("role") == "admin":
             return redirect(url_for("admin_dashboard"))
         return redirect(url_for("dashboard"))
@@ -678,6 +671,11 @@ def logout():
 @login_required(role="employee")
 def dashboard():
     user = get_user_by_id(session["user_id"])
+    if not user:
+        session.clear()
+        flash("Your session expired. Please log in again.", "warning")
+        return redirect(url_for("login"))
+
     today_attendance = get_today_attendance(user["id"])
     open_break = get_open_break(user["id"])
 
@@ -738,6 +736,10 @@ def employee_history():
 @login_required(role="employee")
 def employee_profile():
     user = get_user_by_id(session["user_id"])
+    if not user:
+        session.clear()
+        flash("Your session expired. Please log in again.", "warning")
+        return redirect(url_for("login"))
 
     if request.method == "POST":
         full_name = request.form.get("full_name", "").strip()
@@ -783,6 +785,11 @@ def time_in():
     user_id = session["user_id"]
     user = get_user_by_id(user_id)
 
+    if not user:
+        session.clear()
+        flash("Your session expired. Please log in again.", "warning")
+        return redirect(url_for("login"))
+
     existing = get_today_attendance(user_id)
     if existing and existing["time_in"] and not existing["time_out"]:
         flash("You are already timed in.", "warning")
@@ -801,38 +808,16 @@ def time_in():
     shift_start = parse_shift_start(user["shift_start"] if user else DEFAULT_SHIFT_START)
     late_flag, late_minutes = calculate_late_info(current_time, shift_start)
 
-    if existing and existing["time_out"]:
-        execute_db("""
-            INSERT INTO attendance (
-                user_id, work_date, time_in, time_out, status, proof_file, notes,
-                late_flag, late_minutes, created_at, updated_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            user_id, today_str(), current_time, None, "Timed In", proof_filename,
-            request.form.get("notes", "").strip(), late_flag, late_minutes, now_str(), now_str()
-        ), commit=True)
-    elif not existing:
-        execute_db("""
-            INSERT INTO attendance (
-                user_id, work_date, time_in, time_out, status, proof_file, notes,
-                late_flag, late_minutes, created_at, updated_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            user_id, today_str(), current_time, None, "Timed In", proof_filename,
-            request.form.get("notes", "").strip(), late_flag, late_minutes, now_str(), now_str()
-        ), commit=True)
-    else:
-        execute_db("""
-            UPDATE attendance
-            SET time_in = ?, status = ?, proof_file = ?, notes = ?,
-                late_flag = ?, late_minutes = ?, updated_at = ?
-            WHERE id = ?
-        """, (
-            current_time, "Timed In", proof_filename, request.form.get("notes", "").strip(),
-            late_flag, late_minutes, now_str(), existing["id"]
-        ), commit=True)
+    execute_db("""
+        INSERT INTO attendance (
+            user_id, work_date, time_in, time_out, status, proof_file, notes,
+            late_flag, late_minutes, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        user_id, today_str(), current_time, None, "Timed In", proof_filename,
+        request.form.get("notes", "").strip(), late_flag, late_minutes, now_str(), now_str()
+    ), commit=True)
 
     if late_flag:
         create_notification(user_id, "Late Time-In", f"You timed in late by {late_minutes} minute(s). Shift start: {shift_start} ET.")
@@ -849,6 +834,7 @@ def time_in():
 def start_break():
     user_id = session["user_id"]
     attendance = get_today_attendance(user_id)
+
     if not attendance or not attendance["time_in"] or attendance["time_out"]:
         flash("You must be timed in first.", "danger")
         return redirect(url_for("dashboard"))
@@ -1012,6 +998,12 @@ def get_admin_employee_rows(status_filter="", search=""):
 @app.route("/admin")
 @login_required(role="admin")
 def admin_dashboard():
+    current_admin = get_user_by_id(session["user_id"])
+    if not current_admin:
+        session.clear()
+        flash("Your session expired. Please log in again.", "warning")
+        return redirect(url_for("login"))
+
     status_filter = request.args.get("status", "").strip()
     search = request.args.get("search", "").strip()
 
@@ -1030,11 +1022,12 @@ def admin_dashboard():
         LIMIT 25
     """)
 
-    late_today = fetchone("""
+    late_today_row = fetchone("""
         SELECT COUNT(*) AS cnt
         FROM attendance
         WHERE work_date = ? AND late_flag = 1
-    """, (today_str(),))["cnt"]
+    """, (today_str(),))
+    late_today = late_today_row["cnt"] if late_today_row else 0
 
     stats_employees = [get_user_live_status(user["id"]) for user in all_users]
 
