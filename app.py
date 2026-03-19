@@ -405,7 +405,9 @@ def init_postgres_db():
 
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-init_db()
+
+with app.app_context():
+    init_db()
 
 
 # =========================
