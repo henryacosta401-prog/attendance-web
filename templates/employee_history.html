@@ -29,8 +29,8 @@
                     {% for item in records %}
                     <tr>
                         <td>{{ item.row.work_date }}</td>
-                        <td>{{ item.row.time_in or '—' }}</td>
-                        <td>{{ item.row.time_out or '—' }}</td>
+                        <td>{{ format_datetime_12h(item.row.time_in) if item.row.time_in else '—' }}</td>
+                        <td>{{ format_datetime_12h(item.row.time_out) if item.row.time_out else '—' }}</td>
                         <td>{{ item.row.status }}</td>
                         <td>
                             {% if item.row.late_flag == 1 %}
