@@ -203,6 +203,19 @@ def init_sqlite_db():
     """)
 
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS incident_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            error_type TEXT NOT NULL,
+            report_date TEXT NOT NULL,
+            message TEXT,
+            created_by INTEGER,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    """)
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS attendance (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
@@ -257,6 +270,7 @@ def init_sqlite_db():
         )
     """)
 
+    # users migration
     existing_cols_users = [row[1] for row in cursor.execute("PRAGMA table_info(users)").fetchall()]
     if "department" not in existing_cols_users:
         cursor.execute("ALTER TABLE users ADD COLUMN department TEXT DEFAULT 'Stellar Seats'")
@@ -267,11 +281,26 @@ def init_sqlite_db():
     if "is_active" not in existing_cols_users:
         cursor.execute("ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
 
+    # attendance migration
     existing_cols_att = [row[1] for row in cursor.execute("PRAGMA table_info(attendance)").fetchall()]
     if "late_flag" not in existing_cols_att:
         cursor.execute("ALTER TABLE attendance ADD COLUMN late_flag INTEGER NOT NULL DEFAULT 0")
     if "late_minutes" not in existing_cols_att:
         cursor.execute("ALTER TABLE attendance ADD COLUMN late_minutes INTEGER NOT NULL DEFAULT 0")
+
+    # incident reports migration (this fixes your current error)
+    existing_cols_incident = [row[1] for row in cursor.execute("PRAGMA table_info(incident_reports)").fetchall()]
+    if existing_cols_incident:
+        if "error_type" not in existing_cols_incident:
+            cursor.execute("ALTER TABLE incident_reports ADD COLUMN error_type TEXT")
+        if "report_date" not in existing_cols_incident:
+            cursor.execute("ALTER TABLE incident_reports ADD COLUMN report_date TEXT")
+        if "message" not in existing_cols_incident:
+            cursor.execute("ALTER TABLE incident_reports ADD COLUMN message TEXT")
+        if "created_by" not in existing_cols_incident:
+            cursor.execute("ALTER TABLE incident_reports ADD COLUMN created_by INTEGER")
+        if "created_at" not in existing_cols_incident:
+            cursor.execute("ALTER TABLE incident_reports ADD COLUMN created_at TEXT")
 
     db.commit()
 
@@ -303,6 +332,18 @@ def init_sqlite_db():
 def init_postgres_db():
     db = get_db()
     with db.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS incident_reports (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                error_type TEXT NOT NULL,
+                report_date TEXT NOT NULL,
+                message TEXT,
+                created_by INTEGER,
+                created_at TEXT NOT NULL
+            )
+        """)
+
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
@@ -368,6 +409,7 @@ def init_postgres_db():
                 created_at TEXT NOT NULL
             )
         """)
+
     db.commit()
 
     admin = fetchone("SELECT * FROM users WHERE username = ?", ("admin",))
@@ -405,6 +447,33 @@ def create_notification(user_id, title, message):
         INSERT INTO notifications (user_id, title, message, created_at, is_read)
         VALUES (?, ?, ?, ?, 0)
     """, (user_id, title, message, now_str()), commit=True)
+
+
+def create_incident(user_id, error_type, report_date, message, admin_id):
+    user = get_user_by_id(user_id)
+
+    execute_db("""
+        INSERT INTO incident_reports (
+            user_id,
+            employee_name,
+            error_type,
+            incident_date,
+            report_date,
+            message,
+            created_by,
+            created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        user_id,
+        user["full_name"] if user else "",
+        error_type,
+        report_date,
+        report_date,
+        message,
+        admin_id,
+        now_str()
+    ), commit=True)
 
 
 def log_activity(user_id, action, details=""):
@@ -1055,6 +1124,14 @@ def admin_dashboard():
         LIMIT 25
     """)
 
+    reports = fetchall("""
+        SELECT r.*, u.full_name
+        FROM incident_reports r
+        LEFT JOIN users u ON u.id = r.user_id
+        ORDER BY r.id DESC
+        LIMIT 30
+    """)
+
     late_today_row = fetchone("""
         SELECT COUNT(*) AS cnt
         FROM attendance
@@ -1077,6 +1154,7 @@ def admin_dashboard():
         "admin_dashboard.html",
         employees=employees,
         logs=logs,
+        reports=reports,
         stats=stats,
         status_filter=status_filter,
         search=search
@@ -1297,6 +1375,7 @@ def delete_employee(user_id):
     execute_db("DELETE FROM breaks WHERE user_id = ?", (user_id,), commit=True)
     execute_db("DELETE FROM attendance WHERE user_id = ?", (user_id,), commit=True)
     execute_db("DELETE FROM activity_logs WHERE user_id = ?", (user_id,), commit=True)
+    execute_db("DELETE FROM incident_reports WHERE user_id = ?", (user_id,), commit=True)
     execute_db("DELETE FROM users WHERE id = ?", (user_id,), commit=True)
 
     log_activity(session["user_id"], "DELETE EMPLOYEE", f"Deleted employee: {user['full_name']}")
@@ -1318,6 +1397,39 @@ def send_admin_notification():
     create_notification(user_id, title, message)
     log_activity(session["user_id"], "SEND NOTIFICATION", f"Sent notification to user ID {user_id}")
     flash("Notification sent successfully.", "success")
+    return redirect(url_for("admin_dashboard"))
+
+
+@app.route("/admin/create-incident", methods=["POST"])
+@login_required(role="admin")
+def create_incident_route():
+    user_id = request.form.get("user_id")
+    error_type = request.form.get("error_type", "").strip()
+    report_date = request.form.get("report_date", "").strip()
+    message = request.form.get("message", "").strip()
+
+    if not user_id or not error_type or not report_date:
+        flash("All fields are required.", "danger")
+        return redirect(url_for("admin_dashboard"))
+
+    employee = get_user_by_id(user_id)
+
+    create_incident(
+        user_id=user_id,
+        error_type=error_type,
+        report_date=report_date,
+        message=message,
+        admin_id=session["user_id"]
+    )
+
+    employee_name = employee["full_name"] if employee else f"User {user_id}"
+    log_activity(
+        session["user_id"],
+        "CREATE INCIDENT",
+        f"{error_type} report created for {employee_name}"
+    )
+
+    flash("Incident report created.", "success")
     return redirect(url_for("admin_dashboard"))
 
 
