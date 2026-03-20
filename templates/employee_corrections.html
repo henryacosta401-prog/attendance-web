@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Correction Requests{% endblock %}
+
+{% block content %}
+<div class="hero-card" style="margin-bottom:20px;">
+    <div class="hero">
+        <div>
+            <h1>Correction Requests</h1>
+            <p class="section-subtitle">Submit attendance corrections for missed logs, break issues, or proof updates.</p>
+        </div>
+        <div class="status status-purple">Employee Requests</div>
+    </div>
+</div>
+
+<div class="grid grid-2">
+    <div class="card">
+        <div class="section-title">Submit Request</div>
+        <form method="POST">
+            <label>Request Type</label>
+            <select name="request_type" class="input" required>
+                <option value="">Select type</option>
+                <option>Missed Time In</option>
+                <option>Missed Time Out</option>
+                <option>Wrong Break</option>
+                <option>Wrong Proof</option>
+                <option>Other</option>
+            </select>
+
+            <label style="display:block; margin-top:12px;">Work Date</label>
+            <input type="date" name="work_date" class="input" required>
+
+            <label style="display:block; margin-top:12px;">Details</label>
+            <textarea name="message" class="textarea" rows="5" placeholder="Explain what needs to be corrected..." required></textarea>
+
+            <button class="btn btn-primary" type="submit" style="width:100%; margin-top:16px;">Submit Request</button>
+        </form>
+    </div>
+
+    <div class="card soft">
+        <div class="section-title">My Requests</div>
+        {% if requests %}
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>Date</th>
+                            <th>Status</th>
+                            <th>Admin Note</th>
+                            <th>Created</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in requests %}
+                        <tr>
+                            <td>{{ item.request_type }}</td>
+                            <td>{{ item.work_date }}</td>
+                            <td>{{ item.status }}</td>
+                            <td>{{ item.admin_note if item.admin_note else '-' }}</td>
+                            <td>{{ format_datetime_12h(item.created_at) }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <p class="muted">No correction requests yet.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

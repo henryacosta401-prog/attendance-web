@@ -269,6 +269,22 @@ def init_sqlite_db():
     """)
 
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS correction_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            request_type TEXT NOT NULL,
+            work_date TEXT NOT NULL,
+            message TEXT,
+            status TEXT NOT NULL DEFAULT 'Pending',
+            admin_note TEXT,
+            reviewed_by INTEGER,
+            reviewed_at TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    """)
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS activity_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
@@ -322,8 +338,19 @@ def init_sqlite_db():
             cursor.execute("ALTER TABLE incident_reports ADD COLUMN reviewed_by INTEGER")
         if "reviewed_at" not in existing_cols_incident:
             cursor.execute("ALTER TABLE incident_reports ADD COLUMN reviewed_at TEXT")
-        if "created_at" not in existing_cols_incident:
-            cursor.execute("ALTER TABLE incident_reports ADD COLUMN created_at TEXT")
+    if "created_at" not in existing_cols_incident:
+        cursor.execute("ALTER TABLE incident_reports ADD COLUMN created_at TEXT")
+
+    existing_cols_corrections = [row[1] for row in cursor.execute("PRAGMA table_info(correction_requests)").fetchall()]
+    if existing_cols_corrections:
+        if "status" not in existing_cols_corrections:
+            cursor.execute("ALTER TABLE correction_requests ADD COLUMN status TEXT NOT NULL DEFAULT 'Pending'")
+        if "admin_note" not in existing_cols_corrections:
+            cursor.execute("ALTER TABLE correction_requests ADD COLUMN admin_note TEXT")
+        if "reviewed_by" not in existing_cols_corrections:
+            cursor.execute("ALTER TABLE correction_requests ADD COLUMN reviewed_by INTEGER")
+        if "reviewed_at" not in existing_cols_corrections:
+            cursor.execute("ALTER TABLE correction_requests ADD COLUMN reviewed_at TEXT")
 
     db.commit()
 
@@ -448,6 +475,25 @@ def init_postgres_db():
                 created_at TEXT NOT NULL
             )
         """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS correction_requests (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                request_type TEXT NOT NULL,
+                work_date TEXT NOT NULL,
+                message TEXT,
+                status TEXT NOT NULL DEFAULT 'Pending',
+                admin_note TEXT,
+                reviewed_by INTEGER,
+                reviewed_at TEXT,
+                created_at TEXT NOT NULL
+            )
+        """)
+        cur.execute("ALTER TABLE correction_requests ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'Pending'")
+        cur.execute("ALTER TABLE correction_requests ADD COLUMN IF NOT EXISTS admin_note TEXT")
+        cur.execute("ALTER TABLE correction_requests ADD COLUMN IF NOT EXISTS reviewed_by INTEGER")
+        cur.execute("ALTER TABLE correction_requests ADD COLUMN IF NOT EXISTS reviewed_at TEXT")
 
     db.commit()
 
@@ -941,6 +987,43 @@ def employee_profile():
     return render_template("employee_profile.html", user=user)
 
 
+@app.route("/corrections", methods=["GET", "POST"])
+@login_required(role="employee")
+def employee_corrections():
+    user = get_user_by_id(session["user_id"])
+    if not user:
+        session.clear()
+        flash("Your session expired. Please log in again.", "warning")
+        return redirect(url_for("login"))
+
+    if request.method == "POST":
+        request_type = request.form.get("request_type", "").strip()
+        work_date = request.form.get("work_date", "").strip()
+        message = request.form.get("message", "").strip()
+
+        if request_type not in {"Missed Time In", "Missed Time Out", "Wrong Break", "Wrong Proof", "Other"}:
+            flash("Please choose a valid correction type.", "danger")
+            return redirect(url_for("employee_corrections"))
+
+        if not work_date or not message:
+            flash("Work date and details are required.", "danger")
+            return redirect(url_for("employee_corrections"))
+
+        execute_db("""
+            INSERT INTO correction_requests (
+                user_id, request_type, work_date, message, status, created_at
+            )
+            VALUES (?, ?, ?, ?, 'Pending', ?)
+        """, (user["id"], request_type, work_date, message, now_str()), commit=True)
+
+        log_activity(user["id"], "CORRECTION REQUEST", f"Submitted {request_type} request for {work_date}")
+        flash("Correction request submitted.", "success")
+        return redirect(url_for("employee_corrections"))
+
+    requests = get_correction_requests(user_id=user["id"])
+    return render_template("employee_corrections.html", requests=requests)
+
+
 @app.route("/time-in", methods=["POST"])
 @login_required(role="employee")
 def time_in():
@@ -1135,7 +1218,7 @@ def uploaded_file(filename):
 # =========================
 # ADMIN
 # =========================
-def get_admin_employee_rows(status_filter="", search=""):
+def get_admin_employee_rows(status_filter="", search="", over_break_only=""):
     users = fetchall("""
         SELECT * FROM users
         WHERE role = 'employee'
@@ -1169,6 +1252,9 @@ def get_admin_employee_rows(status_filter="", search=""):
         row["over_break_flag"] = 1 if row["over_break_minutes"] > 0 else 0
 
         if status_filter and row["status"] != status_filter:
+            continue
+
+        if over_break_only == "1" and row["over_break_flag"] != 1:
             continue
 
         if search:
@@ -1212,6 +1298,36 @@ def get_incident_reports(report_employee="", report_type="", report_date_from=""
     return fetchall(report_sql, report_params)
 
 
+def get_correction_requests(user_id=None, status="", date_from="", date_to=""):
+    sql = """
+        SELECT c.*, u.full_name, u.username, reviewer.full_name AS reviewed_by_name
+        FROM correction_requests c
+        JOIN users u ON u.id = c.user_id
+        LEFT JOIN users reviewer ON reviewer.id = c.reviewed_by
+        WHERE 1=1
+    """
+    params = []
+
+    if user_id:
+        sql += " AND c.user_id = ?"
+        params.append(user_id)
+
+    if status:
+        sql += " AND c.status = ?"
+        params.append(status)
+
+    if date_from:
+        sql += " AND c.work_date >= ?"
+        params.append(date_from)
+
+    if date_to:
+        sql += " AND c.work_date <= ?"
+        params.append(date_to)
+
+    sql += " ORDER BY c.id DESC LIMIT 200"
+    return fetchall(sql, params)
+
+
 @app.route("/admin")
 @login_required(role="admin")
 def admin_dashboard():
@@ -1223,8 +1339,9 @@ def admin_dashboard():
 
     status_filter = request.args.get("status", "").strip()
     search = request.args.get("search", "").strip()
+    over_break_only = request.args.get("over_break_only", "").strip()
 
-    employees = get_admin_employee_rows(status_filter=status_filter, search=search)
+    employees = get_admin_employee_rows(status_filter=status_filter, search=search, over_break_only=over_break_only)
     all_employee_rows = get_admin_employee_rows()
     all_users = fetchall("""
         SELECT * FROM users
@@ -1266,7 +1383,8 @@ def admin_dashboard():
         stats=stats,
         break_limit_minutes=BREAK_LIMIT_MINUTES,
         status_filter=status_filter,
-        search=search
+        search=search,
+        over_break_only=over_break_only
     )
 
 
@@ -1275,7 +1393,8 @@ def admin_dashboard():
 def admin_live_status():
     employees = get_admin_employee_rows(
         status_filter=request.args.get("status", "").strip(),
-        search=request.args.get("search", "").strip()
+        search=request.args.get("search", "").strip(),
+        over_break_only=request.args.get("over_break_only", "").strip()
     )
     return jsonify(employees)
 
@@ -1285,6 +1404,7 @@ def admin_live_status():
 def admin_history():
     search = request.args.get("search", "").strip()
     late_only = request.args.get("late_only", "").strip()
+    over_break_only = request.args.get("over_break_only", "").strip()
     date_from = request.args.get("date_from", "").strip()
     date_to = request.args.get("date_to", "").strip()
 
@@ -1318,21 +1438,181 @@ def admin_history():
 
     enriched = []
     for row in rows:
-        enriched.append({
+        item = {
             "row": row,
             "break_minutes": total_break_minutes(row["id"]),
             "work_minutes": total_work_minutes(row),
             "over_break_minutes": get_overbreak_minutes(total_break_minutes(row["id"]), row["break_limit_minutes"])
-        })
+        }
+        if over_break_only == "1" and item["over_break_minutes"] <= 0:
+            continue
+        enriched.append(item)
 
     return render_template(
         "admin_history.html",
         records=enriched,
         search=search,
         late_only=late_only,
+        over_break_only=over_break_only,
         date_from=date_from,
         date_to=date_to,
         minutes_to_hm=minutes_to_hm
+    )
+
+
+@app.route("/admin/corrections")
+@login_required(role="admin")
+def admin_corrections():
+    status = request.args.get("status", "").strip()
+    date_from = request.args.get("date_from", "").strip()
+    date_to = request.args.get("date_to", "").strip()
+    requests = get_correction_requests(status=status, date_from=date_from, date_to=date_to)
+
+    return render_template(
+        "admin_corrections.html",
+        requests=requests,
+        status=status,
+        date_from=date_from,
+        date_to=date_to
+    )
+
+
+@app.route("/admin/corrections/<int:request_id>/update", methods=["POST"])
+@login_required(role="admin")
+def update_correction_request(request_id):
+    status = request.form.get("status", "").strip()
+    admin_note = request.form.get("admin_note", "").strip()
+
+    if status not in {"Pending", "Approved", "Rejected"}:
+        flash("Invalid correction status.", "danger")
+        return redirect(url_for("admin_corrections"))
+
+    correction = fetchone("""
+        SELECT c.*, u.full_name
+        FROM correction_requests c
+        JOIN users u ON u.id = c.user_id
+        WHERE c.id = ?
+    """, (request_id,))
+
+    if not correction:
+        flash("Correction request not found.", "danger")
+        return redirect(url_for("admin_corrections"))
+
+    reviewed_at = now_str() if status in {"Approved", "Rejected"} else None
+    reviewed_by = session["user_id"] if status in {"Approved", "Rejected"} else None
+
+    execute_db("""
+        UPDATE correction_requests
+        SET status = ?, admin_note = ?, reviewed_by = ?, reviewed_at = ?
+        WHERE id = ?
+    """, (status, admin_note, reviewed_by, reviewed_at, request_id), commit=True)
+
+    create_notification(
+        correction["user_id"],
+        "Correction Request Updated",
+        f"Your {correction['request_type']} request for {correction['work_date']} is now {status}."
+    )
+    log_activity(session["user_id"], "REVIEW CORRECTION", f"{status} correction request #{request_id} for {correction['full_name']}")
+    flash("Correction request updated.", "success")
+    return redirect(url_for("admin_corrections"))
+
+
+@app.route("/admin/history/export.xlsx")
+@login_required(role="admin")
+def export_admin_history_excel():
+    search = request.args.get("search", "").strip()
+    late_only = request.args.get("late_only", "").strip()
+    over_break_only = request.args.get("over_break_only", "").strip()
+    date_from = request.args.get("date_from", "").strip()
+    date_to = request.args.get("date_to", "").strip()
+
+    sql = """
+        SELECT a.*, u.full_name, u.username, u.break_limit_minutes
+        FROM attendance a
+        JOIN users u ON u.id = a.user_id
+        WHERE 1=1
+    """
+    params = []
+
+    if search:
+        sql += " AND (LOWER(u.full_name) LIKE ? OR LOWER(u.username) LIKE ?)"
+        s = f"%{search.lower()}%"
+        params.extend([s, s])
+
+    if late_only == "1":
+        sql += " AND a.late_flag = 1"
+
+    if date_from:
+        sql += " AND a.work_date >= ?"
+        params.append(date_from)
+
+    if date_to:
+        sql += " AND a.work_date <= ?"
+        params.append(date_to)
+
+    sql += " ORDER BY a.work_date DESC, a.id DESC LIMIT 500"
+    rows = fetchall(sql, params)
+
+    try:
+        from openpyxl import Workbook
+    except Exception:
+        flash("Excel export requires openpyxl. Install dependencies and try again.", "danger")
+        return redirect(url_for(
+            "admin_history",
+            search=search,
+            late_only=late_only,
+            over_break_only=over_break_only,
+            date_from=date_from,
+            date_to=date_to
+        ))
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Attendance History"
+    sheet.append([
+        "Employee",
+        "Username",
+        "Work Date",
+        "Time In",
+        "Time Out",
+        "Status",
+        "Late Minutes",
+        "Break Limit",
+        "Break Minutes",
+        "Overbreak Minutes",
+        "Work Minutes",
+        "Proof File"
+    ])
+
+    for row in rows:
+        break_minutes = total_break_minutes(row["id"])
+        over_break_minutes = get_overbreak_minutes(break_minutes, row["break_limit_minutes"])
+        if over_break_only == "1" and over_break_minutes <= 0:
+            continue
+
+        sheet.append([
+            row["full_name"] or "",
+            row["username"] or "",
+            row["work_date"] or "",
+            row["time_in"] or "",
+            row["time_out"] or "",
+            row["status"] or "",
+            row["late_minutes"] if row["late_flag"] else 0,
+            parse_break_limit_minutes(row["break_limit_minutes"]),
+            break_minutes,
+            over_break_minutes,
+            total_work_minutes(row),
+            row["proof_file"] or ""
+        ])
+
+    output = BytesIO()
+    workbook.save(output)
+    output.seek(0)
+
+    return Response(
+        output.getvalue(),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename=\"attendance-history-{today_str()}.xlsx\"'}
     )
 
 

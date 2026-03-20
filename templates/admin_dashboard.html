@@ -30,8 +30,9 @@ document.addEventListener("DOMContentLoaded", function () {
         try {
             const searchVal = document.getElementById("searchBox") ? document.getElementById("searchBox").value : "";
             const statusVal = document.getElementById("statusFilter") ? document.getElementById("statusFilter").value : "";
+            const overBreakOnlyVal = document.getElementById("overBreakOnly") && document.getElementById("overBreakOnly").checked ? "1" : "";
 
-            const response = await fetch(`/admin/live-status?search=${encodeURIComponent(searchVal)}&status=${encodeURIComponent(statusVal)}`);
+            const response = await fetch(`/admin/live-status?search=${encodeURIComponent(searchVal)}&status=${encodeURIComponent(statusVal)}&over_break_only=${encodeURIComponent(overBreakOnlyVal)}`);
             const data = await response.json();
 
             const tbody = document.getElementById("liveStatusBody");
@@ -100,9 +101,11 @@ document.addEventListener("DOMContentLoaded", function () {
 
     const searchBox = document.getElementById("searchBox");
     const statusFilter = document.getElementById("statusFilter");
+    const overBreakOnly = document.getElementById("overBreakOnly");
 
     if (searchBox) searchBox.addEventListener("input", refreshLiveStatus);
     if (statusFilter) statusFilter.addEventListener("change", refreshLiveStatus);
+    if (overBreakOnly) overBreakOnly.addEventListener("change", refreshLiveStatus);
 });
 </script>
 {% endblock %}
@@ -160,6 +163,12 @@ document.addEventListener("DOMContentLoaded", function () {
                     <option value="Timed Out" {% if status_filter == 'Timed Out' %}selected{% endif %}>Timed Out</option>
                     <option value="Offline" {% if status_filter == 'Offline' %}selected{% endif %}>Offline</option>
                 </select>
+            </div>
+            <div>
+                <label style="display:flex; align-items:center; gap:10px; margin-top:8px;">
+                    <input id="overBreakOnly" type="checkbox" {% if over_break_only == '1' %}checked{% endif %}>
+                    <span>Overbreak Only</span>
+                </label>
             </div>
         </div>
 

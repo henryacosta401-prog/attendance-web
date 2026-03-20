@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Correction Requests{% endblock %}
+
+{% block content %}
+<div class="hero-card" style="margin-bottom:20px;">
+    <div class="hero">
+        <div>
+            <h1>Correction Requests</h1>
+            <p class="section-subtitle">Review employee requests for attendance corrections and respond with notes.</p>
+        </div>
+        <div class="status status-yellow">Admin Review</div>
+    </div>
+</div>
+
+<div class="card soft" style="margin-bottom:18px;">
+    <form method="GET" class="grid grid-4">
+        <div>
+            <label>Status</label>
+            <select class="input" name="status">
+                <option value="">All</option>
+                <option value="Pending" {% if status == 'Pending' %}selected{% endif %}>Pending</option>
+                <option value="Approved" {% if status == 'Approved' %}selected{% endif %}>Approved</option>
+                <option value="Rejected" {% if status == 'Rejected' %}selected{% endif %}>Rejected</option>
+            </select>
+        </div>
+        <div>
+            <label>Date From</label>
+            <input type="date" class="input" name="date_from" value="{{ date_from }}">
+        </div>
+        <div>
+            <label>Date To</label>
+            <input type="date" class="input" name="date_to" value="{{ date_to }}">
+        </div>
+        <div style="display:flex; align-items:end; gap:10px;">
+            <button class="btn btn-primary" type="submit">Filter</button>
+            <a class="btn btn-dark" href="{{ url_for('admin_corrections') }}">Clear</a>
+        </div>
+    </form>
+</div>
+
+<div class="card">
+    {% if requests %}
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Employee</th>
+                        <th>Type</th>
+                        <th>Date</th>
+                        <th>Message</th>
+                        <th>Status</th>
+                        <th>Admin Note</th>
+                        <th>Review</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in requests %}
+                    <tr>
+                        <td>
+                            <div style="font-weight:800;">{{ item.full_name }}</div>
+                            <div class="small muted">@{{ item.username }}</div>
+                        </td>
+                        <td>{{ item.request_type }}</td>
+                        <td>{{ item.work_date }}</td>
+                        <td style="min-width:220px;">{{ item.message }}</td>
+                        <td>{{ item.status }}</td>
+                        <td>{{ item.admin_note if item.admin_note else '-' }}</td>
+                        <td style="min-width:260px;">
+                            <form method="POST" action="{{ url_for('update_correction_request', request_id=item.id) }}" class="grid" style="gap:8px;">
+                                <select class="input" name="status">
+                                    <option value="Pending" {% if item.status == 'Pending' %}selected{% endif %}>Pending</option>
+                                    <option value="Approved" {% if item.status == 'Approved' %}selected{% endif %}>Approved</option>
+                                    <option value="Rejected" {% if item.status == 'Rejected' %}selected{% endif %}>Rejected</option>
+                                </select>
+                                <textarea class="textarea" name="admin_note" rows="3" placeholder="Add a note...">{{ item.admin_note if item.admin_note else '' }}</textarea>
+                                <button class="btn btn-primary" type="submit">Update</button>
+                            </form>
+                            {% if item.reviewed_at %}
+                                <div class="small muted" style="margin-top:8px;">{{ format_datetime_12h(item.reviewed_at) }} by {{ item.reviewed_by_name if item.reviewed_by_name else 'Admin' }}</div>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <p class="muted">No correction requests found.</p>
+    {% endif %}
+</div>
+{% endblock %}

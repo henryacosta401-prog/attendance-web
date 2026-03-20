@@ -31,10 +31,18 @@
                     <option value="1" {% if late_only == '1' %}selected{% endif %}>Late only</option>
                 </select>
             </div>
+            <div>
+                <label>Overbreak Only</label>
+                <select class="input" name="over_break_only">
+                    <option value="">All</option>
+                    <option value="1" {% if over_break_only == '1' %}selected{% endif %}>Overbreak only</option>
+                </select>
+            </div>
         </div>
 
         <div class="top-actions" style="margin-top:16px;">
             <button class="btn btn-primary" type="submit">Filter</button>
+            <a class="btn btn-purple" href="{{ url_for('export_admin_history_excel', search=search, late_only=late_only, over_break_only=over_break_only, date_from=date_from, date_to=date_to) }}">Export Excel</a>
             <a class="btn btn-gray" href="{{ url_for('admin_history') }}">Reset</a>
         </div>
     </form>

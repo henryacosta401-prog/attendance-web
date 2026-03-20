@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Stellar Seats Attendance{% endblock %}</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='stellar-seats-logo.svg') }}">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 
     <style>
@@ -87,16 +88,18 @@
         }
 
         .brand-logo {
-            width: 42px;
-            height: 42px;
-            border-radius: 14px;
-            display: grid;
-            place-items: center;
-            font-size: 18px;
-            font-weight: 900;
-            color: white;
-            background: linear-gradient(135deg, var(--blue), var(--purple));
-            box-shadow: 0 10px 24px rgba(59,130,246,0.28);
+            width: 52px;
+            height: 52px;
+            flex: 0 0 auto;
+            display: block;
+        }
+
+        .brand-logo img {
+            width: 100%;
+            height: 100%;
+            display: block;
+            object-fit: contain;
+            filter: drop-shadow(0 10px 20px rgba(15, 23, 42, 0.34));
         }
 
         .brand {
@@ -105,17 +108,30 @@
             line-height: 1.1;
         }
 
+        .brand.centered {
+            align-items: center;
+            text-align: center;
+        }
+
         .brand-title {
             font-size: 18px;
             font-weight: 900;
             color: var(--white);
-            letter-spacing: 0.2px;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
         }
 
         .brand-sub {
             font-size: 12px;
             color: var(--muted);
-            margin-top: 4px;
+            margin-top: 5px;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+        }
+
+        .brand-sub.strong {
+            color: #cbd5e1;
+            letter-spacing: 0.16em;
         }
 
         .nav-right {
@@ -632,7 +648,9 @@
 {% if session.get('user_id') %}
 <div class="navbar">
     <div class="brand-wrap">
-        <div class="brand-logo">S</div>
+        <div class="brand-logo">
+            <img src="{{ url_for('static', filename='stellar-seats-logo.svg') }}" alt="Stellar Seats logo">
+        </div>
         <div class="brand">
             <div class="brand-title">Stellar Seats</div>
             <div class="brand-sub">Attendance Dashboard v3</div>
@@ -644,11 +662,13 @@
             <a class="pill-link {% if request.endpoint == 'admin_dashboard' %}active{% endif %}" href="{{ url_for('admin_dashboard') }}">Dashboard</a>
             <a class="pill-link {% if request.endpoint == 'admin_error_reports' %}active{% endif %}" href="{{ url_for('admin_error_reports') }}">Error Reports</a>
             <a class="pill-link {% if request.endpoint == 'admin_incident_report' %}active{% endif %}" href="{{ url_for('admin_incident_report') }}">Create Incident</a>
+            <a class="pill-link {% if request.endpoint == 'admin_corrections' %}active{% endif %}" href="{{ url_for('admin_corrections') }}">Corrections</a>
             <a class="pill-link {% if request.endpoint == 'admin_history' %}active{% endif %}" href="{{ url_for('admin_history') }}">History</a>
             <a class="pill-link {% if request.endpoint == 'manage_employees' or request.endpoint == 'edit_employee' %}active{% endif %}" href="{{ url_for('manage_employees') }}">Employees</a>
         {% else %}
             <a class="pill-link {% if request.endpoint == 'dashboard' %}active{% endif %}" href="{{ url_for('dashboard') }}">Dashboard</a>
             <a class="pill-link {% if request.endpoint == 'employee_history' %}active{% endif %}" href="{{ url_for('employee_history') }}">History</a>
+            <a class="pill-link {% if request.endpoint == 'employee_corrections' %}active{% endif %}" href="{{ url_for('employee_corrections') }}">Corrections</a>
             <a class="pill-link {% if request.endpoint == 'employee_profile' %}active{% endif %}" href="{{ url_for('employee_profile') }}">Profile</a>
         {% endif %}
 
