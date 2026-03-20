@@ -1,12 +1,14 @@
 import os
+import csv
 import sqlite3
+from io import StringIO
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from functools import wraps
 
 from flask import (
     Flask, render_template, request, redirect, url_for,
-    session, flash, g, send_from_directory, jsonify
+    session, flash, g, send_from_directory, jsonify, Response
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -206,10 +208,16 @@ def init_sqlite_db():
         CREATE TABLE IF NOT EXISTS incident_reports (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
+            employee_name TEXT,
             error_type TEXT NOT NULL,
+            incident_date TEXT,
             report_date TEXT NOT NULL,
             message TEXT,
+            status TEXT NOT NULL DEFAULT 'Open',
+            admin_note TEXT,
             created_by INTEGER,
+            reviewed_by INTEGER,
+            reviewed_at TEXT,
             created_at TEXT NOT NULL,
             FOREIGN KEY (user_id) REFERENCES users (id)
         )
@@ -297,8 +305,20 @@ def init_sqlite_db():
             cursor.execute("ALTER TABLE incident_reports ADD COLUMN report_date TEXT")
         if "message" not in existing_cols_incident:
             cursor.execute("ALTER TABLE incident_reports ADD COLUMN message TEXT")
+        if "employee_name" not in existing_cols_incident:
+            cursor.execute("ALTER TABLE incident_reports ADD COLUMN employee_name TEXT")
+        if "incident_date" not in existing_cols_incident:
+            cursor.execute("ALTER TABLE incident_reports ADD COLUMN incident_date TEXT")
+        if "status" not in existing_cols_incident:
+            cursor.execute("ALTER TABLE incident_reports ADD COLUMN status TEXT NOT NULL DEFAULT 'Open'")
+        if "admin_note" not in existing_cols_incident:
+            cursor.execute("ALTER TABLE incident_reports ADD COLUMN admin_note TEXT")
         if "created_by" not in existing_cols_incident:
             cursor.execute("ALTER TABLE incident_reports ADD COLUMN created_by INTEGER")
+        if "reviewed_by" not in existing_cols_incident:
+            cursor.execute("ALTER TABLE incident_reports ADD COLUMN reviewed_by INTEGER")
+        if "reviewed_at" not in existing_cols_incident:
+            cursor.execute("ALTER TABLE incident_reports ADD COLUMN reviewed_at TEXT")
         if "created_at" not in existing_cols_incident:
             cursor.execute("ALTER TABLE incident_reports ADD COLUMN created_at TEXT")
 
@@ -336,13 +356,26 @@ def init_postgres_db():
             CREATE TABLE IF NOT EXISTS incident_reports (
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER NOT NULL,
+                employee_name TEXT,
                 error_type TEXT NOT NULL,
+                incident_date TEXT,
                 report_date TEXT NOT NULL,
                 message TEXT,
+                status TEXT NOT NULL DEFAULT 'Open',
+                admin_note TEXT,
                 created_by INTEGER,
+                reviewed_by INTEGER,
+                reviewed_at TEXT,
                 created_at TEXT NOT NULL
             )
         """)
+
+        cur.execute("ALTER TABLE incident_reports ADD COLUMN IF NOT EXISTS employee_name TEXT")
+        cur.execute("ALTER TABLE incident_reports ADD COLUMN IF NOT EXISTS incident_date TEXT")
+        cur.execute("ALTER TABLE incident_reports ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'Open'")
+        cur.execute("ALTER TABLE incident_reports ADD COLUMN IF NOT EXISTS admin_note TEXT")
+        cur.execute("ALTER TABLE incident_reports ADD COLUMN IF NOT EXISTS reviewed_by INTEGER")
+        cur.execute("ALTER TABLE incident_reports ADD COLUMN IF NOT EXISTS reviewed_at TEXT")
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
@@ -460,10 +493,12 @@ def create_incident(user_id, error_type, report_date, message, admin_id):
             incident_date,
             report_date,
             message,
+            status,
+            admin_note,
             created_by,
             created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, 'Open', NULL, ?, ?)
     """, (
         user_id,
         user["full_name"] if user else "",
@@ -1099,9 +1134,10 @@ def get_admin_employee_rows(status_filter="", search=""):
 
 def get_incident_reports(report_employee="", report_type="", report_date_from="", report_date_to=""):
     report_sql = """
-        SELECT r.*, u.full_name
+        SELECT r.*, u.full_name, reviewer.full_name AS reviewed_by_name
         FROM incident_reports r
         LEFT JOIN users u ON u.id = r.user_id
+        LEFT JOIN users reviewer ON reviewer.id = r.reviewed_by
         WHERE 1=1
     """
     report_params = []
@@ -1278,6 +1314,58 @@ def admin_error_reports():
     )
 
 
+@app.route("/admin/error-reports/export.csv")
+@login_required(role="admin")
+def export_admin_error_reports_csv():
+    report_employee = request.args.get("report_employee", "").strip()
+    report_type = request.args.get("report_type", "").strip()
+    report_date_from = request.args.get("report_date_from", "").strip()
+    report_date_to = request.args.get("report_date_to", "").strip()
+
+    reports = get_incident_reports(
+        report_employee=report_employee,
+        report_type=report_type,
+        report_date_from=report_date_from,
+        report_date_to=report_date_to
+    )
+
+    buffer = StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow([
+        "Employee",
+        "Error Type",
+        "Report Date",
+        "Message",
+        "Status",
+        "Admin Note",
+        "Created At",
+        "Reviewed At",
+        "Reviewed By"
+    ])
+
+    for report in reports:
+        writer.writerow([
+            report["full_name"] if report["full_name"] else report["employee_name"] if report["employee_name"] else "Unknown",
+            report["error_type"] or "",
+            report["report_date"] if report["report_date"] else report["incident_date"] if report["incident_date"] else "",
+            report["message"] or "",
+            report["status"] or "Open",
+            report["admin_note"] or "",
+            report["created_at"] or "",
+            report["reviewed_at"] or "",
+            report["reviewed_by_name"] or ""
+        ])
+
+    csv_data = buffer.getvalue()
+    filename = f"error-reports-{today_str()}.csv"
+
+    return Response(
+        csv_data,
+        mimetype="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+
 @app.route("/admin/incident-report")
 @login_required(role="admin")
 def admin_incident_report():
@@ -1288,6 +1376,47 @@ def admin_incident_report():
         ORDER BY full_name ASC
     """)
     return render_template("admin_incident_report.html", employees=employees)
+
+
+@app.route("/admin/error-reports/<int:report_id>/update", methods=["POST"])
+@login_required(role="admin")
+def update_incident_report(report_id):
+    status = request.form.get("status", "").strip()
+    admin_note = request.form.get("admin_note", "").strip()
+
+    if status not in {"Open", "Reviewed", "Resolved"}:
+        flash("Invalid report status.", "danger")
+        return redirect(url_for("admin_error_reports"))
+
+    report = fetchone("""
+        SELECT r.*, u.full_name
+        FROM incident_reports r
+        LEFT JOIN users u ON u.id = r.user_id
+        WHERE r.id = ?
+    """, (report_id,))
+
+    if not report:
+        flash("Report not found.", "danger")
+        return redirect(url_for("admin_error_reports"))
+
+    reviewed_at = now_str() if status in {"Reviewed", "Resolved"} else None
+    reviewed_by = session["user_id"] if status in {"Reviewed", "Resolved"} else None
+
+    execute_db("""
+        UPDATE incident_reports
+        SET status = ?, admin_note = ?, reviewed_by = ?, reviewed_at = ?
+        WHERE id = ?
+    """, (status, admin_note, reviewed_by, reviewed_at, report_id), commit=True)
+
+    employee_name = report["full_name"] if report["full_name"] else report["employee_name"] or f"User {report['user_id']}"
+    log_activity(
+        session["user_id"],
+        "UPDATE INCIDENT",
+        f"Incident #{report_id} for {employee_name} marked as {status}"
+    )
+
+    flash("Incident report updated.", "success")
+    return redirect(url_for("admin_error_reports"))
 
 
 @app.route("/admin/employees", methods=["GET", "POST"])

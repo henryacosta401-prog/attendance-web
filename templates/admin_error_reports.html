@@ -54,6 +54,12 @@
 
         <div style="grid-column: 1 / -1; display:flex; gap:10px; margin-top:6px;">
             <button class="btn btn-primary" type="submit">Filter Reports</button>
+            <a
+                class="btn btn-purple"
+                href="{{ url_for('export_admin_error_reports_csv', report_employee=report_employee, report_type=report_type, report_date_from=report_date_from, report_date_to=report_date_to) }}"
+            >
+                Export CSV
+            </a>
             <a class="btn btn-dark" href="{{ url_for('admin_error_reports') }}">Clear</a>
         </div>
     </form>
@@ -67,7 +73,11 @@
                         <th>Error Type</th>
                         <th>Report Date</th>
                         <th>Message</th>
+                        <th>Status</th>
+                        <th>Admin Note</th>
                         <th>Created At</th>
+                        <th>Reviewed</th>
+                        <th>Action</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -77,7 +87,37 @@
                         <td>{{ report.error_type }}</td>
                         <td>{{ report.report_date if report.report_date else report.incident_date }}</td>
                         <td>{{ report.message }}</td>
+                        <td>
+                            {% set report_status = report.status if report.status else 'Open' %}
+                            {% if report_status == 'Resolved' %}
+                                <span class="status status-green">{{ report_status }}</span>
+                            {% elif report_status == 'Reviewed' %}
+                                <span class="status status-yellow">{{ report_status }}</span>
+                            {% else %}
+                                <span class="status status-red">{{ report_status }}</span>
+                            {% endif %}
+                        </td>
+                        <td style="min-width:240px;">{{ report.admin_note if report.admin_note else '—' }}</td>
                         <td>{{ format_datetime_12h(report.created_at) }}</td>
+                        <td>
+                            {% if report.reviewed_at %}
+                                {{ format_datetime_12h(report.reviewed_at) }}
+                                <div class="small muted">{{ report.reviewed_by_name if report.reviewed_by_name else 'Admin' }}</div>
+                            {% else %}
+                                —
+                            {% endif %}
+                        </td>
+                        <td style="min-width:270px;">
+                            <form method="POST" action="{{ url_for('update_incident_report', report_id=report.id) }}" class="grid" style="gap:8px;">
+                                <select name="status" class="input" required>
+                                    <option value="Open" {% if report_status == 'Open' %}selected{% endif %}>Open</option>
+                                    <option value="Reviewed" {% if report_status == 'Reviewed' %}selected{% endif %}>Reviewed</option>
+                                    <option value="Resolved" {% if report_status == 'Resolved' %}selected{% endif %}>Resolved</option>
+                                </select>
+                                <textarea name="admin_note" class="textarea" rows="3" placeholder="Add note for this report...">{{ report.admin_note if report.admin_note else '' }}</textarea>
+                                <button class="btn btn-primary" type="submit">Update</button>
+                            </form>
+                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>
