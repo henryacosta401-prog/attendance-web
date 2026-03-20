@@ -29,6 +29,25 @@
             <label style="display:block; margin-top:12px;">Work Date</label>
             <input type="date" name="work_date" class="input" required>
 
+            <div class="grid grid-2" style="margin-top:12px; gap:12px;">
+                <div>
+                    <label>Requested Time In</label>
+                    <input type="time" name="requested_time_in" class="input">
+                </div>
+                <div>
+                    <label>Requested Time Out</label>
+                    <input type="time" name="requested_time_out" class="input">
+                </div>
+                <div>
+                    <label>Requested Break Start</label>
+                    <input type="time" name="requested_break_start" class="input">
+                </div>
+                <div>
+                    <label>Requested Break End</label>
+                    <input type="time" name="requested_break_end" class="input">
+                </div>
+            </div>
+
             <label style="display:block; margin-top:12px;">Details</label>
             <textarea name="message" class="textarea" rows="5" placeholder="Explain what needs to be corrected..." required></textarea>
 
@@ -45,7 +64,9 @@
                         <tr>
                             <th>Type</th>
                             <th>Date</th>
+                            <th>Requested Times</th>
                             <th>Status</th>
+                            <th>Applied</th>
                             <th>Admin Note</th>
                             <th>Created</th>
                         </tr>
@@ -55,7 +76,17 @@
                         <tr>
                             <td>{{ item.request_type }}</td>
                             <td>{{ item.work_date }}</td>
+                            <td>
+                                {% if item.requested_time_in or item.requested_break_start or item.requested_break_end or item.requested_time_out %}
+                                    <div class="small">In: {{ item.requested_time_in and format_time_12h(item.requested_time_in) or '-' }}</div>
+                                    <div class="small">Break: {{ item.requested_break_start and format_time_12h(item.requested_break_start) or '-' }} to {{ item.requested_break_end and format_time_12h(item.requested_break_end) or '-' }}</div>
+                                    <div class="small">Out: {{ item.requested_time_out and format_time_12h(item.requested_time_out) or '-' }}</div>
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
                             <td>{{ item.status }}</td>
+                            <td>{{ item.applied_changes if item.applied_changes else '-' }}</td>
                             <td>{{ item.admin_note if item.admin_note else '-' }}</td>
                             <td>{{ format_datetime_12h(item.created_at) }}</td>
                         </tr>

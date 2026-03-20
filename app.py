@@ -275,6 +275,11 @@ def init_sqlite_db():
             request_type TEXT NOT NULL,
             work_date TEXT NOT NULL,
             message TEXT,
+            requested_time_in TEXT,
+            requested_break_start TEXT,
+            requested_break_end TEXT,
+            requested_time_out TEXT,
+            applied_changes TEXT,
             status TEXT NOT NULL DEFAULT 'Pending',
             admin_note TEXT,
             reviewed_by INTEGER,
@@ -343,6 +348,16 @@ def init_sqlite_db():
 
     existing_cols_corrections = [row[1] for row in cursor.execute("PRAGMA table_info(correction_requests)").fetchall()]
     if existing_cols_corrections:
+        if "requested_time_in" not in existing_cols_corrections:
+            cursor.execute("ALTER TABLE correction_requests ADD COLUMN requested_time_in TEXT")
+        if "requested_break_start" not in existing_cols_corrections:
+            cursor.execute("ALTER TABLE correction_requests ADD COLUMN requested_break_start TEXT")
+        if "requested_break_end" not in existing_cols_corrections:
+            cursor.execute("ALTER TABLE correction_requests ADD COLUMN requested_break_end TEXT")
+        if "requested_time_out" not in existing_cols_corrections:
+            cursor.execute("ALTER TABLE correction_requests ADD COLUMN requested_time_out TEXT")
+        if "applied_changes" not in existing_cols_corrections:
+            cursor.execute("ALTER TABLE correction_requests ADD COLUMN applied_changes TEXT")
         if "status" not in existing_cols_corrections:
             cursor.execute("ALTER TABLE correction_requests ADD COLUMN status TEXT NOT NULL DEFAULT 'Pending'")
         if "admin_note" not in existing_cols_corrections:
@@ -483,6 +498,11 @@ def init_postgres_db():
                 request_type TEXT NOT NULL,
                 work_date TEXT NOT NULL,
                 message TEXT,
+                requested_time_in TEXT,
+                requested_break_start TEXT,
+                requested_break_end TEXT,
+                requested_time_out TEXT,
+                applied_changes TEXT,
                 status TEXT NOT NULL DEFAULT 'Pending',
                 admin_note TEXT,
                 reviewed_by INTEGER,
@@ -490,6 +510,11 @@ def init_postgres_db():
                 created_at TEXT NOT NULL
             )
         """)
+        cur.execute("ALTER TABLE correction_requests ADD COLUMN IF NOT EXISTS requested_time_in TEXT")
+        cur.execute("ALTER TABLE correction_requests ADD COLUMN IF NOT EXISTS requested_break_start TEXT")
+        cur.execute("ALTER TABLE correction_requests ADD COLUMN IF NOT EXISTS requested_break_end TEXT")
+        cur.execute("ALTER TABLE correction_requests ADD COLUMN IF NOT EXISTS requested_time_out TEXT")
+        cur.execute("ALTER TABLE correction_requests ADD COLUMN IF NOT EXISTS applied_changes TEXT")
         cur.execute("ALTER TABLE correction_requests ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'Pending'")
         cur.execute("ALTER TABLE correction_requests ADD COLUMN IF NOT EXISTS admin_note TEXT")
         cur.execute("ALTER TABLE correction_requests ADD COLUMN IF NOT EXISTS reviewed_by INTEGER")
@@ -624,6 +649,47 @@ def parse_break_limit_minutes(value):
         return minutes if minutes > 0 else BREAK_LIMIT_MINUTES
     except Exception:
         return BREAK_LIMIT_MINUTES
+
+
+def normalize_optional_clock_time(value):
+    raw_value = (value or "").strip()
+    if not raw_value:
+        return ""
+    try:
+        return datetime.strptime(raw_value, "%H:%M").strftime("%H:%M")
+    except ValueError:
+        raise ValueError("Use HH:MM format for correction times.")
+
+
+def combine_work_date_and_time(work_date, clock_time):
+    if not clock_time:
+        return None
+    return f"{work_date} {clock_time}:00"
+
+
+def split_datetime_to_time(datetime_str):
+    if not datetime_str:
+        return ""
+    try:
+        return datetime.strptime(datetime_str, "%Y-%m-%d %H:%M:%S").strftime("%H:%M")
+    except Exception:
+        return ""
+
+
+def build_correction_change_summary(before_values, after_values):
+    labels = [
+        ("time_in", "Time In"),
+        ("break_start", "Break Start"),
+        ("break_end", "Break End"),
+        ("time_out", "Time Out"),
+    ]
+    parts = []
+    for key, label in labels:
+        before_text = split_datetime_to_time(before_values.get(key)) or "-"
+        after_text = split_datetime_to_time(after_values.get(key)) or "-"
+        if before_text != after_text:
+            parts.append(f"{label}: {before_text} -> {after_text}")
+    return "; ".join(parts) if parts else "No attendance times changed."
 
 
 def calculate_late_info(time_in_str, shift_start):
@@ -1000,6 +1066,10 @@ def employee_corrections():
         request_type = request.form.get("request_type", "").strip()
         work_date = request.form.get("work_date", "").strip()
         message = request.form.get("message", "").strip()
+        requested_time_in = request.form.get("requested_time_in", "")
+        requested_break_start = request.form.get("requested_break_start", "")
+        requested_break_end = request.form.get("requested_break_end", "")
+        requested_time_out = request.form.get("requested_time_out", "")
 
         if request_type not in {"Missed Time In", "Missed Time Out", "Wrong Break", "Wrong Proof", "Other"}:
             flash("Please choose a valid correction type.", "danger")
@@ -1009,12 +1079,33 @@ def employee_corrections():
             flash("Work date and details are required.", "danger")
             return redirect(url_for("employee_corrections"))
 
+        try:
+            requested_time_in = normalize_optional_clock_time(requested_time_in)
+            requested_break_start = normalize_optional_clock_time(requested_break_start)
+            requested_break_end = normalize_optional_clock_time(requested_break_end)
+            requested_time_out = normalize_optional_clock_time(requested_time_out)
+        except ValueError as exc:
+            flash(str(exc), "danger")
+            return redirect(url_for("employee_corrections"))
+
         execute_db("""
             INSERT INTO correction_requests (
-                user_id, request_type, work_date, message, status, created_at
+                user_id, request_type, work_date, message,
+                requested_time_in, requested_break_start, requested_break_end, requested_time_out,
+                status, created_at
             )
-            VALUES (?, ?, ?, ?, 'Pending', ?)
-        """, (user["id"], request_type, work_date, message, now_str()), commit=True)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Pending', ?)
+        """, (
+            user["id"],
+            request_type,
+            work_date,
+            message,
+            combine_work_date_and_time(work_date, requested_time_in),
+            combine_work_date_and_time(work_date, requested_break_start),
+            combine_work_date_and_time(work_date, requested_break_end),
+            combine_work_date_and_time(work_date, requested_time_out),
+            now_str()
+        ), commit=True)
 
         log_activity(user["id"], "CORRECTION REQUEST", f"Submitted {request_type} request for {work_date}")
         flash("Correction request submitted.", "success")
@@ -1325,7 +1416,164 @@ def get_correction_requests(user_id=None, status="", date_from="", date_to=""):
         params.append(date_to)
 
     sql += " ORDER BY c.id DESC LIMIT 200"
-    return fetchall(sql, params)
+    rows = fetchall(sql, params)
+    enriched_rows = []
+
+    for row in rows:
+        item = dict(row)
+        attendance = fetchone("""
+            SELECT *
+            FROM attendance
+            WHERE user_id = ? AND work_date = ?
+            ORDER BY id DESC LIMIT 1
+        """, (item["user_id"], item["work_date"]))
+        break_row = None
+
+        if attendance:
+            break_row = fetchone("""
+                SELECT *
+                FROM breaks
+                WHERE attendance_id = ?
+                ORDER BY id ASC LIMIT 1
+            """, (attendance["id"],))
+
+        item["current_time_in"] = attendance["time_in"] if attendance else None
+        item["current_time_out"] = attendance["time_out"] if attendance else None
+        item["current_break_start"] = break_row["break_start"] if break_row else None
+        item["current_break_end"] = break_row["break_end"] if break_row else None
+        item["requested_time_in_input"] = split_datetime_to_time(item.get("requested_time_in"))
+        item["requested_break_start_input"] = split_datetime_to_time(item.get("requested_break_start"))
+        item["requested_break_end_input"] = split_datetime_to_time(item.get("requested_break_end"))
+        item["requested_time_out_input"] = split_datetime_to_time(item.get("requested_time_out"))
+        item["current_time_in_input"] = split_datetime_to_time(item.get("current_time_in"))
+        item["current_break_start_input"] = split_datetime_to_time(item.get("current_break_start"))
+        item["current_break_end_input"] = split_datetime_to_time(item.get("current_break_end"))
+        item["current_time_out_input"] = split_datetime_to_time(item.get("current_time_out"))
+        enriched_rows.append(item)
+
+    return enriched_rows
+
+
+def apply_attendance_correction(user_id, work_date, time_in_value="", break_start_value="", break_end_value="", time_out_value=""):
+    attendance = fetchone("""
+        SELECT *
+        FROM attendance
+        WHERE user_id = ? AND work_date = ?
+        ORDER BY id DESC LIMIT 1
+    """, (user_id, work_date))
+    break_row = None
+
+    if attendance:
+        break_row = fetchone("""
+            SELECT *
+            FROM breaks
+            WHERE attendance_id = ?
+            ORDER BY id ASC LIMIT 1
+        """, (attendance["id"],))
+
+    before_values = {
+        "time_in": attendance["time_in"] if attendance else None,
+        "break_start": break_row["break_start"] if break_row else None,
+        "break_end": break_row["break_end"] if break_row else None,
+        "time_out": attendance["time_out"] if attendance else None,
+    }
+
+    final_time_in = combine_work_date_and_time(work_date, time_in_value) if time_in_value else (attendance["time_in"] if attendance else None)
+    final_time_out = combine_work_date_and_time(work_date, time_out_value) if time_out_value else (attendance["time_out"] if attendance else None)
+    final_break_start = combine_work_date_and_time(work_date, break_start_value) if break_start_value else (break_row["break_start"] if break_row else None)
+    final_break_end = combine_work_date_and_time(work_date, break_end_value) if break_end_value else (break_row["break_end"] if break_row else None)
+
+    if (time_in_value or (attendance and attendance["time_in"])) and final_time_in and final_time_out:
+        if final_time_out < final_time_in:
+            raise ValueError("Time out cannot be earlier than time in.")
+
+    if (break_start_value or break_end_value or break_row) and not final_time_in:
+        raise ValueError("Set time in before saving break corrections.")
+
+    if final_break_start and final_break_end and final_break_end < final_break_start:
+        raise ValueError("Break end cannot be earlier than break start.")
+
+    if final_break_start and final_time_in and final_break_start < final_time_in:
+        raise ValueError("Break start cannot be earlier than time in.")
+
+    if final_break_end and final_time_out and final_break_end > final_time_out:
+        raise ValueError("Break end cannot be later than time out.")
+
+    user = get_user_by_id(user_id)
+    late_flag, late_minutes = calculate_late_info(final_time_in, parse_shift_start(user["shift_start"] if user else DEFAULT_SHIFT_START))
+
+    if final_time_out:
+        final_status = "Timed Out"
+    elif final_break_start and not final_break_end:
+        final_status = "On Break"
+    elif final_time_in:
+        final_status = "Timed In"
+    else:
+        final_status = "Offline"
+
+    if attendance:
+        execute_db("""
+            UPDATE attendance
+            SET time_in = ?, time_out = ?, status = ?, late_flag = ?, late_minutes = ?, updated_at = ?
+            WHERE id = ?
+        """, (
+            final_time_in,
+            final_time_out,
+            final_status,
+            late_flag,
+            late_minutes,
+            now_str(),
+            attendance["id"]
+        ), commit=True)
+    elif final_time_in or final_time_out or final_break_start or final_break_end:
+        execute_db("""
+            INSERT INTO attendance (
+                user_id, work_date, time_in, time_out, status, proof_file, notes,
+                late_flag, late_minutes, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            user_id,
+            work_date,
+            final_time_in,
+            final_time_out,
+            final_status,
+            None,
+            "Updated through correction request",
+            late_flag,
+            late_minutes,
+            now_str(),
+            now_str()
+        ), commit=True)
+        attendance = fetchone("""
+            SELECT *
+            FROM attendance
+            WHERE user_id = ? AND work_date = ?
+            ORDER BY id DESC LIMIT 1
+        """, (user_id, work_date))
+
+    if not attendance:
+        return
+
+    if break_row and (break_start_value or break_end_value):
+        execute_db("""
+            UPDATE breaks
+            SET break_start = ?, break_end = ?
+            WHERE id = ?
+        """, (final_break_start, final_break_end, break_row["id"]), commit=True)
+    elif not break_row and (break_start_value or break_end_value):
+        execute_db("""
+            INSERT INTO breaks (user_id, attendance_id, work_date, break_start, break_end, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (user_id, attendance["id"], work_date, final_break_start, final_break_end, now_str()), commit=True)
+
+    after_values = {
+        "time_in": final_time_in,
+        "break_start": final_break_start,
+        "break_end": final_break_end,
+        "time_out": final_time_out,
+    }
+    return build_correction_change_summary(before_values, after_values)
 
 
 @app.route("/admin")
@@ -1482,6 +1730,10 @@ def admin_corrections():
 def update_correction_request(request_id):
     status = request.form.get("status", "").strip()
     admin_note = request.form.get("admin_note", "").strip()
+    requested_time_in = request.form.get("requested_time_in", "")
+    requested_break_start = request.form.get("requested_break_start", "")
+    requested_break_end = request.form.get("requested_break_end", "")
+    requested_time_out = request.form.get("requested_time_out", "")
 
     if status not in {"Pending", "Approved", "Rejected"}:
         flash("Invalid correction status.", "danger")
@@ -1498,21 +1750,66 @@ def update_correction_request(request_id):
         flash("Correction request not found.", "danger")
         return redirect(url_for("admin_corrections"))
 
+    applied_changes = correction["applied_changes"] if "applied_changes" in correction.keys() else None
+
+    try:
+        requested_time_in = normalize_optional_clock_time(requested_time_in)
+        requested_break_start = normalize_optional_clock_time(requested_break_start)
+        requested_break_end = normalize_optional_clock_time(requested_break_end)
+        requested_time_out = normalize_optional_clock_time(requested_time_out)
+    except ValueError as exc:
+        flash(str(exc), "danger")
+        return redirect(url_for("admin_corrections"))
+
+    if status == "Approved":
+        try:
+            applied_changes = apply_attendance_correction(
+                correction["user_id"],
+                correction["work_date"],
+                time_in_value=requested_time_in,
+                break_start_value=requested_break_start,
+                break_end_value=requested_break_end,
+                time_out_value=requested_time_out
+            )
+        except ValueError as exc:
+            flash(str(exc), "danger")
+            return redirect(url_for("admin_corrections"))
+
     reviewed_at = now_str() if status in {"Approved", "Rejected"} else None
     reviewed_by = session["user_id"] if status in {"Approved", "Rejected"} else None
 
     execute_db("""
         UPDATE correction_requests
-        SET status = ?, admin_note = ?, reviewed_by = ?, reviewed_at = ?
+        SET status = ?, admin_note = ?, reviewed_by = ?, reviewed_at = ?,
+            requested_time_in = ?, requested_break_start = ?, requested_break_end = ?, requested_time_out = ?,
+            applied_changes = ?
         WHERE id = ?
-    """, (status, admin_note, reviewed_by, reviewed_at, request_id), commit=True)
+    """, (
+        status,
+        admin_note,
+        reviewed_by,
+        reviewed_at,
+        combine_work_date_and_time(correction["work_date"], requested_time_in),
+        combine_work_date_and_time(correction["work_date"], requested_break_start),
+        combine_work_date_and_time(correction["work_date"], requested_break_end),
+        combine_work_date_and_time(correction["work_date"], requested_time_out),
+        applied_changes if status == "Approved" else None,
+        request_id
+    ), commit=True)
+
+    notification_message = f"Your {correction['request_type']} request for {correction['work_date']} is now {status}."
+    if status == "Approved" and applied_changes:
+        notification_message = f"{notification_message} Applied: {applied_changes}"
 
     create_notification(
         correction["user_id"],
         "Correction Request Updated",
-        f"Your {correction['request_type']} request for {correction['work_date']} is now {status}."
+        notification_message
     )
-    log_activity(session["user_id"], "REVIEW CORRECTION", f"{status} correction request #{request_id} for {correction['full_name']}")
+    log_details = f"{status} correction request #{request_id} for {correction['full_name']}"
+    if status == "Approved" and applied_changes:
+        log_details = f"{log_details} | {applied_changes}"
+    log_activity(session["user_id"], "REVIEW CORRECTION", log_details)
     flash("Correction request updated.", "success")
     return redirect(url_for("admin_corrections"))
 

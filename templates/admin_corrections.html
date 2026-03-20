@@ -47,8 +47,10 @@
                         <th>Employee</th>
                         <th>Type</th>
                         <th>Date</th>
+                        <th>Current Log</th>
                         <th>Message</th>
                         <th>Status</th>
+                        <th>Applied</th>
                         <th>Admin Note</th>
                         <th>Review</th>
                     </tr>
@@ -62,11 +64,35 @@
                         </td>
                         <td>{{ item.request_type }}</td>
                         <td>{{ item.work_date }}</td>
+                        <td style="min-width:220px;">
+                            <div class="small">In: {{ item.current_time_in and format_time_12h(item.current_time_in) or '-' }}</div>
+                            <div class="small">Break: {{ item.current_break_start and format_time_12h(item.current_break_start) or '-' }} to {{ item.current_break_end and format_time_12h(item.current_break_end) or '-' }}</div>
+                            <div class="small">Out: {{ item.current_time_out and format_time_12h(item.current_time_out) or '-' }}</div>
+                        </td>
                         <td style="min-width:220px;">{{ item.message }}</td>
                         <td>{{ item.status }}</td>
+                        <td style="min-width:240px;">{{ item.applied_changes if item.applied_changes else '-' }}</td>
                         <td>{{ item.admin_note if item.admin_note else '-' }}</td>
-                        <td style="min-width:260px;">
+                        <td style="min-width:320px;">
                             <form method="POST" action="{{ url_for('update_correction_request', request_id=item.id) }}" class="grid" style="gap:8px;">
+                                <div class="grid grid-2" style="gap:8px;">
+                                    <div>
+                                        <label>Time In</label>
+                                        <input class="input" type="time" name="requested_time_in" value="{{ item.requested_time_in_input or item.current_time_in_input }}">
+                                    </div>
+                                    <div>
+                                        <label>Time Out</label>
+                                        <input class="input" type="time" name="requested_time_out" value="{{ item.requested_time_out_input or item.current_time_out_input }}">
+                                    </div>
+                                    <div>
+                                        <label>Break Start</label>
+                                        <input class="input" type="time" name="requested_break_start" value="{{ item.requested_break_start_input or item.current_break_start_input }}">
+                                    </div>
+                                    <div>
+                                        <label>Break End</label>
+                                        <input class="input" type="time" name="requested_break_end" value="{{ item.requested_break_end_input or item.current_break_end_input }}">
+                                    </div>
+                                </div>
                                 <select class="input" name="status">
                                     <option value="Pending" {% if item.status == 'Pending' %}selected{% endif %}>Pending</option>
                                     <option value="Approved" {% if item.status == 'Approved' %}selected{% endif %}>Approved</option>
