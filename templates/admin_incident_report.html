@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Create Incident Report{% endblock %}
+
+{% block content %}
+<div class="hero-card" style="margin-bottom:20px;">
+    <div class="hero">
+        <div>
+            <h1>Create Incident Report</h1>
+            <p class="section-subtitle">Create and save employee incident reports without crowding the main dashboard.</p>
+        </div>
+        <div class="status status-purple">New Report</div>
+    </div>
+</div>
+
+<div class="card" style="max-width:760px;">
+    <div class="section-title">Incident Details</div>
+
+    <form method="POST" action="{{ url_for('create_incident_route') }}">
+        <label>Employee</label>
+        <select name="user_id" class="input" required>
+            <option value="">Select employee</option>
+            {% for emp in employees %}
+                <option value="{{ emp.id }}">{{ emp.full_name }}</option>
+            {% endfor %}
+        </select>
+
+        <label style="margin-top:12px;">Error Type</label>
+        <select name="error_type" class="input" required>
+            <option value="">Select type</option>
+            <option>Wrong Costing</option>
+            <option>Wrong Pricing</option>
+            <option>Wrong Details</option>
+            <option>Absent</option>
+            <option>Wrong QA</option>
+            <option>Wrong Fulfillment</option>
+            <option>Other</option>
+        </select>
+
+        <label style="margin-top:12px;">Date</label>
+        <input type="date" name="report_date" class="input" required>
+
+        <label style="margin-top:12px;">Message</label>
+        <textarea name="message" class="textarea" placeholder="Details..."></textarea>
+
+        <button class="btn btn-purple" type="submit" style="width:100%; margin-top:14px;">
+            Save Report
+        </button>
+    </form>
+</div>
+{% endblock %}

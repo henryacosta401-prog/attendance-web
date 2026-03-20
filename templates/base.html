@@ -142,6 +142,13 @@
             background: rgba(255,255,255,0.10);
         }
 
+        .pill-link.active {
+            background: linear-gradient(135deg, rgba(59,130,246,0.34), rgba(96,165,250,0.18));
+            border-color: rgba(96,165,250,0.45);
+            color: var(--white);
+            box-shadow: 0 10px 24px rgba(59,130,246,0.18);
+        }
+
         .container {
             margin-top: 22px;
         }
@@ -634,13 +641,15 @@
 
     <div class="nav-right">
         {% if session.get('role') == 'admin' %}
-            <a class="pill-link" href="{{ url_for('admin_dashboard') }}">Dashboard</a>
-            <a class="pill-link" href="{{ url_for('admin_history') }}">History</a>
-            <a class="pill-link" href="{{ url_for('manage_employees') }}">Employees</a>
+            <a class="pill-link {% if request.endpoint == 'admin_dashboard' %}active{% endif %}" href="{{ url_for('admin_dashboard') }}">Dashboard</a>
+            <a class="pill-link {% if request.endpoint == 'admin_error_reports' %}active{% endif %}" href="{{ url_for('admin_error_reports') }}">Error Reports</a>
+            <a class="pill-link {% if request.endpoint == 'admin_incident_report' %}active{% endif %}" href="{{ url_for('admin_incident_report') }}">Create Incident</a>
+            <a class="pill-link {% if request.endpoint == 'admin_history' %}active{% endif %}" href="{{ url_for('admin_history') }}">History</a>
+            <a class="pill-link {% if request.endpoint == 'manage_employees' or request.endpoint == 'edit_employee' %}active{% endif %}" href="{{ url_for('manage_employees') }}">Employees</a>
         {% else %}
-            <a class="pill-link" href="{{ url_for('dashboard') }}">Dashboard</a>
-            <a class="pill-link" href="{{ url_for('employee_history') }}">History</a>
-            <a class="pill-link" href="{{ url_for('employee_profile') }}">Profile</a>
+            <a class="pill-link {% if request.endpoint == 'dashboard' %}active{% endif %}" href="{{ url_for('dashboard') }}">Dashboard</a>
+            <a class="pill-link {% if request.endpoint == 'employee_history' %}active{% endif %}" href="{{ url_for('employee_history') }}">History</a>
+            <a class="pill-link {% if request.endpoint == 'employee_profile' %}active{% endif %}" href="{{ url_for('employee_profile') }}">Profile</a>
         {% endif %}
 
         <span class="pill-link">👤 {{ session.get('full_name') }}</span>

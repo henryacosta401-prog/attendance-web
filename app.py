@@ -1097,38 +1097,7 @@ def get_admin_employee_rows(status_filter="", search=""):
     return employees
 
 
-@app.route("/admin")
-@login_required(role="admin")
-def admin_dashboard():
-    current_admin = get_user_by_id(session["user_id"])
-    if not current_admin:
-        session.clear()
-        flash("Your session expired. Please log in again.", "warning")
-        return redirect(url_for("login"))
-
-    status_filter = request.args.get("status", "").strip()
-    search = request.args.get("search", "").strip()
-
-    report_employee = request.args.get("report_employee", "").strip()
-    report_type = request.args.get("report_type", "").strip()
-    report_date_from = request.args.get("report_date_from", "").strip()
-    report_date_to = request.args.get("report_date_to", "").strip()
-
-    employees = get_admin_employee_rows(status_filter=status_filter, search=search)
-    all_users = fetchall("""
-        SELECT * FROM users
-        WHERE role = 'employee'
-        ORDER BY full_name ASC
-    """)
-
-    logs = fetchall("""
-        SELECT a.*, u.full_name
-        FROM activity_logs a
-        JOIN users u ON u.id = a.user_id
-        ORDER BY a.id DESC
-        LIMIT 25
-    """)
-
+def get_incident_reports(report_employee="", report_type="", report_date_from="", report_date_to=""):
     report_sql = """
         SELECT r.*, u.full_name
         FROM incident_reports r
@@ -1154,8 +1123,35 @@ def admin_dashboard():
         report_params.append(report_date_to)
 
     report_sql += " ORDER BY r.id DESC LIMIT 100"
+    return fetchall(report_sql, report_params)
 
-    reports = fetchall(report_sql, report_params)
+
+@app.route("/admin")
+@login_required(role="admin")
+def admin_dashboard():
+    current_admin = get_user_by_id(session["user_id"])
+    if not current_admin:
+        session.clear()
+        flash("Your session expired. Please log in again.", "warning")
+        return redirect(url_for("login"))
+
+    status_filter = request.args.get("status", "").strip()
+    search = request.args.get("search", "").strip()
+
+    employees = get_admin_employee_rows(status_filter=status_filter, search=search)
+    all_users = fetchall("""
+        SELECT * FROM users
+        WHERE role = 'employee'
+        ORDER BY full_name ASC
+    """)
+
+    logs = fetchall("""
+        SELECT a.*, u.full_name
+        FROM activity_logs a
+        JOIN users u ON u.id = a.user_id
+        ORDER BY a.id DESC
+        LIMIT 25
+    """)
 
     late_today_row = fetchone("""
         SELECT COUNT(*) AS cnt
@@ -1179,14 +1175,9 @@ def admin_dashboard():
         "admin_dashboard.html",
         employees=employees,
         logs=logs,
-        reports=reports,
         stats=stats,
         status_filter=status_filter,
-        search=search,
-        report_employee=report_employee,
-        report_type=report_type,
-        report_date_from=report_date_from,
-        report_date_to=report_date_to
+        search=search
     )
 
 
@@ -1253,6 +1244,50 @@ def admin_history():
         date_to=date_to,
         minutes_to_hm=minutes_to_hm
     )
+
+
+@app.route("/admin/error-reports")
+@login_required(role="admin")
+def admin_error_reports():
+    report_employee = request.args.get("report_employee", "").strip()
+    report_type = request.args.get("report_type", "").strip()
+    report_date_from = request.args.get("report_date_from", "").strip()
+    report_date_to = request.args.get("report_date_to", "").strip()
+
+    employees = fetchall("""
+        SELECT id, full_name
+        FROM users
+        WHERE role = 'employee'
+        ORDER BY full_name ASC
+    """)
+    reports = get_incident_reports(
+        report_employee=report_employee,
+        report_type=report_type,
+        report_date_from=report_date_from,
+        report_date_to=report_date_to
+    )
+
+    return render_template(
+        "admin_error_reports.html",
+        employees=employees,
+        reports=reports,
+        report_employee=report_employee,
+        report_type=report_type,
+        report_date_from=report_date_from,
+        report_date_to=report_date_to
+    )
+
+
+@app.route("/admin/incident-report")
+@login_required(role="admin")
+def admin_incident_report():
+    employees = fetchall("""
+        SELECT id, full_name
+        FROM users
+        WHERE role = 'employee'
+        ORDER BY full_name ASC
+    """)
+    return render_template("admin_incident_report.html", employees=employees)
 
 
 @app.route("/admin/employees", methods=["GET", "POST"])
@@ -1439,7 +1474,7 @@ def create_incident_route():
 
     if not user_id or not error_type or not report_date:
         flash("All fields are required.", "danger")
-        return redirect(url_for("admin_dashboard"))
+        return redirect(url_for("admin_incident_report"))
 
     employee = get_user_by_id(user_id)
 
@@ -1459,7 +1494,7 @@ def create_incident_route():
     )
 
     flash("Incident report created.", "success")
-    return redirect(url_for("admin_dashboard"))
+    return redirect(url_for("admin_incident_report"))
 
 
 # =========================
