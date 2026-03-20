@@ -1109,6 +1109,11 @@ def admin_dashboard():
     status_filter = request.args.get("status", "").strip()
     search = request.args.get("search", "").strip()
 
+    report_employee = request.args.get("report_employee", "").strip()
+    report_type = request.args.get("report_type", "").strip()
+    report_date_from = request.args.get("report_date_from", "").strip()
+    report_date_to = request.args.get("report_date_to", "").strip()
+
     employees = get_admin_employee_rows(status_filter=status_filter, search=search)
     all_users = fetchall("""
         SELECT * FROM users
@@ -1124,13 +1129,33 @@ def admin_dashboard():
         LIMIT 25
     """)
 
-    reports = fetchall("""
+    report_sql = """
         SELECT r.*, u.full_name
         FROM incident_reports r
         LEFT JOIN users u ON u.id = r.user_id
-        ORDER BY r.id DESC
-        LIMIT 30
-    """)
+        WHERE 1=1
+    """
+    report_params = []
+
+    if report_employee:
+        report_sql += " AND r.user_id = ?"
+        report_params.append(report_employee)
+
+    if report_type:
+        report_sql += " AND LOWER(r.error_type) = ?"
+        report_params.append(report_type.lower())
+
+    if report_date_from:
+        report_sql += " AND COALESCE(r.report_date, r.incident_date) >= ?"
+        report_params.append(report_date_from)
+
+    if report_date_to:
+        report_sql += " AND COALESCE(r.report_date, r.incident_date) <= ?"
+        report_params.append(report_date_to)
+
+    report_sql += " ORDER BY r.id DESC LIMIT 100"
+
+    reports = fetchall(report_sql, report_params)
 
     late_today_row = fetchone("""
         SELECT COUNT(*) AS cnt
@@ -1157,7 +1182,11 @@ def admin_dashboard():
         reports=reports,
         stats=stats,
         status_filter=status_filter,
-        search=search
+        search=search,
+        report_employee=report_employee,
+        report_type=report_type,
+        report_date_from=report_date_from,
+        report_date_to=report_date_to
     )
 
 
