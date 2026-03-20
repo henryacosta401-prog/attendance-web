@@ -38,7 +38,11 @@ BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 SQLITE_DATABASE = os.path.join(BASE_DIR, "attendance.db")
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 
-UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
+DEFAULT_UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
+PERSISTENT_DISK_PATH = os.environ.get("RENDER_DISK_PATH", "").strip()
+UPLOAD_FOLDER = os.environ.get("UPLOAD_FOLDER", "").strip() or (
+    os.path.join(PERSISTENT_DISK_PATH, "uploads") if PERSISTENT_DISK_PATH else DEFAULT_UPLOAD_FOLDER
+)
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "pdf", "webp"}
 
 GOOGLE_CREDENTIALS_FILE = os.path.join(BASE_DIR, "attendance-credentials.json")
@@ -2278,4 +2282,8 @@ def create_incident_route():
 # MAIN
 # =========================
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", "5000")),
+        debug=os.environ.get("FLASK_DEBUG", "").strip() == "1"
+    )
