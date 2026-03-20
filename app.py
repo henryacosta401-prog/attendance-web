@@ -1,7 +1,6 @@
 import os
-import csv
 import sqlite3
-from io import StringIO
+from io import BytesIO
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from functools import wraps
@@ -49,6 +48,7 @@ GOOGLE_SHEET_TAB = "Attendance Logs"
 APP_TIMEZONE = ZoneInfo("America/New_York")
 DEFAULT_SHIFT_START = "09:00"
 LATE_GRACE_MINUTES = 1
+BREAK_LIMIT_MINUTES = 15
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key")
@@ -199,6 +199,7 @@ def init_sqlite_db():
             department TEXT DEFAULT 'Stellar Seats',
             position TEXT DEFAULT 'Employee',
             shift_start TEXT DEFAULT '09:00',
+            break_limit_minutes INTEGER NOT NULL DEFAULT 15,
             is_active INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL
         )
@@ -286,6 +287,8 @@ def init_sqlite_db():
         cursor.execute("ALTER TABLE users ADD COLUMN position TEXT DEFAULT 'Employee'")
     if "shift_start" not in existing_cols_users:
         cursor.execute("ALTER TABLE users ADD COLUMN shift_start TEXT DEFAULT '09:00'")
+    if "break_limit_minutes" not in existing_cols_users:
+        cursor.execute("ALTER TABLE users ADD COLUMN break_limit_minutes INTEGER NOT NULL DEFAULT 15")
     if "is_active" not in existing_cols_users:
         cursor.execute("ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
 
@@ -388,10 +391,13 @@ def init_postgres_db():
                 department TEXT DEFAULT 'Stellar Seats',
                 position TEXT DEFAULT 'Employee',
                 shift_start TEXT DEFAULT '09:00',
+                break_limit_minutes INTEGER NOT NULL DEFAULT 15,
                 is_active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL
             )
         """)
+
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS break_limit_minutes INTEGER NOT NULL DEFAULT 15")
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS attendance (
@@ -450,9 +456,9 @@ def init_postgres_db():
         execute_db("""
             INSERT INTO users (
                 full_name, username, password_hash, role,
-                profile_image, department, position, shift_start, is_active, created_at
+                profile_image, department, position, shift_start, break_limit_minutes, is_active, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             "Administrator",
             "admin",
@@ -462,6 +468,7 @@ def init_postgres_db():
             "Stellar Seats",
             "Administrator",
             DEFAULT_SHIFT_START,
+            BREAK_LIMIT_MINUTES,
             1,
             now_str()
         ), commit=True)
@@ -565,6 +572,14 @@ def parse_shift_start(shift_start):
         return DEFAULT_SHIFT_START
 
 
+def parse_break_limit_minutes(value):
+    try:
+        minutes = int(str(value).strip())
+        return minutes if minutes > 0 else BREAK_LIMIT_MINUTES
+    except Exception:
+        return BREAK_LIMIT_MINUTES
+
+
 def calculate_late_info(time_in_str, shift_start):
     if not time_in_str:
         return 0, 0
@@ -585,7 +600,7 @@ def calculate_late_info(time_in_str, shift_start):
     return 0, 0
 
 
-def total_break_minutes(attendance_id):
+def total_break_minutes(attendance_id, include_open=False):
     breaks_rows = fetchall("""
         SELECT * FROM breaks
         WHERE attendance_id = ?
@@ -594,11 +609,25 @@ def total_break_minutes(attendance_id):
 
     total_minutes = 0
     for br in breaks_rows:
-        if br["break_start"] and br["break_end"]:
+        if br["break_start"] and (br["break_end"] or include_open):
             start = datetime.strptime(br["break_start"], "%Y-%m-%d %H:%M:%S")
-            end = datetime.strptime(br["break_end"], "%Y-%m-%d %H:%M:%S")
+            end = datetime.strptime(br["break_end"] or now_str(), "%Y-%m-%d %H:%M:%S")
             total_minutes += int((end - start).total_seconds() // 60)
     return total_minutes
+
+
+def get_employee_break_limit(user_row):
+    if not user_row:
+        return BREAK_LIMIT_MINUTES
+    return parse_break_limit_minutes(user_row["break_limit_minutes"])
+
+
+def get_overbreak_minutes(break_minutes, break_limit_minutes=BREAK_LIMIT_MINUTES):
+    return max(break_minutes - parse_break_limit_minutes(break_limit_minutes), 0)
+
+
+def is_overbreak(break_minutes, break_limit_minutes=BREAK_LIMIT_MINUTES):
+    return get_overbreak_minutes(break_minutes, break_limit_minutes) > 0
 
 
 def total_work_minutes(attendance_row):
@@ -820,8 +849,10 @@ def dashboard():
     """, (user["id"],))
 
     current_status = get_user_live_status(user["id"])
-    todays_break_minutes = total_break_minutes(today_attendance["id"]) if today_attendance else 0
+    todays_break_minutes = total_break_minutes(today_attendance["id"], include_open=True) if today_attendance else 0
     todays_work_minutes = total_work_minutes(today_attendance) if today_attendance else 0
+    break_limit_minutes = get_employee_break_limit(user)
+    over_break_minutes = get_overbreak_minutes(todays_break_minutes, break_limit_minutes)
 
     return render_template(
         "employee_dashboard.html",
@@ -833,6 +864,8 @@ def dashboard():
         current_status=current_status,
         todays_break_minutes=todays_break_minutes,
         todays_work_minutes=todays_work_minutes,
+        break_limit_minutes=break_limit_minutes,
+        over_break_minutes=over_break_minutes,
         minutes_to_hm=minutes_to_hm
     )
 
@@ -840,6 +873,8 @@ def dashboard():
 @app.route("/history")
 @login_required(role="employee")
 def employee_history():
+    user = get_user_by_id(session["user_id"])
+    break_limit_minutes = get_employee_break_limit(user)
     records = fetchall("""
         SELECT * FROM attendance
         WHERE user_id = ?
@@ -852,7 +887,8 @@ def employee_history():
         enriched.append({
             "row": row,
             "break_minutes": total_break_minutes(row["id"]),
-            "work_minutes": total_work_minutes(row)
+            "work_minutes": total_work_minutes(row),
+            "over_break_minutes": get_overbreak_minutes(total_break_minutes(row["id"]), break_limit_minutes)
         })
 
     return render_template("employee_history.html", records=enriched, minutes_to_hm=minutes_to_hm)
@@ -1023,6 +1059,16 @@ def end_break():
         """, ("Timed In", now_str(), attendance["id"]), commit=True)
 
     create_notification(user_id, "Break Ended", f"You ended break at {now_str()} ET.")
+    if attendance:
+        total_break = total_break_minutes(attendance["id"])
+        user = get_user_by_id(user_id)
+        break_limit_minutes = get_employee_break_limit(user)
+        if is_overbreak(total_break, break_limit_minutes):
+            create_notification(
+                user_id,
+                "Break Limit Exceeded",
+                f"Your total break time for today is {minutes_to_hm(total_break)}, which is over your {break_limit_minutes} minute limit."
+            )
     log_activity(user_id, "BREAK END", "Employee ended break")
     flash("Break ended.", "success")
     return redirect(url_for("dashboard"))
@@ -1108,6 +1154,7 @@ def get_admin_employee_rows(status_filter="", search=""):
             "department": user["department"],
             "position": user["position"],
             "shift_start": user["shift_start"] or DEFAULT_SHIFT_START,
+            "break_limit_minutes": get_employee_break_limit(user),
             "profile_image": user["profile_image"],
             "is_active": user["is_active"],
             "status": live_status,
@@ -1115,8 +1162,11 @@ def get_admin_employee_rows(status_filter="", search=""):
             "time_out": attendance["time_out"] if attendance else None,
             "proof_file": attendance["proof_file"] if attendance else None,
             "late_flag": attendance["late_flag"] if attendance else 0,
-            "late_minutes": attendance["late_minutes"] if attendance else 0
+            "late_minutes": attendance["late_minutes"] if attendance else 0,
+            "break_minutes": total_break_minutes(attendance["id"], include_open=True) if attendance else 0
         }
+        row["over_break_minutes"] = get_overbreak_minutes(row["break_minutes"], row["break_limit_minutes"])
+        row["over_break_flag"] = 1 if row["over_break_minutes"] > 0 else 0
 
         if status_filter and row["status"] != status_filter:
             continue
@@ -1175,6 +1225,7 @@ def admin_dashboard():
     search = request.args.get("search", "").strip()
 
     employees = get_admin_employee_rows(status_filter=status_filter, search=search)
+    all_employee_rows = get_admin_employee_rows()
     all_users = fetchall("""
         SELECT * FROM users
         WHERE role = 'employee'
@@ -1204,7 +1255,8 @@ def admin_dashboard():
         "on_break": len([x for x in stats_employees if x == "On Break"]),
         "timed_out": len([x for x in stats_employees if x == "Timed Out"]),
         "offline": len([x for x in stats_employees if x == "Offline"]),
-        "late_today": late_today
+        "late_today": late_today,
+        "over_break_today": len([emp for emp in all_employee_rows if emp["over_break_flag"] == 1])
     }
 
     return render_template(
@@ -1212,6 +1264,7 @@ def admin_dashboard():
         employees=employees,
         logs=logs,
         stats=stats,
+        break_limit_minutes=BREAK_LIMIT_MINUTES,
         status_filter=status_filter,
         search=search
     )
@@ -1236,7 +1289,7 @@ def admin_history():
     date_to = request.args.get("date_to", "").strip()
 
     sql = """
-        SELECT a.*, u.full_name, u.username
+        SELECT a.*, u.full_name, u.username, u.break_limit_minutes
         FROM attendance a
         JOIN users u ON u.id = a.user_id
         WHERE 1=1
@@ -1268,7 +1321,8 @@ def admin_history():
         enriched.append({
             "row": row,
             "break_minutes": total_break_minutes(row["id"]),
-            "work_minutes": total_work_minutes(row)
+            "work_minutes": total_work_minutes(row),
+            "over_break_minutes": get_overbreak_minutes(total_break_minutes(row["id"]), row["break_limit_minutes"])
         })
 
     return render_template(
@@ -1314,9 +1368,9 @@ def admin_error_reports():
     )
 
 
-@app.route("/admin/error-reports/export.csv")
+@app.route("/admin/error-reports/export.xlsx")
 @login_required(role="admin")
-def export_admin_error_reports_csv():
+def export_admin_error_reports_excel():
     report_employee = request.args.get("report_employee", "").strip()
     report_type = request.args.get("report_type", "").strip()
     report_date_from = request.args.get("report_date_from", "").strip()
@@ -1329,9 +1383,22 @@ def export_admin_error_reports_csv():
         report_date_to=report_date_to
     )
 
-    buffer = StringIO()
-    writer = csv.writer(buffer)
-    writer.writerow([
+    try:
+        from openpyxl import Workbook
+    except Exception:
+        flash("Excel export requires openpyxl. Install dependencies and try again.", "danger")
+        return redirect(url_for(
+            "admin_error_reports",
+            report_employee=report_employee,
+            report_type=report_type,
+            report_date_from=report_date_from,
+            report_date_to=report_date_to
+        ))
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Error Reports"
+    sheet.append([
         "Employee",
         "Error Type",
         "Report Date",
@@ -1344,7 +1411,7 @@ def export_admin_error_reports_csv():
     ])
 
     for report in reports:
-        writer.writerow([
+        sheet.append([
             report["full_name"] if report["full_name"] else report["employee_name"] if report["employee_name"] else "Unknown",
             report["error_type"] or "",
             report["report_date"] if report["report_date"] else report["incident_date"] if report["incident_date"] else "",
@@ -1356,13 +1423,14 @@ def export_admin_error_reports_csv():
             report["reviewed_by_name"] or ""
         ])
 
-    csv_data = buffer.getvalue()
-    filename = f"error-reports-{today_str()}.csv"
+    output = BytesIO()
+    workbook.save(output)
+    output.seek(0)
 
     return Response(
-        csv_data,
-        mimetype="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        output.getvalue(),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="error-reports-{today_str()}.xlsx"'}
     )
 
 
@@ -1429,6 +1497,7 @@ def manage_employees():
         department = request.form.get("department", "").strip() or "Stellar Seats"
         position = request.form.get("position", "").strip() or "Employee"
         shift_start = parse_shift_start(request.form.get("shift_start", DEFAULT_SHIFT_START))
+        break_limit_minutes = parse_break_limit_minutes(request.form.get("break_limit_minutes", BREAK_LIMIT_MINUTES))
 
         if not full_name or not username or not password:
             flash("Full name, username, and password are required.", "danger")
@@ -1450,9 +1519,9 @@ def manage_employees():
         execute_db("""
             INSERT INTO users (
                 full_name, username, password_hash, role, profile_image,
-                department, position, shift_start, is_active, created_at
+                department, position, shift_start, break_limit_minutes, is_active, created_at
             )
-            VALUES (?, ?, ?, 'employee', ?, ?, ?, ?, 1, ?)
+            VALUES (?, ?, ?, 'employee', ?, ?, ?, ?, ?, 1, ?)
         """, (
             full_name,
             username,
@@ -1461,13 +1530,14 @@ def manage_employees():
             department,
             position,
             shift_start,
+            break_limit_minutes,
             now_str()
         ), commit=True)
 
         new_user = fetchone("SELECT id FROM users WHERE username = ?", (username,))
         if new_user:
             create_notification(new_user["id"], "Account Created", "Your account has been created by admin.")
-            log_activity(session["user_id"], "ADD EMPLOYEE", f"Added employee: {full_name} | Shift: {shift_start}")
+            log_activity(session["user_id"], "ADD EMPLOYEE", f"Added employee: {full_name} | Shift: {shift_start} | Break Limit: {break_limit_minutes}m")
 
         flash("Employee added successfully.", "success")
         return redirect(url_for("manage_employees"))
@@ -1499,6 +1569,7 @@ def edit_employee(user_id):
         department = request.form.get("department", "").strip() or "Stellar Seats"
         position = request.form.get("position", "").strip() or "Employee"
         shift_start = parse_shift_start(request.form.get("shift_start", user["shift_start"] or DEFAULT_SHIFT_START))
+        break_limit_minutes = parse_break_limit_minutes(request.form.get("break_limit_minutes", user["break_limit_minutes"]))
         is_active = 1 if request.form.get("is_active") == "1" else 0
         password = request.form.get("password", "").strip()
 
@@ -1528,24 +1599,24 @@ def edit_employee(user_id):
             execute_db("""
                 UPDATE users
                 SET full_name = ?, username = ?, password_hash = ?, profile_image = ?,
-                    department = ?, position = ?, shift_start = ?, is_active = ?
+                    department = ?, position = ?, shift_start = ?, break_limit_minutes = ?, is_active = ?
                 WHERE id = ?
             """, (
                 full_name, username, generate_password_hash(password), profile_image,
-                department, position, shift_start, is_active, user_id
+                department, position, shift_start, break_limit_minutes, is_active, user_id
             ), commit=True)
         else:
             execute_db("""
                 UPDATE users
                 SET full_name = ?, username = ?, profile_image = ?,
-                    department = ?, position = ?, shift_start = ?, is_active = ?
+                    department = ?, position = ?, shift_start = ?, break_limit_minutes = ?, is_active = ?
                 WHERE id = ?
             """, (
                 full_name, username, profile_image,
-                department, position, shift_start, is_active, user_id
+                department, position, shift_start, break_limit_minutes, is_active, user_id
             ), commit=True)
 
-        log_activity(session["user_id"], "EDIT EMPLOYEE", f"Edited employee: {full_name} | Shift: {shift_start}")
+        log_activity(session["user_id"], "EDIT EMPLOYEE", f"Edited employee: {full_name} | Shift: {shift_start} | Break Limit: {break_limit_minutes}m")
         flash("Employee updated successfully.", "success")
         return redirect(url_for("manage_employees"))
 

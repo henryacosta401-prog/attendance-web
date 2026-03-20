@@ -59,6 +59,11 @@
         </div>
 
         <div class="metric-row">
+            <div class="metric-label">Break Limit</div>
+            <div class="metric-value">{{ minutes_to_hm(break_limit_minutes) }}</div>
+        </div>
+
+        <div class="metric-row">
             <div class="metric-label">Work Total</div>
             <div class="metric-value">{{ minutes_to_hm(todays_work_minutes) }}</div>
         </div>
@@ -66,6 +71,12 @@
         {% if today_attendance and today_attendance.late_flag == 1 %}
             <div style="margin-top:14px;">
                 <span class="status status-red">Late by {{ today_attendance.late_minutes }} min</span>
+            </div>
+        {% endif %}
+
+        {% if over_break_minutes > 0 %}
+            <div style="margin-top:14px;">
+                <span class="status status-red">Over break by {{ over_break_minutes }} min</span>
             </div>
         {% endif %}
 

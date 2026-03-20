@@ -47,7 +47,7 @@ document.addEventListener("DOMContentLoaded", function () {
                     ? `/uploads/${emp.profile_image}`
                     : "https://via.placeholder.com/48x48.png?text=U";
 
-                let proofHtml = "—";
+                let proofHtml = "-";
                 if (emp.proof_file) {
                     const isImg = /\.(png|jpg|jpeg|gif|webp)$/i.test(emp.proof_file);
                     if (isImg) {
@@ -57,7 +57,14 @@ document.addEventListener("DOMContentLoaded", function () {
                     }
                 }
 
-                let lateHtml = emp.late_flag ? `<span class="status status-red">Late ${emp.late_minutes}m</span>` : "—";
+                const lateHtml = emp.late_flag
+                    ? `<span class="status status-red">Late ${emp.late_minutes}m</span>`
+                    : "-";
+                const breakLimitHtml = `${emp.break_limit_minutes || 15}m`;
+                const breakHtml = `${emp.break_minutes || 0}m`;
+                const overBreakHtml = emp.over_break_flag
+                    ? `<span class="status status-red">Over by ${emp.over_break_minutes}m</span>`
+                    : `<span class="status status-green">Within Limit</span>`;
 
                 tbody.innerHTML += `
                     <tr>
@@ -70,12 +77,15 @@ document.addEventListener("DOMContentLoaded", function () {
                                 </div>
                             </div>
                         </td>
-                        <td>${emp.department || "—"}</td>
-                        <td>${emp.position || "—"}</td>
-                        <td><span class="status ${statusClass}">● ${emp.status}</span></td>
-                        <td>${emp.time_in ? formatDateTime12h(emp.time_in) : "—"}</td>
-                        <td>${emp.time_out ? formatDateTime12h(emp.time_out) : "—"}</td>
+                        <td>${emp.department || "-"}</td>
+                        <td>${emp.position || "-"}</td>
+                        <td><span class="status ${statusClass}">${emp.status}</span></td>
+                        <td>${emp.time_in ? formatDateTime12h(emp.time_in) : "-"}</td>
+                        <td>${emp.time_out ? formatDateTime12h(emp.time_out) : "-"}</td>
                         <td>${lateHtml}</td>
+                        <td>${breakLimitHtml}</td>
+                        <td>${breakHtml}</td>
+                        <td>${overBreakHtml}</td>
                         <td>${proofHtml}</td>
                     </tr>
                 `;
@@ -102,13 +112,13 @@ document.addEventListener("DOMContentLoaded", function () {
     <div class="hero">
         <div>
             <h1>Admin Control Center</h1>
-            <p class="section-subtitle">Monitor live attendance, late employees, proofs, logs, and notifications.</p>
+            <p class="section-subtitle">Monitor live attendance, late employees, break usage, proofs, logs, and notifications.</p>
         </div>
-        <div class="status status-purple">● Live Monitoring</div>
+        <div class="status status-purple">Live Monitoring</div>
     </div>
 </div>
 
-<div class="grid grid-4">
+<div class="grid grid-4" style="margin-bottom:18px;">
     <div class="stat-box">
         <div class="stat-label">Total Employees</div>
         <div class="stat-number">{{ stats.total_employees }}</div>
@@ -125,11 +135,16 @@ document.addEventListener("DOMContentLoaded", function () {
         <div class="stat-label">Late Today</div>
         <div class="stat-number">{{ stats.late_today }}</div>
     </div>
+    <div class="stat-box">
+        <div class="stat-label">Over Break</div>
+        <div class="stat-number">{{ stats.over_break_today }}</div>
+    </div>
 </div>
 
 <div class="grid grid-2" style="margin-top:18px;">
     <div class="card">
         <div class="section-title">Live Employee Status</div>
+        <p class="section-subtitle" style="margin-bottom:14px;">Each employee now uses their own assigned daily break limit.</p>
 
         <div class="grid grid-2" style="margin-bottom:12px;">
             <div>
@@ -159,6 +174,9 @@ document.addEventListener("DOMContentLoaded", function () {
                         <th>Time In</th>
                         <th>Time Out</th>
                         <th>Late</th>
+                        <th>Limit</th>
+                        <th>Break</th>
+                        <th>Overbreak</th>
                         <th>Proof</th>
                     </tr>
                 </thead>
@@ -166,16 +184,25 @@ document.addEventListener("DOMContentLoaded", function () {
                     {% for emp in employees %}
                     <tr>
                         <td>{{ emp.full_name }}</td>
-                        <td>{{ emp.department }}</td>
-                        <td>{{ emp.position }}</td>
+                        <td>{{ emp.department or '-' }}</td>
+                        <td>{{ emp.position or '-' }}</td>
                         <td>{{ emp.status }}</td>
-                        <td>{{ format_datetime_12h(emp.time_in) if emp.time_in else '—' }}</td>
-                        <td>{{ format_datetime_12h(emp.time_out) if emp.time_out else '—' }}</td>
+                        <td>{{ format_datetime_12h(emp.time_in) if emp.time_in else '-' }}</td>
+                        <td>{{ format_datetime_12h(emp.time_out) if emp.time_out else '-' }}</td>
                         <td>
                             {% if emp.late_flag == 1 %}
                                 <span class="status status-red">Late {{ emp.late_minutes }}m</span>
                             {% else %}
-                                —
+                                -
+                            {% endif %}
+                        </td>
+                        <td>{{ emp.break_limit_minutes }}m</td>
+                        <td>{{ emp.break_minutes }}m</td>
+                        <td>
+                            {% if emp.over_break_flag == 1 %}
+                                <span class="status status-red">Over by {{ emp.over_break_minutes }}m</span>
+                            {% else %}
+                                <span class="status status-green">Within Limit</span>
                             {% endif %}
                         </td>
                         <td>
@@ -188,7 +215,7 @@ document.addEventListener("DOMContentLoaded", function () {
                                     <a href="{{ url_for('uploaded_file', filename=emp.proof_file) }}" target="_blank">View</a>
                                 {% endif %}
                             {% else %}
-                                —
+                                -
                             {% endif %}
                         </td>
                     </tr>

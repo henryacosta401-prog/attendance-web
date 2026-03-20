@@ -53,6 +53,7 @@
                         <th>Status</th>
                         <th>Late</th>
                         <th>Break</th>
+                        <th>Overbreak</th>
                         <th>Work</th>
                         <th>Proof</th>
                     </tr>
@@ -76,6 +77,13 @@
                             {% endif %}
                         </td>
                         <td>{{ minutes_to_hm(item.break_minutes) }}</td>
+                        <td>
+                            {% if item.over_break_minutes > 0 %}
+                                <span class="status status-red">{{ minutes_to_hm(item.over_break_minutes) }}</span>
+                            {% else %}
+                                <span class="status status-green">No</span>
+                            {% endif %}
+                        </td>
                         <td>{{ minutes_to_hm(item.work_minutes) }}</td>
                         <td>
                             {% if item.row.proof_file %}

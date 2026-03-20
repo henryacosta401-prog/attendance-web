@@ -56,9 +56,9 @@
             <button class="btn btn-primary" type="submit">Filter Reports</button>
             <a
                 class="btn btn-purple"
-                href="{{ url_for('export_admin_error_reports_csv', report_employee=report_employee, report_type=report_type, report_date_from=report_date_from, report_date_to=report_date_to) }}"
+                href="{{ url_for('export_admin_error_reports_excel', report_employee=report_employee, report_type=report_type, report_date_from=report_date_from, report_date_to=report_date_to) }}"
             >
-                Export CSV
+                Export Excel
             </a>
             <a class="btn btn-dark" href="{{ url_for('admin_error_reports') }}">Clear</a>
         </div>
