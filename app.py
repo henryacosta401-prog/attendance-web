@@ -30,6 +30,14 @@ try:
 except Exception:
     GOOGLE_SHEETS_ENABLED = False
 
+# Optional Twilio WhatsApp support
+TWILIO_ENABLED = False
+try:
+    from twilio.rest import Client as TwilioClient
+    TWILIO_ENABLED = True
+except Exception:
+    TWILIO_ENABLED = False
+
 
 # =========================
 # CONFIG
@@ -37,6 +45,9 @@ except Exception:
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 SQLITE_DATABASE = os.path.join(BASE_DIR, "attendance.db")
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "").strip()
+TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "").strip()
+TWILIO_WHATSAPP_FROM = os.environ.get("TWILIO_WHATSAPP_FROM", "").strip()
 
 DEFAULT_UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
 PERSISTENT_DISK_PATH = os.environ.get("RENDER_DISK_PATH", "").strip()
@@ -77,6 +88,20 @@ def today_str():
 
 def now_timestamp():
     return int(now_dt().timestamp())
+
+
+def normalize_whatsapp_number(value):
+    raw_value = (value or "").strip()
+    if not raw_value:
+        return ""
+    cleaned = raw_value.replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+    if cleaned.startswith("whatsapp:"):
+        cleaned = cleaned[len("whatsapp:"):]
+    if not cleaned.startswith("+"):
+        raise ValueError("WhatsApp number must start with + and country code.")
+    if not cleaned[1:].isdigit():
+        raise ValueError("WhatsApp number must contain only digits after +.")
+    return cleaned
 
 
 # =========================
@@ -202,6 +227,7 @@ def init_sqlite_db():
             profile_image TEXT,
             department TEXT DEFAULT 'Stellar Seats',
             position TEXT DEFAULT 'Employee',
+            whatsapp_number TEXT,
             shift_start TEXT DEFAULT '09:00',
             break_limit_minutes INTEGER NOT NULL DEFAULT 15,
             is_active INTEGER NOT NULL DEFAULT 1,
@@ -310,6 +336,8 @@ def init_sqlite_db():
         cursor.execute("ALTER TABLE users ADD COLUMN department TEXT DEFAULT 'Stellar Seats'")
     if "position" not in existing_cols_users:
         cursor.execute("ALTER TABLE users ADD COLUMN position TEXT DEFAULT 'Employee'")
+    if "whatsapp_number" not in existing_cols_users:
+        cursor.execute("ALTER TABLE users ADD COLUMN whatsapp_number TEXT")
     if "shift_start" not in existing_cols_users:
         cursor.execute("ALTER TABLE users ADD COLUMN shift_start TEXT DEFAULT '09:00'")
     if "break_limit_minutes" not in existing_cols_users:
@@ -436,6 +464,7 @@ def init_postgres_db():
                 profile_image TEXT,
                 department TEXT DEFAULT 'Stellar Seats',
                 position TEXT DEFAULT 'Employee',
+                whatsapp_number TEXT,
                 shift_start TEXT DEFAULT '09:00',
                 break_limit_minutes INTEGER NOT NULL DEFAULT 15,
                 is_active INTEGER NOT NULL DEFAULT 1,
@@ -443,6 +472,7 @@ def init_postgres_db():
             )
         """)
 
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS whatsapp_number TEXT")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS break_limit_minutes INTEGER NOT NULL DEFAULT 15")
 
         cur.execute("""
@@ -562,6 +592,28 @@ def create_notification(user_id, title, message):
         INSERT INTO notifications (user_id, title, message, created_at, is_read)
         VALUES (?, ?, ?, ?, 0)
     """, (user_id, title, message, now_str()), commit=True)
+
+
+def send_whatsapp_message(to_number, body):
+    if not (TWILIO_ENABLED and TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_WHATSAPP_FROM and to_number and body):
+        return False, "WhatsApp disabled or missing configuration"
+
+    try:
+        client = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+        client.messages.create(
+            from_=f"whatsapp:{normalize_whatsapp_number(TWILIO_WHATSAPP_FROM)}",
+            to=f"whatsapp:{normalize_whatsapp_number(to_number)}",
+            body=body
+        )
+        return True, "Sent"
+    except Exception as exc:
+        return False, str(exc)
+
+
+def send_employee_whatsapp(user_row, event_title, message):
+    if not user_row or not user_row["whatsapp_number"]:
+        return False, "No employee WhatsApp number"
+    return send_whatsapp_message(user_row["whatsapp_number"], message)
 
 
 def create_incident(user_id, error_type, report_date, message, admin_id):
@@ -1175,6 +1227,12 @@ def time_in():
     else:
         create_notification(user_id, "Timed In", f"You timed in at {now_str()} ET.")
 
+    send_employee_whatsapp(
+        user,
+        "Timed In",
+        f"{user['full_name']}, you timed in at {format_time_12h(now_str())} on {today_str()}."
+    )
+
     log_activity(user_id, "TIME IN", f"Employee timed in. Shift: {shift_start}")
     flash("Time in successful.", "success")
     return redirect(url_for("dashboard"))
@@ -1207,6 +1265,12 @@ def start_break():
     """, ("On Break", now_str(), attendance["id"]), commit=True)
 
     create_notification(user_id, "Break Started", f"You started break at {now_str()} ET.")
+    user = get_user_by_id(user_id)
+    send_employee_whatsapp(
+        user,
+        "Break Started",
+        f"{user['full_name']}, you started break at {format_time_12h(now_str())} on {today_str()}."
+    )
     log_activity(user_id, "BREAK START", "Employee started break")
     flash("Break started.", "info")
     return redirect(url_for("dashboard"))
@@ -1237,9 +1301,14 @@ def end_break():
         """, ("Timed In", now_str(), attendance["id"]), commit=True)
 
     create_notification(user_id, "Break Ended", f"You ended break at {now_str()} ET.")
+    user = get_user_by_id(user_id)
+    send_employee_whatsapp(
+        user,
+        "Break Ended",
+        f"{user['full_name']}, you ended break at {format_time_12h(now_str())} on {today_str()}."
+    )
     if attendance:
         total_break = total_break_minutes(attendance["id"])
-        user = get_user_by_id(user_id)
         break_limit_minutes = get_employee_break_limit(user)
         if is_overbreak(total_break, break_limit_minutes):
             create_notification(
@@ -1285,6 +1354,11 @@ def time_out():
     ok, msg = append_attendance_to_google_sheet(user_row, updated_attendance)
 
     create_notification(user_id, "Timed Out", f"You timed out at {now_str()} ET.")
+    send_employee_whatsapp(
+        user_row,
+        "Timed Out",
+        f"{user_row['full_name']}, you timed out at {format_time_12h(now_str())} on {today_str()}."
+    )
     log_activity(user_id, "TIME OUT", f"Employee timed out. Sheets sync: {msg if ok else 'Skipped/Failed'}")
     flash("Time out successful.", "success")
     return redirect(url_for("dashboard"))
@@ -2077,6 +2151,7 @@ def manage_employees():
         password = request.form.get("password", "").strip()
         department = request.form.get("department", "").strip() or "Stellar Seats"
         position = request.form.get("position", "").strip() or "Employee"
+        whatsapp_number = request.form.get("whatsapp_number", "").strip()
         shift_start = parse_shift_start(request.form.get("shift_start", DEFAULT_SHIFT_START))
         break_limit_minutes = parse_break_limit_minutes(request.form.get("break_limit_minutes", BREAK_LIMIT_MINUTES))
 
@@ -2087,6 +2162,12 @@ def manage_employees():
         existing = fetchone("SELECT id FROM users WHERE username = ?", (username,))
         if existing:
             flash("Username already exists.", "warning")
+            return redirect(url_for("manage_employees"))
+
+        try:
+            whatsapp_number = normalize_whatsapp_number(whatsapp_number)
+        except ValueError as exc:
+            flash(str(exc), "danger")
             return redirect(url_for("manage_employees"))
 
         profile_image = None
@@ -2100,9 +2181,9 @@ def manage_employees():
         execute_db("""
             INSERT INTO users (
                 full_name, username, password_hash, role, profile_image,
-                department, position, shift_start, break_limit_minutes, is_active, created_at
+                department, position, whatsapp_number, shift_start, break_limit_minutes, is_active, created_at
             )
-            VALUES (?, ?, ?, 'employee', ?, ?, ?, ?, ?, 1, ?)
+            VALUES (?, ?, ?, 'employee', ?, ?, ?, ?, ?, ?, 1, ?)
         """, (
             full_name,
             username,
@@ -2110,6 +2191,7 @@ def manage_employees():
             profile_image,
             department,
             position,
+            whatsapp_number or None,
             shift_start,
             break_limit_minutes,
             now_str()
@@ -2149,6 +2231,7 @@ def edit_employee(user_id):
         username = request.form.get("username", "").strip()
         department = request.form.get("department", "").strip() or "Stellar Seats"
         position = request.form.get("position", "").strip() or "Employee"
+        whatsapp_number = request.form.get("whatsapp_number", "").strip()
         shift_start = parse_shift_start(request.form.get("shift_start", user["shift_start"] or DEFAULT_SHIFT_START))
         break_limit_minutes = parse_break_limit_minutes(request.form.get("break_limit_minutes", user["break_limit_minutes"]))
         is_active = 1 if request.form.get("is_active") == "1" else 0
@@ -2167,6 +2250,12 @@ def edit_employee(user_id):
             flash("Username already used by another employee.", "warning")
             return redirect(url_for("edit_employee", user_id=user_id))
 
+        try:
+            whatsapp_number = normalize_whatsapp_number(whatsapp_number)
+        except ValueError as exc:
+            flash(str(exc), "danger")
+            return redirect(url_for("edit_employee", user_id=user_id))
+
         profile_image = user["profile_image"]
         file = request.files.get("profile_image")
         if file and file.filename:
@@ -2180,21 +2269,21 @@ def edit_employee(user_id):
             execute_db("""
                 UPDATE users
                 SET full_name = ?, username = ?, password_hash = ?, profile_image = ?,
-                    department = ?, position = ?, shift_start = ?, break_limit_minutes = ?, is_active = ?
+                    department = ?, position = ?, whatsapp_number = ?, shift_start = ?, break_limit_minutes = ?, is_active = ?
                 WHERE id = ?
             """, (
                 full_name, username, generate_password_hash(password), profile_image,
-                department, position, shift_start, break_limit_minutes, is_active, user_id
+                department, position, whatsapp_number or None, shift_start, break_limit_minutes, is_active, user_id
             ), commit=True)
         else:
             execute_db("""
                 UPDATE users
                 SET full_name = ?, username = ?, profile_image = ?,
-                    department = ?, position = ?, shift_start = ?, break_limit_minutes = ?, is_active = ?
+                    department = ?, position = ?, whatsapp_number = ?, shift_start = ?, break_limit_minutes = ?, is_active = ?
                 WHERE id = ?
             """, (
                 full_name, username, profile_image,
-                department, position, shift_start, break_limit_minutes, is_active, user_id
+                department, position, whatsapp_number or None, shift_start, break_limit_minutes, is_active, user_id
             ), commit=True)
 
         log_activity(session["user_id"], "EDIT EMPLOYEE", f"Edited employee: {full_name} | Shift: {shift_start} | Break Limit: {break_limit_minutes}m")

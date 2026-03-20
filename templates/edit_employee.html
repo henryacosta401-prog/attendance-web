@@ -43,6 +43,9 @@
         <input class="input" type="number" name="break_limit_minutes" value="{{ employee.break_limit_minutes if employee.break_limit_minutes else 15 }}" min="1">
     </div>
 </div>
+
+<label style="display:block; margin-top:12px;">WhatsApp Number</label>
+<input class="input" type="text" name="whatsapp_number" value="{{ employee.whatsapp_number if employee.whatsapp_number else '' }}" placeholder="e.g. +639991234567">
         <label style="display:block; margin-top:12px;">New Password</label>
         <input class="input" type="password" name="password" placeholder="Leave blank to keep current password">
 

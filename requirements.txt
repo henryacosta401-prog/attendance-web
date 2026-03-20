@@ -3,3 +3,4 @@ Werkzeug
 gunicorn
 psycopg2-binary
 openpyxl
+twilio
