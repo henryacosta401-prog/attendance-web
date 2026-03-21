@@ -2524,7 +2524,7 @@ def manage_employees():
                 full_name, username, password_hash, role, profile_image,
                 department, position, schedule_days, shift_start, shift_end, break_window_start, break_window_end, break_limit_minutes, is_active, created_at
             )
-            VALUES (?, ?, ?, 'employee', ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+            VALUES (?, ?, ?, 'employee', ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
         """, (
             full_name,
             username,
