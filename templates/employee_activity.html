@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Recent Activity{% endblock %}
+
+{% block content %}
+<div class="hero-card" style="margin-bottom:20px;">
+    <div class="hero">
+        <div>
+            <h1>Recent Activity</h1>
+            <p class="section-subtitle">See your latest attendance, corrections, and account activity without crowding the dashboard.</p>
+        </div>
+        <div class="status status-purple">Activity Log</div>
+    </div>
+</div>
+
+<div class="card soft">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
+        <div class="section-title" style="margin-bottom:0;">My Activity</div>
+        <a class="btn btn-gray" href="{{ url_for('dashboard') }}">Back to Dashboard</a>
+    </div>
+
+    {% if logs %}
+        {% for log in logs %}
+            <div class="log-item">
+                <div style="font-weight:900;color:white;">{{ log.action }}</div>
+                <div class="muted small" style="margin-top:5px;">{{ log.details if log.details else 'No extra details' }}</div>
+                <div class="small muted" style="margin-top:8px;">{{ format_datetime_12h(log.created_at) }}</div>
+            </div>
+        {% endfor %}
+    {% else %}
+        <p class="muted">No activity yet.</p>
+    {% endif %}
+</div>
+{% endblock %}

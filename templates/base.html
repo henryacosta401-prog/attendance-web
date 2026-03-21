@@ -745,6 +745,8 @@
             <a class="pill-link {% if request.endpoint == 'manage_employees' or request.endpoint == 'edit_employee' %}active{% endif %}" href="{{ url_for('manage_employees') }}">Employees</a>
         {% else %}
             <a class="pill-link {% if request.endpoint == 'dashboard' %}active{% endif %}" href="{{ url_for('dashboard') }}">Dashboard</a>
+            <a class="pill-link {% if request.endpoint == 'employee_actions' %}active{% endif %}" href="{{ url_for('employee_actions') }}">Quick Actions</a>
+            <a class="pill-link {% if request.endpoint == 'employee_activity' %}active{% endif %}" href="{{ url_for('employee_activity') }}">Recent Activity</a>
             <a class="pill-link {% if request.endpoint == 'employee_history' %}active{% endif %}" href="{{ url_for('employee_history') }}">History</a>
             <a class="pill-link {% if request.endpoint == 'employee_corrections' %}active{% endif %}" href="{{ url_for('employee_corrections') }}">Corrections</a>
             <a class="pill-link {% if request.endpoint == 'employee_profile' %}active{% endif %}" href="{{ url_for('employee_profile') }}">Profile</a>

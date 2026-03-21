@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Quick Actions{% endblock %}
+
+{% block content %}
+<div class="hero-card" style="margin-bottom:20px;">
+    <div class="hero">
+        <div>
+            <h1>Quick Actions</h1>
+            <p class="section-subtitle">Handle time in, breaks, time out, and correction requests in one focused place.</p>
+        </div>
+        <div class="status status-purple">Employee Actions</div>
+    </div>
+</div>
+
+<div class="grid grid-2">
+    <div class="card">
+        <div class="section-title">Time In</div>
+        <p class="section-subtitle" style="margin-bottom:14px;">Add notes and upload proof before you start the day.</p>
+        <form method="POST" action="{{ url_for('time_in') }}" enctype="multipart/form-data">
+            <label>Notes</label>
+            <textarea class="textarea" name="notes" placeholder="Optional notes..."></textarea>
+
+            <label style="display:block; margin-top:12px;">Upload Proof</label>
+            <input class="file-input" type="file" name="proof_file">
+
+            <button class="btn btn-success" type="submit" style="width:100%; margin-top:14px;">Time In</button>
+        </form>
+    </div>
+
+    <div class="card">
+        <div class="section-title">Break and Time Out</div>
+        <p class="section-subtitle" style="margin-bottom:14px;">Use the action that matches what you’re doing right now.</p>
+        <div class="grid" style="gap:12px;">
+            <form method="POST" action="{{ url_for('start_break') }}">
+                <button class="btn btn-warning" type="submit" style="width:100%;">Start Break</button>
+            </form>
+            <form method="POST" action="{{ url_for('end_break') }}">
+                <button class="btn btn-primary" type="submit" style="width:100%;">End Break</button>
+            </form>
+            <form method="POST" action="{{ url_for('time_out') }}">
+                <button class="btn btn-danger" type="submit" style="width:100%;">Time Out</button>
+            </form>
+            <a class="btn btn-gray" href="{{ url_for('employee_corrections') }}">Request Attendance Correction</a>
+        </div>
+    </div>
+</div>
+{% endblock %}

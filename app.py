@@ -1198,9 +1198,7 @@ def dashboard():
         "employee_dashboard.html",
         user=user,
         today_attendance=today_attendance,
-        open_break=open_break,
         notifications=notifications,
-        logs=logs,
         current_status=current_status,
         todays_break_minutes=todays_break_minutes,
         todays_work_minutes=todays_work_minutes,
@@ -1208,6 +1206,37 @@ def dashboard():
         over_break_minutes=over_break_minutes,
         minutes_to_hm=minutes_to_hm
     )
+
+
+@app.route("/actions")
+@login_required(role="employee")
+def employee_actions():
+    user = get_user_by_id(session["user_id"])
+    if not user:
+        session.clear()
+        flash("Your session expired. Please log in again.", "warning")
+        return redirect(url_for("login"))
+
+    return render_template("employee_actions.html", user=user)
+
+
+@app.route("/activity")
+@login_required(role="employee")
+def employee_activity():
+    user = get_user_by_id(session["user_id"])
+    if not user:
+        session.clear()
+        flash("Your session expired. Please log in again.", "warning")
+        return redirect(url_for("login"))
+
+    logs = fetchall("""
+        SELECT * FROM activity_logs
+        WHERE user_id = ?
+        ORDER BY id DESC
+        LIMIT 50
+    """, (user["id"],))
+
+    return render_template("employee_activity.html", user=user, logs=logs)
 
 
 @app.route("/notifications")
