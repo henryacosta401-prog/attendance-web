@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Notifications{% endblock %}
+
+{% block content %}
+<div class="hero-card" style="margin-bottom:20px;">
+    <div class="hero">
+        <div>
+            <h1>Notifications</h1>
+            <p class="section-subtitle">Review your latest alerts and mark them as read when you are done.</p>
+        </div>
+        <div class="status status-purple">{{ unread_count }} Unread</div>
+    </div>
+</div>
+
+<div class="card soft">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
+        <div class="section-title" style="margin-bottom:0;">All Notifications</div>
+        {% if session.get('role') == 'admin' %}
+            <a class="btn btn-gray" href="{{ url_for('admin_dashboard') }}">Back to Dashboard</a>
+        {% else %}
+            <a class="btn btn-gray" href="{{ url_for('dashboard') }}">Back to Dashboard</a>
+        {% endif %}
+    </div>
+
+    {% if notifications %}
+        {% for notif in notifications %}
+            <div class="notif-item">
+                <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;">
+                    <div>
+                        <div style="font-weight:900;color:white;">{{ notif.title }}</div>
+                        <div class="muted small" style="margin-top:5px;">{{ notif.message }}</div>
+                        <div class="small muted" style="margin-top:8px;">{{ format_datetime_12h(notif.created_at) }}</div>
+                    </div>
+                    <div>
+                        {% if notif.is_read == 0 %}
+                            <form method="POST" action="{{ url_for('read_notification', notif_id=notif.id) }}">
+                                <button class="btn btn-dark" type="submit">Mark Read</button>
+                            </form>
+                        {% else %}
+                            <span class="status status-green">Read</span>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        {% endfor %}
+    {% else %}
+        <p class="muted">No notifications yet.</p>
+    {% endif %}
+</div>
+{% endblock %}

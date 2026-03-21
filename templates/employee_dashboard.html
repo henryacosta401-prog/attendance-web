@@ -127,7 +127,10 @@
 
 <div class="grid grid-2" style="margin-top:18px;">
     <div class="card soft">
-        <div class="section-title">Latest Notifications</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
+            <div class="section-title" style="margin-bottom:0;">Latest Notifications</div>
+            <a class="btn btn-gray" href="{{ url_for('notifications_page') }}">View All</a>
+        </div>
         {% if notifications %}
             {% for notif in notifications %}
                 <div class="notif-item">

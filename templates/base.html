@@ -695,5 +695,24 @@
     </div>
 </div>
 
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    const navRight = document.querySelector(".nav-right");
+    if (!navRight) return;
+
+    const pillSpans = navRight.querySelectorAll("span.pill-link");
+    if (pillSpans.length < 2) return;
+
+    const notificationPill = pillSpans[1];
+    const notificationLink = document.createElement("a");
+    notificationLink.className = "pill-link";
+    if (window.location.pathname === "{{ url_for('notifications_page') }}") {
+        notificationLink.classList.add("active");
+    }
+    notificationLink.href = "{{ url_for('notifications_page') }}";
+    notificationLink.textContent = notificationPill.textContent;
+    notificationPill.replaceWith(notificationLink);
+});
+</script>
 </body>
 </html>

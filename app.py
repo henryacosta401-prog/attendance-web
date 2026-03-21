@@ -1201,6 +1201,25 @@ def dashboard():
     )
 
 
+@app.route("/notifications")
+@login_required()
+def notifications_page():
+    user = get_user_by_id(session["user_id"])
+    notifications = fetchall("""
+        SELECT *
+        FROM notifications
+        WHERE user_id = ?
+        ORDER BY id DESC
+        LIMIT 100
+    """, (session["user_id"],))
+
+    return render_template(
+        "notifications.html",
+        user=user,
+        notifications=notifications
+    )
+
+
 @app.route("/history")
 @login_required(role="employee")
 def employee_history():

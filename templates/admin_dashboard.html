@@ -245,7 +245,10 @@ document.addEventListener("DOMContentLoaded", function () {
                 {% endfor %}
             </section>
             <section class="admin-panel">
-                <h2>Admin Alerts</h2>
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+                    <h2>Admin Alerts</h2>
+                    <a class="btn btn-gray" href="{{ url_for('notifications_page') }}">View All</a>
+                </div>
                 <p class="admin-panel-subtitle">In-app notifications for absences and missing time outs.</p>
                 {% if admin_notifications %}
                     <div class="admin-list">
