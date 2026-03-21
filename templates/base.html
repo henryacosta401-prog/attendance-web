@@ -479,6 +479,84 @@
             margin-bottom: 10px;
         }
 
+        .notification-menu {
+            position: relative;
+        }
+
+        .notification-toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .notification-badge {
+            min-width: 22px;
+            height: 22px;
+            padding: 0 7px;
+            border-radius: 999px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(239, 68, 68, 0.22);
+            color: #ffffff;
+            font-size: 12px;
+            font-weight: 800;
+        }
+
+        .notification-dropdown {
+            position: absolute;
+            top: calc(100% + 12px);
+            right: 0;
+            width: min(380px, 90vw);
+            padding: 16px;
+            border-radius: 20px;
+            background: rgba(15, 23, 42, 0.96);
+            border: 1px solid rgba(255,255,255,0.10);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.32);
+            display: none;
+            z-index: 120;
+        }
+
+        .notification-dropdown.open {
+            display: block;
+        }
+
+        .notification-header {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            align-items: center;
+            margin-bottom: 14px;
+        }
+
+        .notification-list {
+            display: grid;
+            gap: 10px;
+            max-height: 360px;
+            overflow-y: auto;
+            margin-bottom: 14px;
+        }
+
+        .notification-card {
+            padding: 12px;
+            border-radius: 16px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.06);
+        }
+
+        .notification-card.unread {
+            border-color: rgba(96, 165, 250, 0.32);
+            background: rgba(59,130,246,0.10);
+        }
+
+        .notification-actions {
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
         .row-user {
             display: flex;
             align-items: center;
@@ -704,14 +782,72 @@ document.addEventListener("DOMContentLoaded", function () {
     if (pillSpans.length < 2) return;
 
     const notificationPill = pillSpans[1];
-    const notificationLink = document.createElement("a");
-    notificationLink.className = "pill-link";
-    if (window.location.pathname === "{{ url_for('notifications_page') }}") {
-        notificationLink.classList.add("active");
+    const dropdownWrapper = document.createElement("div");
+    dropdownWrapper.className = "notification-menu";
+    dropdownWrapper.innerHTML = `
+        <button class="pill-link notification-toggle ${window.location.pathname === "{{ url_for('notifications_page') }}" ? "active" : ""}" type="button" id="notificationToggle" aria-expanded="false">
+            <span>Notifications</span>
+            <span class="notification-badge">{{ unread_count }}</span>
+        </button>
+        <div class="notification-dropdown" id="notificationDropdown">
+            <div class="notification-header">
+                <div>
+                    <div style="font-weight:900;color:white;">Notifications</div>
+                    <div class="small muted">{{ unread_count }} unread</div>
+                </div>
+                <form method="POST" action="{{ url_for('read_all_notifications') }}">
+                    <button class="btn btn-dark" type="submit">Mark All Read</button>
+                </form>
+            </div>
+            <div class="notification-list">
+                {% if latest_notifications %}
+                    {% for notif in latest_notifications %}
+                        <div class="notification-card {% if notif.is_read == 0 %}unread{% endif %}">
+                            <div style="font-weight:900;color:white;">{{ notif.title }}</div>
+                            <div class="small muted" style="margin-top:5px;">{{ notif.message }}</div>
+                            <div class="small muted" style="margin-top:8px;">{{ format_datetime_12h(notif.created_at) }}</div>
+                        </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="small muted">No notifications yet.</div>
+                {% endif %}
+            </div>
+            <div class="notification-actions">
+                <a class="btn btn-gray" href="{{ url_for('notifications_page') }}">View All</a>
+                <button class="btn btn-secondary" type="button" id="notificationClose">Close</button>
+            </div>
+        </div>
+    `;
+    notificationPill.replaceWith(dropdownWrapper);
+
+    const toggle = document.getElementById("notificationToggle");
+    const dropdown = document.getElementById("notificationDropdown");
+    const closeBtn = document.getElementById("notificationClose");
+
+    function closeDropdown() {
+        dropdown.classList.remove("open");
+        toggle.setAttribute("aria-expanded", "false");
     }
-    notificationLink.href = "{{ url_for('notifications_page') }}";
-    notificationLink.textContent = notificationPill.textContent;
-    notificationPill.replaceWith(notificationLink);
+
+    toggle.addEventListener("click", function (event) {
+        event.stopPropagation();
+        const isOpen = dropdown.classList.toggle("open");
+        toggle.setAttribute("aria-expanded", isOpen ? "true" : "false");
+    });
+
+    if (closeBtn) {
+        closeBtn.addEventListener("click", function () {
+            closeDropdown();
+        });
+    }
+
+    dropdown.addEventListener("click", function (event) {
+        event.stopPropagation();
+    });
+
+    document.addEventListener("click", function () {
+        closeDropdown();
+    });
 });
 </script>
 </body>

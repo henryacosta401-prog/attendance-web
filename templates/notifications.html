@@ -15,11 +15,16 @@
 <div class="card soft">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
         <div class="section-title" style="margin-bottom:0;">All Notifications</div>
-        {% if session.get('role') == 'admin' %}
-            <a class="btn btn-gray" href="{{ url_for('admin_dashboard') }}">Back to Dashboard</a>
-        {% else %}
-            <a class="btn btn-gray" href="{{ url_for('dashboard') }}">Back to Dashboard</a>
-        {% endif %}
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            <form method="POST" action="{{ url_for('read_all_notifications') }}">
+                <button class="btn btn-dark" type="submit">Mark All Read</button>
+            </form>
+            {% if session.get('role') == 'admin' %}
+                <a class="btn btn-gray" href="{{ url_for('admin_dashboard') }}">Back to Dashboard</a>
+            {% else %}
+                <a class="btn btn-gray" href="{{ url_for('dashboard') }}">Back to Dashboard</a>
+            {% endif %}
+        </div>
     </div>
 
     {% if notifications %}

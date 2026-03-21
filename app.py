@@ -1067,6 +1067,7 @@ def append_attendance_to_google_sheet(user_row, attendance_row):
 def inject_globals():
     user = None
     unread_count = 0
+    latest_notifications = []
 
     if session.get("user_id"):
         user = get_user_by_id(session["user_id"])
@@ -1076,10 +1077,18 @@ def inject_globals():
                 WHERE user_id = ? AND is_read = 0
             """, (session["user_id"],))
             unread_count = unread["cnt"] if unread else 0
+            latest_notifications = fetchall("""
+                SELECT *
+                FROM notifications
+                WHERE user_id = ?
+                ORDER BY id DESC
+                LIMIT 6
+            """, (session["user_id"],))
 
     return dict(
         current_user=user,
         unread_count=unread_count,
+        latest_notifications=latest_notifications,
         is_image=is_image,
         uploaded_file_exists=uploaded_file_exists,
         get_avatar_initials=get_avatar_initials,
@@ -1536,6 +1545,19 @@ def read_notification(notif_id):
     if session.get("role") == "admin":
         return redirect(request.referrer or url_for("admin_dashboard"))
     return redirect(request.referrer or url_for("dashboard"))
+
+
+@app.route("/notifications/read-all", methods=["POST"])
+@login_required()
+def read_all_notifications():
+    execute_db("""
+        UPDATE notifications
+        SET is_read = 1
+        WHERE user_id = ? AND is_read = 0
+    """, (session["user_id"],), commit=True)
+
+    flash("All notifications marked as read.", "success")
+    return redirect(request.referrer or url_for("notifications_page"))
 
 
 @app.route("/uploads/<path:filename>")
