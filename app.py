@@ -1370,9 +1370,9 @@ def get_admin_employee_rows(status_filter="", search="", department_filter="", o
     return employees
 
 
-def get_incident_reports(report_employee="", report_type="", report_date_from="", report_date_to=""):
+def get_incident_reports(report_employee="", report_department="", report_type="", report_date_from="", report_date_to=""):
     report_sql = """
-        SELECT r.*, u.full_name, reviewer.full_name AS reviewed_by_name
+        SELECT r.*, u.full_name, u.department, reviewer.full_name AS reviewed_by_name
         FROM incident_reports r
         LEFT JOIN users u ON u.id = r.user_id
         LEFT JOIN users reviewer ON reviewer.id = r.reviewed_by
@@ -1383,6 +1383,10 @@ def get_incident_reports(report_employee="", report_type="", report_date_from=""
     if report_employee:
         report_sql += " AND r.user_id = ?"
         report_params.append(report_employee)
+
+    if report_department:
+        report_sql += " AND COALESCE(u.department, '') = ?"
+        report_params.append(report_department)
 
     if report_type:
         report_sql += " AND LOWER(r.error_type) = ?"
@@ -1962,6 +1966,7 @@ def export_admin_history_excel():
 @login_required(role="admin")
 def admin_error_reports():
     report_employee = request.args.get("report_employee", "").strip()
+    report_department = request.args.get("report_department", "").strip()
     report_type = request.args.get("report_type", "").strip()
     report_date_from = request.args.get("report_date_from", "").strip()
     report_date_to = request.args.get("report_date_to", "").strip()
@@ -1972,8 +1977,15 @@ def admin_error_reports():
         WHERE role = 'employee'
         ORDER BY full_name ASC
     """)
+    departments = fetchall("""
+        SELECT DISTINCT department
+        FROM users
+        WHERE role = 'employee' AND department IS NOT NULL AND TRIM(department) != ''
+        ORDER BY department ASC
+    """)
     reports = get_incident_reports(
         report_employee=report_employee,
+        report_department=report_department,
         report_type=report_type,
         report_date_from=report_date_from,
         report_date_to=report_date_to
@@ -1982,8 +1994,10 @@ def admin_error_reports():
     return render_template(
         "admin_error_reports.html",
         employees=employees,
+        departments=departments,
         reports=reports,
         report_employee=report_employee,
+        report_department=report_department,
         report_type=report_type,
         report_date_from=report_date_from,
         report_date_to=report_date_to
@@ -1994,12 +2008,14 @@ def admin_error_reports():
 @login_required(role="admin")
 def export_admin_error_reports_excel():
     report_employee = request.args.get("report_employee", "").strip()
+    report_department = request.args.get("report_department", "").strip()
     report_type = request.args.get("report_type", "").strip()
     report_date_from = request.args.get("report_date_from", "").strip()
     report_date_to = request.args.get("report_date_to", "").strip()
 
     reports = get_incident_reports(
         report_employee=report_employee,
+        report_department=report_department,
         report_type=report_type,
         report_date_from=report_date_from,
         report_date_to=report_date_to
@@ -2012,6 +2028,7 @@ def export_admin_error_reports_excel():
         return redirect(url_for(
             "admin_error_reports",
             report_employee=report_employee,
+            report_department=report_department,
             report_type=report_type,
             report_date_from=report_date_from,
             report_date_to=report_date_to
@@ -2022,6 +2039,7 @@ def export_admin_error_reports_excel():
     sheet.title = "Error Reports"
     sheet.append([
         "Employee",
+        "Department",
         "Error Type",
         "Report Date",
         "Message",
@@ -2035,6 +2053,7 @@ def export_admin_error_reports_excel():
     for report in reports:
         sheet.append([
             report["full_name"] if report["full_name"] else report["employee_name"] if report["employee_name"] else "Unknown",
+            report["department"] or "",
             report["error_type"] or "",
             report["report_date"] if report["report_date"] else report["incident_date"] if report["incident_date"] else "",
             report["message"] or "",
