@@ -2,96 +2,342 @@
 {% block title %}Admin Dashboard{% endblock %}
 
 {% block extra_head %}
+<style>
+.admin-shell {
+    display: grid;
+    gap: 20px;
+}
+
+.admin-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 14px;
+}
+
+.admin-stat-card {
+    padding: 18px;
+    border-radius: 18px;
+    background: linear-gradient(180deg, rgba(19, 28, 48, 0.92), rgba(36, 45, 71, 0.88));
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    box-shadow: 0 16px 30px rgba(15, 23, 42, 0.18);
+}
+
+.admin-stat-label {
+    color: #9fb0d4;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.admin-stat-value {
+    margin-top: 10px;
+    color: #f8fbff;
+    font-size: 34px;
+    font-weight: 800;
+    line-height: 1;
+}
+
+.admin-dashboard-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(300px, 0.95fr);
+    gap: 20px;
+    align-items: start;
+}
+
+.admin-panel {
+    padding: 20px;
+    border-radius: 22px;
+    background: linear-gradient(180deg, rgba(25, 34, 58, 0.96), rgba(20, 28, 48, 0.95));
+    border: 1px solid rgba(148, 163, 184, 0.15);
+    box-shadow: 0 22px 34px rgba(15, 23, 42, 0.24);
+}
+
+.admin-panel h2 {
+    margin: 0;
+    color: #f8fbff;
+    font-size: 24px;
+}
+
+.admin-panel-subtitle {
+    margin-top: 8px;
+    color: #9fb0d4;
+    font-size: 13px;
+}
+
+.admin-filter-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 18px;
+    margin-bottom: 16px;
+}
+
+.admin-filter-check {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 48px;
+    padding: 0 14px;
+    border-radius: 14px;
+    background: rgba(15, 23, 42, 0.28);
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    color: #dbe7ff;
+    font-weight: 600;
+}
+
+.admin-table-wrap {
+    overflow-x: auto;
+    border-radius: 18px;
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    background: rgba(8, 13, 24, 0.18);
+}
+
+.admin-live-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.admin-live-table th,
+.admin-live-table td {
+    padding: 14px 16px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+    vertical-align: top;
+}
+
+.admin-live-table th {
+    background: rgba(59, 130, 246, 0.08);
+    color: #bad0ff;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.admin-live-table td {
+    color: #ecf3ff;
+    font-size: 14px;
+}
+
+.admin-row-user {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+
+.admin-avatar {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+}
+
+.admin-avatar-placeholder {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(148, 163, 184, 0.18);
+    color: #dbe7ff;
+    font-weight: 800;
+}
+
+.admin-name {
+    color: #ffffff;
+    font-weight: 800;
+}
+
+.admin-username,
+.admin-meta,
+.admin-subtext {
+    color: #9fb0d4;
+    font-size: 12px;
+}
+
+.admin-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.admin-pill-gray { background: rgba(148, 163, 184, 0.18); color: #dbe7ff; }
+.admin-pill-green { background: rgba(16, 185, 129, 0.18); color: #7ef5bf; }
+.admin-pill-yellow { background: rgba(245, 158, 11, 0.2); color: #ffd38a; }
+.admin-pill-red { background: rgba(239, 68, 68, 0.18); color: #ffb4b4; }
+.admin-pill-blue { background: rgba(59, 130, 246, 0.18); color: #9fccff; }
+
+.admin-flags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.admin-sidebar {
+    display: grid;
+    gap: 20px;
+}
+
+.admin-list {
+    display: grid;
+    gap: 12px;
+    margin-top: 16px;
+}
+
+.admin-list-card {
+    padding: 14px 16px;
+    border-radius: 16px;
+    background: rgba(10, 16, 29, 0.34);
+    border: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.admin-empty {
+    margin-top: 16px;
+    padding: 14px 16px;
+    border-radius: 16px;
+    border: 1px dashed rgba(148, 163, 184, 0.2);
+    color: #9fb0d4;
+    text-align: center;
+}
+
+.schedule-picker {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.schedule-chip {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: rgba(59, 130, 246, 0.08);
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    color: #dbe7ff;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.schedule-chip input {
+    width: auto;
+    margin: 0;
+}
+
+@media (max-width: 1100px) {
+    .admin-dashboard-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .admin-filter-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 700px) {
+    .admin-filter-grid {
+        grid-template-columns: 1fr;
+    }
+}
+</style>
 <script>
 document.addEventListener("DOMContentLoaded", function () {
-
     function formatDateTime12h(value) {
         if (!value) return "";
         try {
             const [datePart, timePart] = value.split(" ");
             if (!datePart || !timePart) return value;
-
             let [hour, minute, second] = timePart.split(":").map(Number);
             const ampm = hour >= 12 ? "PM" : "AM";
             hour = hour % 12;
             if (hour === 0) hour = 12;
-
-            const hh = String(hour).padStart(2, "0");
-            const mm = String(minute).padStart(2, "0");
-            const ss = String(second).padStart(2, "0");
-
-            return `${datePart} ${hh}:${mm}:${ss} ${ampm}`;
+            return `${datePart} ${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:${String(second).padStart(2, "0")} ${ampm}`;
         } catch (e) {
             return value;
         }
     }
 
+    function statusClass(status) {
+        if (status === "Timed In") return "admin-pill-green";
+        if (status === "On Break") return "admin-pill-yellow";
+        if (status === "Timed Out") return "admin-pill-blue";
+        if (status === "Absent" || status === "Inactive") return "admin-pill-red";
+        return "admin-pill-gray";
+    }
+
     async function refreshLiveStatus() {
         try {
-            const searchVal = document.getElementById("searchBox") ? document.getElementById("searchBox").value : "";
-            const statusVal = document.getElementById("statusFilter") ? document.getElementById("statusFilter").value : "";
-            const departmentVal = document.getElementById("departmentFilter") ? document.getElementById("departmentFilter").value : "";
-            const overBreakOnlyVal = document.getElementById("overBreakOnly") && document.getElementById("overBreakOnly").checked ? "1" : "";
+            const searchVal = document.getElementById("searchBox")?.value || "";
+            const statusVal = document.getElementById("statusFilter")?.value || "";
+            const departmentVal = document.getElementById("departmentFilter")?.value || "";
+            const overBreakOnlyVal = document.getElementById("overBreakOnly")?.checked ? "1" : "";
 
             const response = await fetch(`/admin/live-status?search=${encodeURIComponent(searchVal)}&status=${encodeURIComponent(statusVal)}&department=${encodeURIComponent(departmentVal)}&over_break_only=${encodeURIComponent(overBreakOnlyVal)}`);
             const data = await response.json();
-
             const tbody = document.getElementById("liveStatusBody");
-            tbody.innerHTML = "";
+            if (!tbody) return;
 
-            data.forEach(emp => {
-                let statusClass = "status-gray";
-                if (emp.status === "Timed In") statusClass = "status-green";
-                else if (emp.status === "On Break") statusClass = "status-yellow";
-                else if (emp.status === "Timed Out") statusClass = "status-red";
+            if (!data.length) {
+                tbody.innerHTML = `<tr><td colspan="7"><div class="admin-empty">No employees match the current filters.</div></td></tr>`;
+                return;
+            }
 
-                const profileImage = emp.profile_image
-                    ? `/uploads/${emp.profile_image}`
-                    : "https://via.placeholder.com/48x48.png?text=U";
+            tbody.innerHTML = data.map(emp => {
+                const profile = emp.profile_image
+                    ? `<img class="admin-avatar" src="/uploads/${emp.profile_image}" alt="avatar">`
+                    : `<div class="admin-avatar-placeholder">${(emp.full_name || "U").slice(0, 1)}</div>`;
+                const proofHtml = emp.proof_file
+                    ? `<a href="/uploads/${emp.proof_file}" target="_blank" class="admin-subtext">Open proof</a>`
+                    : `<span class="admin-subtext">No proof</span>`;
+                const flags = [];
+                if (emp.late_flag) flags.push(`<span class="admin-pill admin-pill-red">Late ${emp.late_minutes}m</span>`);
+                if (emp.over_break_flag) flags.push(`<span class="admin-pill admin-pill-yellow">Over break ${emp.over_break_minutes}m</span>`);
+                if (emp.scheduled_today && !emp.absent_flag) flags.push(`<span class="admin-pill admin-pill-green">Scheduled today</span>`);
+                if (!emp.scheduled_today) flags.push(`<span class="admin-pill admin-pill-gray">Off today</span>`);
 
-                let proofHtml = "-";
-                if (emp.proof_file) {
-                    const isImg = /\.(png|jpg|jpeg|gif|webp)$/i.test(emp.proof_file);
-                    if (isImg) {
-                        proofHtml = `<a href="/uploads/${emp.proof_file}" target="_blank"><img src="/uploads/${emp.proof_file}" class="proof-preview" style="width:58px;height:58px;border-radius:14px;"></a>`;
-                    } else {
-                        proofHtml = `<a href="/uploads/${emp.proof_file}" target="_blank" style="color:#93c5fd;">View</a>`;
-                    }
-                }
-
-                const lateHtml = emp.late_flag
-                    ? `<span class="status status-red">Late ${emp.late_minutes}m</span>`
-                    : "-";
-                const breakLimitHtml = `${emp.break_limit_minutes || 15}m`;
-                const breakHtml = `${emp.break_minutes || 0}m`;
-                const overBreakHtml = emp.over_break_flag
-                    ? `<span class="status status-red">Over by ${emp.over_break_minutes}m</span>`
-                    : `<span class="status status-green">Within Limit</span>`;
-
-                tbody.innerHTML += `
+                return `
                     <tr>
                         <td>
-                            <div class="row-user">
-                                <img class="avatar" src="${profileImage}" alt="avatar">
+                            <div class="admin-row-user">
+                                ${profile}
                                 <div>
-                                    <div style="font-weight:900;color:white;">${emp.full_name}</div>
-                                    <div class="small muted">@${emp.username}</div>
+                                    <div class="admin-name">${emp.full_name}</div>
+                                    <div class="admin-username">@${emp.username}</div>
                                 </div>
                             </div>
                         </td>
-                        <td>${emp.department || "-"}</td>
-                        <td>${emp.position || "-"}</td>
-                        <td><span class="status ${statusClass}">${emp.status}</span></td>
-                        <td>${emp.time_in ? formatDateTime12h(emp.time_in) : "-"}</td>
-                        <td>${emp.time_out ? formatDateTime12h(emp.time_out) : "-"}</td>
-                        <td>${lateHtml}</td>
-                        <td>${breakLimitHtml}</td>
-                        <td>${breakHtml}</td>
-                        <td>${overBreakHtml}</td>
-                        <td>${proofHtml}</td>
+                        <td>
+                            <div>${emp.department || "-"}</div>
+                            <div class="admin-subtext">${emp.position || "-"}</div>
+                        </td>
+                        <td>
+                            <div>${emp.schedule_summary || "-"}</div>
+                            <div class="admin-subtext">Shift ${emp.shift_start || "-"}</div>
+                        </td>
+                        <td>
+                            <span class="admin-pill ${statusClass(emp.status_display)}">${emp.status_display}</span>
+                        </td>
+                        <td>
+                            <div>${emp.time_in ? formatDateTime12h(emp.time_in) : "-"}</div>
+                            <div class="admin-subtext">${emp.time_out ? `Out ${formatDateTime12h(emp.time_out)}` : "No time out yet"}</div>
+                        </td>
+                        <td>
+                            <div>${emp.break_minutes || 0}m used</div>
+                            <div class="admin-subtext">Limit ${emp.break_limit_minutes || 15}m</div>
+                        </td>
+                        <td>
+                            <div class="admin-flags">${flags.join("") || `<span class="admin-pill admin-pill-gray">No alerts</span>`}</div>
+                            <div style="margin-top:8px;">${proofHtml}</div>
+                        </td>
                     </tr>
                 `;
-            });
+            }).join("");
         } catch (error) {
             console.error("Live status refresh failed:", error);
         }
@@ -100,15 +346,11 @@ document.addEventListener("DOMContentLoaded", function () {
     refreshLiveStatus();
     setInterval(refreshLiveStatus, 10000);
 
-    const searchBox = document.getElementById("searchBox");
-    const statusFilter = document.getElementById("statusFilter");
-    const departmentFilter = document.getElementById("departmentFilter");
-    const overBreakOnly = document.getElementById("overBreakOnly");
-
-    if (searchBox) searchBox.addEventListener("input", refreshLiveStatus);
-    if (statusFilter) statusFilter.addEventListener("change", refreshLiveStatus);
-    if (departmentFilter) departmentFilter.addEventListener("change", refreshLiveStatus);
-    if (overBreakOnly) overBreakOnly.addEventListener("change", refreshLiveStatus);
+    ["searchBox", "statusFilter", "departmentFilter", "overBreakOnly"].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener(id === "searchBox" ? "input" : "change", refreshLiveStatus);
+    });
 });
 </script>
 {% endblock %}
@@ -118,164 +360,230 @@ document.addEventListener("DOMContentLoaded", function () {
     <div class="hero">
         <div>
             <h1>Admin Control Center</h1>
-            <p class="section-subtitle">Monitor live attendance, late employees, break usage, proofs, logs, and notifications.</p>
+            <p class="section-subtitle">Track today’s workforce, spot absences from schedules, and stay on top of attendance issues faster.</p>
         </div>
-        <div class="status status-purple">Live Monitoring</div>
+        <div class="status status-purple">Live Workforce View</div>
     </div>
 </div>
 
-<div class="grid grid-4" style="margin-bottom:18px;">
-    <div class="stat-box">
-        <div class="stat-label">Total Employees</div>
-        <div class="stat-number">{{ stats.total_employees }}</div>
-    </div>
-    <div class="stat-box">
-        <div class="stat-label">Timed In</div>
-        <div class="stat-number">{{ stats.timed_in }}</div>
-    </div>
-    <div class="stat-box">
-        <div class="stat-label">On Break</div>
-        <div class="stat-number">{{ stats.on_break }}</div>
-    </div>
-    <div class="stat-box">
-        <div class="stat-label">Late Today</div>
-        <div class="stat-number">{{ stats.late_today }}</div>
-    </div>
-    <div class="stat-box">
-        <div class="stat-label">Over Break</div>
-        <div class="stat-number">{{ stats.over_break_today }}</div>
-    </div>
-</div>
-
-<div class="grid grid-2" style="margin-top:18px;">
-    <div class="card">
-        <div class="section-title">Live Employee Status</div>
-        <p class="section-subtitle" style="margin-bottom:14px;">Each employee now uses their own assigned daily break limit.</p>
-
-        <div class="grid grid-2" style="margin-bottom:12px;">
-            <div>
-                <label>Search</label>
-                <input id="searchBox" class="input" type="text" value="{{ search }}" placeholder="Search employee...">
-            </div>
-            <div>
-                <label>Status Filter</label>
-                <select id="statusFilter" class="input">
-                    <option value="">All</option>
-                    <option value="Timed In" {% if status_filter == 'Timed In' %}selected{% endif %}>Timed In</option>
-                    <option value="On Break" {% if status_filter == 'On Break' %}selected{% endif %}>On Break</option>
-                    <option value="Timed Out" {% if status_filter == 'Timed Out' %}selected{% endif %}>Timed Out</option>
-                    <option value="Offline" {% if status_filter == 'Offline' %}selected{% endif %}>Offline</option>
-                </select>
-            </div>
-            <div>
-                <label>Department</label>
-                <select id="departmentFilter" class="input">
-                    <option value="">All Departments</option>
-                    {% for dept in departments %}
-                        <option value="{{ dept.department }}" {% if department_filter == dept.department %}selected{% endif %}>{{ dept.department }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div>
-                <label style="display:flex; align-items:center; gap:10px; margin-top:8px;">
-                    <input id="overBreakOnly" type="checkbox" {% if over_break_only == '1' %}checked{% endif %}>
-                    <span>Overbreak Only</span>
-                </label>
-            </div>
+<div class="admin-shell">
+    <div class="admin-stats">
+        <div class="admin-stat-card">
+            <div class="admin-stat-label">Active Employees</div>
+            <div class="admin-stat-value">{{ stats.total_employees }}</div>
         </div>
-
-        <div class="table-wrap">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Employee</th>
-                        <th>Department</th>
-                        <th>Position</th>
-                        <th>Status</th>
-                        <th>Time In</th>
-                        <th>Time Out</th>
-                        <th>Late</th>
-                        <th>Limit</th>
-                        <th>Break</th>
-                        <th>Overbreak</th>
-                        <th>Proof</th>
-                    </tr>
-                </thead>
-                <tbody id="liveStatusBody">
-                    {% for emp in employees %}
-                    <tr>
-                        <td>{{ emp.full_name }}</td>
-                        <td>{{ emp.department or '-' }}</td>
-                        <td>{{ emp.position or '-' }}</td>
-                        <td>{{ emp.status }}</td>
-                        <td>{{ format_datetime_12h(emp.time_in) if emp.time_in else '-' }}</td>
-                        <td>{{ format_datetime_12h(emp.time_out) if emp.time_out else '-' }}</td>
-                        <td>
-                            {% if emp.late_flag == 1 %}
-                                <span class="status status-red">Late {{ emp.late_minutes }}m</span>
-                            {% else %}
-                                -
-                            {% endif %}
-                        </td>
-                        <td>{{ emp.break_limit_minutes }}m</td>
-                        <td>{{ emp.break_minutes }}m</td>
-                        <td>
-                            {% if emp.over_break_flag == 1 %}
-                                <span class="status status-red">Over by {{ emp.over_break_minutes }}m</span>
-                            {% else %}
-                                <span class="status status-green">Within Limit</span>
-                            {% endif %}
-                        </td>
-                        <td>
-                            {% if emp.proof_file %}
-                                {% if is_image(emp.proof_file) %}
-                                    <a href="{{ url_for('uploaded_file', filename=emp.proof_file) }}" target="_blank">
-                                        <img src="{{ url_for('uploaded_file', filename=emp.proof_file) }}" class="proof-preview" style="width:58px;height:58px;border-radius:14px;">
-                                    </a>
-                                {% else %}
-                                    <a href="{{ url_for('uploaded_file', filename=emp.proof_file) }}" target="_blank">View</a>
-                                {% endif %}
-                            {% else %}
-                                -
-                            {% endif %}
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+        <div class="admin-stat-card">
+            <div class="admin-stat-label">Scheduled Today</div>
+            <div class="admin-stat-value">{{ stats.scheduled_today }}</div>
         </div>
-
-        <p class="small muted" style="margin-top:10px;">Auto-refreshes every 10 seconds.</p>
+        <div class="admin-stat-card">
+            <div class="admin-stat-label">Absent Today</div>
+            <div class="admin-stat-value">{{ stats.absent_today }}</div>
+        </div>
+        <div class="admin-stat-card">
+            <div class="admin-stat-label">Timed In</div>
+            <div class="admin-stat-value">{{ stats.timed_in }}</div>
+        </div>
+        <div class="admin-stat-card">
+            <div class="admin-stat-label">On Break</div>
+            <div class="admin-stat-value">{{ stats.on_break }}</div>
+        </div>
+        <div class="admin-stat-card">
+            <div class="admin-stat-label">Late Today</div>
+            <div class="admin-stat-value">{{ stats.late_today }}</div>
+        </div>
     </div>
-</div>
 
-<div class="card soft" style="margin-top:18px;">
-    <div class="section-title">Recent Activity Logs</div>
-    {% if logs %}
-        <div class="table-wrap">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Employee</th>
-                        <th>Action</th>
-                        <th>Details</th>
-                        <th>Date/Time</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for log in logs %}
-                    <tr>
-                        <td>{{ log.full_name }}</td>
-                        <td>{{ log.action }}</td>
-                        <td>{{ log.details }}</td>
-                        <td>{{ format_datetime_12h(log.created_at) }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    {% else %}
-        <p class="muted">No logs yet.</p>
-    {% endif %}
+    <div class="admin-dashboard-grid">
+        <section class="admin-panel">
+            <h2>Live Employee Status</h2>
+            <p class="admin-panel-subtitle">Use schedule, department, and status filters together to focus on who needs attention right now.</p>
+
+            <div class="admin-filter-grid">
+                <div>
+                    <label>Search</label>
+                    <input id="searchBox" class="input" type="text" value="{{ search }}" placeholder="Search employee...">
+                </div>
+                <div>
+                    <label>Status</label>
+                    <select id="statusFilter" class="input">
+                        <option value="">All</option>
+                        <option value="Absent" {% if status_filter == 'Absent' %}selected{% endif %}>Absent</option>
+                        <option value="Timed In" {% if status_filter == 'Timed In' %}selected{% endif %}>Timed In</option>
+                        <option value="On Break" {% if status_filter == 'On Break' %}selected{% endif %}>On Break</option>
+                        <option value="Timed Out" {% if status_filter == 'Timed Out' %}selected{% endif %}>Timed Out</option>
+                        <option value="Offline" {% if status_filter == 'Offline' %}selected{% endif %}>Offline</option>
+                        <option value="Off Day" {% if status_filter == 'Off Day' %}selected{% endif %}>Off Day</option>
+                        <option value="Inactive" {% if status_filter == 'Inactive' %}selected{% endif %}>Inactive</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Department</label>
+                    <select id="departmentFilter" class="input">
+                        <option value="">All Departments</option>
+                        {% for dept in departments %}
+                            <option value="{{ dept.department }}" {% if department_filter == dept.department %}selected{% endif %}>{{ dept.department }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label>Attention Filter</label>
+                    <label class="admin-filter-check">
+                        <input id="overBreakOnly" type="checkbox" {% if over_break_only == '1' %}checked{% endif %}>
+                        <span>Overbreak only</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="admin-table-wrap">
+                <table class="admin-live-table">
+                    <thead>
+                        <tr>
+                            <th>Employee</th>
+                            <th>Team</th>
+                            <th>Schedule</th>
+                            <th>Status</th>
+                            <th>Today</th>
+                            <th>Break</th>
+                            <th>Alerts & Proof</th>
+                        </tr>
+                    </thead>
+                    <tbody id="liveStatusBody">
+                        {% if employees %}
+                            {% for emp in employees %}
+                            <tr>
+                                <td>
+                                    <div class="admin-row-user">
+                                        {% if emp.profile_image %}
+                                            <img class="admin-avatar" src="{{ url_for('uploaded_file', filename=emp.profile_image) }}" alt="avatar">
+                                        {% else %}
+                                            <div class="admin-avatar-placeholder">{{ emp.full_name[:1] }}</div>
+                                        {% endif %}
+                                        <div>
+                                            <div class="admin-name">{{ emp.full_name }}</div>
+                                            <div class="admin-username">@{{ emp.username }}</div>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td>
+                                    <div>{{ emp.department or '-' }}</div>
+                                    <div class="admin-subtext">{{ emp.position or '-' }}</div>
+                                </td>
+                                <td>
+                                    <div>{{ emp.schedule_summary }}</div>
+                                    <div class="admin-subtext">Shift {{ emp.shift_start }}</div>
+                                </td>
+                                <td>
+                                    {% set live_class = 'admin-pill-gray' %}
+                                    {% if emp.status_display == 'Timed In' %}
+                                        {% set live_class = 'admin-pill-green' %}
+                                    {% elif emp.status_display == 'On Break' %}
+                                        {% set live_class = 'admin-pill-yellow' %}
+                                    {% elif emp.status_display == 'Timed Out' %}
+                                        {% set live_class = 'admin-pill-blue' %}
+                                    {% elif emp.status_display in ['Absent', 'Inactive'] %}
+                                        {% set live_class = 'admin-pill-red' %}
+                                    {% endif %}
+                                    <span class="admin-pill {{ live_class }}">{{ emp.status_display }}</span>
+                                </td>
+                                <td>
+                                    <div>{{ format_datetime_12h(emp.time_in) if emp.time_in else '-' }}</div>
+                                    <div class="admin-subtext">
+                                        {% if emp.time_out %}
+                                            Out {{ format_datetime_12h(emp.time_out) }}
+                                        {% elif emp.absent_flag == 1 %}
+                                            Missed scheduled start
+                                        {% elif emp.scheduled_today == 1 %}
+                                            Scheduled today
+                                        {% else %}
+                                            Off day
+                                        {% endif %}
+                                    </div>
+                                </td>
+                                <td>
+                                    <div>{{ emp.break_minutes }}m used</div>
+                                    <div class="admin-subtext">Limit {{ emp.break_limit_minutes }}m</div>
+                                </td>
+                                <td>
+                                    <div class="admin-flags">
+                                        {% if emp.late_flag == 1 %}
+                                            <span class="admin-pill admin-pill-red">Late {{ emp.late_minutes }}m</span>
+                                        {% endif %}
+                                        {% if emp.over_break_flag == 1 %}
+                                            <span class="admin-pill admin-pill-yellow">Over break {{ emp.over_break_minutes }}m</span>
+                                        {% endif %}
+                                        {% if emp.scheduled_today == 1 and emp.absent_flag == 0 %}
+                                            <span class="admin-pill admin-pill-green">Scheduled today</span>
+                                        {% endif %}
+                                        {% if emp.scheduled_today == 0 %}
+                                            <span class="admin-pill admin-pill-gray">Off today</span>
+                                        {% endif %}
+                                        {% if emp.late_flag != 1 and emp.over_break_flag != 1 and emp.scheduled_today == 1 and emp.absent_flag == 1 %}
+                                            <span class="admin-pill admin-pill-red">Needs follow-up</span>
+                                        {% endif %}
+                                    </div>
+                                    <div style="margin-top:8px;">
+                                        {% if emp.proof_file %}
+                                            <a class="admin-subtext" href="{{ url_for('uploaded_file', filename=emp.proof_file) }}" target="_blank">Open proof</a>
+                                        {% else %}
+                                            <span class="admin-subtext">No proof</span>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                            <tr>
+                                <td colspan="7">
+                                    <div class="admin-empty">No employees match the current filters.</div>
+                                </td>
+                            </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+
+            <p class="admin-panel-subtitle" style="margin-top:14px;">Auto-refreshes every 10 seconds. “Absent” appears only after a scheduled employee passes their shift start without timing in.</p>
+        </section>
+
+        <aside class="admin-sidebar">
+            <section class="admin-panel">
+                <h2>Absent Today</h2>
+                <p class="admin-panel-subtitle">Scheduled employees for {{ today_schedule_code }} who have not timed in yet.</p>
+                {% if absent_employees %}
+                    <div class="admin-list">
+                        {% for emp in absent_employees %}
+                            <div class="admin-list-card">
+                                <div class="admin-name">{{ emp.full_name }}</div>
+                                <div class="admin-meta">{{ emp.department or '-' }} • {{ emp.position or '-' }}</div>
+                                <div class="admin-subtext" style="margin-top:6px;">Expected {{ emp.shift_start }} • {{ emp.schedule_summary }}</div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="admin-empty">No scheduled absences detected right now.</div>
+                {% endif %}
+            </section>
+
+            <section class="admin-panel">
+                <h2>Recent Activity</h2>
+                <p class="admin-panel-subtitle">Latest actions across attendance, corrections, and reports.</p>
+                {% if logs %}
+                    <div class="admin-list">
+                        {% for log in logs[:10] %}
+                            <div class="admin-list-card">
+                                <div class="admin-name">{{ log.full_name }}</div>
+                                <div class="admin-meta">{{ log.action }}</div>
+                                <div class="admin-subtext" style="margin-top:6px;">{{ log.details if log.details else 'No extra details' }}</div>
+                                <div class="admin-subtext" style="margin-top:8px;">{{ format_datetime_12h(log.created_at) }}</div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="admin-empty">No logs yet.</div>
+                {% endif %}
+            </section>
+        </aside>
+    </div>
 </div>
 {% endblock %}

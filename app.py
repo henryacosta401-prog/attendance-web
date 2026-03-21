@@ -50,6 +50,16 @@ GOOGLE_SHEET_TAB = "Attendance Logs"
 
 APP_TIMEZONE = ZoneInfo("America/New_York")
 DEFAULT_SHIFT_START = "09:00"
+DEFAULT_SCHEDULE_DAYS = "Mon,Tue,Wed,Thu,Fri"
+WEEKDAY_OPTIONS = [
+    ("Mon", "Monday"),
+    ("Tue", "Tuesday"),
+    ("Wed", "Wednesday"),
+    ("Thu", "Thursday"),
+    ("Fri", "Friday"),
+    ("Sat", "Saturday"),
+    ("Sun", "Sunday"),
+]
 LATE_GRACE_MINUTES = 1
 BREAK_LIMIT_MINUTES = 15
 
@@ -202,6 +212,7 @@ def init_sqlite_db():
             department TEXT DEFAULT 'Stellar Seats',
             position TEXT DEFAULT 'Employee',
             whatsapp_number TEXT,
+            schedule_days TEXT DEFAULT 'Mon,Tue,Wed,Thu,Fri',
             shift_start TEXT DEFAULT '09:00',
             break_limit_minutes INTEGER NOT NULL DEFAULT 15,
             is_active INTEGER NOT NULL DEFAULT 1,
@@ -312,6 +323,8 @@ def init_sqlite_db():
         cursor.execute("ALTER TABLE users ADD COLUMN position TEXT DEFAULT 'Employee'")
     if "whatsapp_number" not in existing_cols_users:
         cursor.execute("ALTER TABLE users ADD COLUMN whatsapp_number TEXT")
+    if "schedule_days" not in existing_cols_users:
+        cursor.execute(f"ALTER TABLE users ADD COLUMN schedule_days TEXT DEFAULT '{DEFAULT_SCHEDULE_DAYS}'")
     if "shift_start" not in existing_cols_users:
         cursor.execute("ALTER TABLE users ADD COLUMN shift_start TEXT DEFAULT '09:00'")
     if "break_limit_minutes" not in existing_cols_users:
@@ -439,6 +452,7 @@ def init_postgres_db():
                 department TEXT DEFAULT 'Stellar Seats',
                 position TEXT DEFAULT 'Employee',
                 whatsapp_number TEXT,
+                schedule_days TEXT DEFAULT 'Mon,Tue,Wed,Thu,Fri',
                 shift_start TEXT DEFAULT '09:00',
                 break_limit_minutes INTEGER NOT NULL DEFAULT 15,
                 is_active INTEGER NOT NULL DEFAULT 1,
@@ -447,6 +461,7 @@ def init_postgres_db():
         """)
 
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS whatsapp_number TEXT")
+        cur.execute(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS schedule_days TEXT DEFAULT '{DEFAULT_SCHEDULE_DAYS}'")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS break_limit_minutes INTEGER NOT NULL DEFAULT 15")
 
         cur.execute("""
@@ -649,6 +664,49 @@ def parse_shift_start(shift_start):
         return shift_value
     except ValueError:
         return DEFAULT_SHIFT_START
+
+
+def normalize_schedule_days(values):
+    if isinstance(values, str):
+        raw_values = [v.strip() for v in values.split(",")]
+    else:
+        raw_values = [str(v).strip() for v in (values or [])]
+
+    valid_codes = [code for code, _ in WEEKDAY_OPTIONS]
+    selected = [code for code in valid_codes if code in raw_values]
+    return ",".join(selected) if selected else DEFAULT_SCHEDULE_DAYS
+
+
+def get_schedule_day_codes(schedule_days):
+    return normalize_schedule_days(schedule_days).split(",")
+
+
+def get_schedule_summary(schedule_days):
+    codes = get_schedule_day_codes(schedule_days)
+    labels = {code: label for code, label in WEEKDAY_OPTIONS}
+    return ", ".join(labels[code] for code in codes if code in labels)
+
+
+def get_today_schedule_code():
+    return WEEKDAY_OPTIONS[now_dt().weekday()][0]
+
+
+def is_scheduled_today(user_row):
+    return get_today_schedule_code() in get_schedule_day_codes(user_row["schedule_days"] if user_row else DEFAULT_SCHEDULE_DAYS)
+
+
+def is_absent_today(user_row, attendance_row):
+    if not user_row or user_row["is_active"] != 1 or attendance_row:
+        return False
+    if not is_scheduled_today(user_row):
+        return False
+
+    shift_start = parse_shift_start(user_row["shift_start"] if user_row else DEFAULT_SHIFT_START)
+    shift_dt = datetime.strptime(
+        f"{today_str()} {shift_start}:00",
+        "%Y-%m-%d %H:%M:%S"
+    ).replace(tzinfo=APP_TIMEZONE)
+    return now_dt() >= (shift_dt + timedelta(minutes=LATE_GRACE_MINUTES))
 
 
 def parse_break_limit_minutes(value):
@@ -1328,6 +1386,16 @@ def get_admin_employee_rows(status_filter="", search="", department_filter="", o
     for user in users:
         live_status = get_user_live_status(user["id"])
         attendance = get_today_attendance(user["id"])
+        scheduled_today = is_scheduled_today(user)
+        absent_today = is_absent_today(user, attendance)
+        status_display = live_status
+
+        if user["is_active"] != 1:
+            status_display = "Inactive"
+        elif absent_today:
+            status_display = "Absent"
+        elif not scheduled_today and live_status == "Offline":
+            status_display = "Off Day"
 
         row = {
             "id": user["id"],
@@ -1335,11 +1403,16 @@ def get_admin_employee_rows(status_filter="", search="", department_filter="", o
             "username": user["username"],
             "department": user["department"],
             "position": user["position"],
+            "schedule_days": user["schedule_days"] or DEFAULT_SCHEDULE_DAYS,
+            "schedule_summary": get_schedule_summary(user["schedule_days"] or DEFAULT_SCHEDULE_DAYS),
+            "scheduled_today": 1 if scheduled_today else 0,
+            "absent_flag": 1 if absent_today else 0,
             "shift_start": user["shift_start"] or DEFAULT_SHIFT_START,
             "break_limit_minutes": get_employee_break_limit(user),
             "profile_image": user["profile_image"],
             "is_active": user["is_active"],
             "status": live_status,
+            "status_display": status_display,
             "time_in": attendance["time_in"] if attendance else None,
             "time_out": attendance["time_out"] if attendance else None,
             "proof_file": attendance["proof_file"] if attendance else None,
@@ -1350,7 +1423,7 @@ def get_admin_employee_rows(status_filter="", search="", department_filter="", o
         row["over_break_minutes"] = get_overbreak_minutes(row["break_minutes"], row["break_limit_minutes"])
         row["over_break_flag"] = 1 if row["over_break_minutes"] > 0 else 0
 
-        if status_filter and row["status"] != status_filter:
+        if status_filter and row["status_display"] != status_filter:
             continue
 
         if over_break_only == "1" and row["over_break_flag"] != 1:
@@ -1358,7 +1431,7 @@ def get_admin_employee_rows(status_filter="", search="", department_filter="", o
 
         if search:
             s = search.lower()
-            hay = f"{row['full_name']} {row['username']} {row['department']} {row['position']} {row['shift_start']}".lower()
+            hay = f"{row['full_name']} {row['username']} {row['department']} {row['position']} {row['shift_start']} {row['schedule_summary']}".lower()
             if s not in hay:
                 continue
 
@@ -1638,15 +1711,16 @@ def admin_dashboard():
         WHERE work_date = ? AND late_flag = 1
     """, (today_str(),))
     late_today = late_today_row["cnt"] if late_today_row else 0
-
-    stats_employees = [get_user_live_status(user["id"]) for user in all_users]
+    active_users = [user for user in all_users if user["is_active"] == 1]
+    absent_employees = [emp for emp in all_employee_rows if emp["absent_flag"] == 1]
 
     stats = {
-        "total_employees": len(all_users),
-        "timed_in": len([x for x in stats_employees if x == "Timed In"]),
-        "on_break": len([x for x in stats_employees if x == "On Break"]),
-        "timed_out": len([x for x in stats_employees if x == "Timed Out"]),
-        "offline": len([x for x in stats_employees if x == "Offline"]),
+        "total_employees": len(active_users),
+        "scheduled_today": len([emp for emp in all_employee_rows if emp["scheduled_today"] == 1 and emp["is_active"] == 1]),
+        "absent_today": len(absent_employees),
+        "timed_in": len([emp for emp in all_employee_rows if emp["status_display"] == "Timed In"]),
+        "on_break": len([emp for emp in all_employee_rows if emp["status_display"] == "On Break"]),
+        "timed_out": len([emp for emp in all_employee_rows if emp["status_display"] == "Timed Out"]),
         "late_today": late_today,
         "over_break_today": len([emp for emp in all_employee_rows if emp["over_break_flag"] == 1])
     }
@@ -1654,6 +1728,7 @@ def admin_dashboard():
     return render_template(
         "admin_dashboard.html",
         employees=employees,
+        absent_employees=absent_employees,
         logs=logs,
         stats=stats,
         break_limit_minutes=BREAK_LIMIT_MINUTES,
@@ -1661,7 +1736,8 @@ def admin_dashboard():
         search=search,
         department_filter=department_filter,
         departments=departments,
-        over_break_only=over_break_only
+        over_break_only=over_break_only,
+        today_schedule_code=get_today_schedule_code()
     )
 
 
@@ -2137,6 +2213,7 @@ def manage_employees():
         password = request.form.get("password", "").strip()
         department = request.form.get("department", "").strip() or "Stellar Seats"
         position = request.form.get("position", "").strip() or "Employee"
+        schedule_days = normalize_schedule_days(request.form.getlist("schedule_days"))
         shift_start = parse_shift_start(request.form.get("shift_start", DEFAULT_SHIFT_START))
         break_limit_minutes = parse_break_limit_minutes(request.form.get("break_limit_minutes", BREAK_LIMIT_MINUTES))
 
@@ -2160,9 +2237,9 @@ def manage_employees():
         execute_db("""
             INSERT INTO users (
                 full_name, username, password_hash, role, profile_image,
-                department, position, shift_start, break_limit_minutes, is_active, created_at
+                department, position, schedule_days, shift_start, break_limit_minutes, is_active, created_at
             )
-            VALUES (?, ?, ?, 'employee', ?, ?, ?, ?, ?, 1, ?)
+            VALUES (?, ?, ?, 'employee', ?, ?, ?, ?, ?, ?, 1, ?)
         """, (
             full_name,
             username,
@@ -2170,6 +2247,7 @@ def manage_employees():
             profile_image,
             department,
             position,
+            schedule_days,
             shift_start,
             break_limit_minutes,
             now_str()
@@ -2178,7 +2256,7 @@ def manage_employees():
         new_user = fetchone("SELECT id FROM users WHERE username = ?", (username,))
         if new_user:
             create_notification(new_user["id"], "Account Created", "Your account has been created by admin.")
-            log_activity(session["user_id"], "ADD EMPLOYEE", f"Added employee: {full_name} | Shift: {shift_start} | Break Limit: {break_limit_minutes}m")
+            log_activity(session["user_id"], "ADD EMPLOYEE", f"Added employee: {full_name} | Shift: {shift_start} | Schedule: {schedule_days} | Break Limit: {break_limit_minutes}m")
 
         flash("Employee added successfully.", "success")
         return redirect(url_for("manage_employees"))
@@ -2189,7 +2267,7 @@ def manage_employees():
         ORDER BY id DESC
     """)
 
-    return render_template("manage_employees.html", employees=employees)
+    return render_template("manage_employees.html", employees=employees, weekday_options=WEEKDAY_OPTIONS)
 
 
 @app.route("/admin/edit-employee/<int:user_id>", methods=["GET", "POST"])
@@ -2209,6 +2287,7 @@ def edit_employee(user_id):
         username = request.form.get("username", "").strip()
         department = request.form.get("department", "").strip() or "Stellar Seats"
         position = request.form.get("position", "").strip() or "Employee"
+        schedule_days = normalize_schedule_days(request.form.getlist("schedule_days"))
         shift_start = parse_shift_start(request.form.get("shift_start", user["shift_start"] or DEFAULT_SHIFT_START))
         break_limit_minutes = parse_break_limit_minutes(request.form.get("break_limit_minutes", user["break_limit_minutes"]))
         is_active = 1 if request.form.get("is_active") == "1" else 0
@@ -2240,28 +2319,28 @@ def edit_employee(user_id):
             execute_db("""
                 UPDATE users
                 SET full_name = ?, username = ?, password_hash = ?, profile_image = ?,
-                    department = ?, position = ?, shift_start = ?, break_limit_minutes = ?, is_active = ?
+                    department = ?, position = ?, schedule_days = ?, shift_start = ?, break_limit_minutes = ?, is_active = ?
                 WHERE id = ?
             """, (
                 full_name, username, generate_password_hash(password), profile_image,
-                department, position, shift_start, break_limit_minutes, is_active, user_id
+                department, position, schedule_days, shift_start, break_limit_minutes, is_active, user_id
             ), commit=True)
         else:
             execute_db("""
                 UPDATE users
                 SET full_name = ?, username = ?, profile_image = ?,
-                    department = ?, position = ?, shift_start = ?, break_limit_minutes = ?, is_active = ?
+                    department = ?, position = ?, schedule_days = ?, shift_start = ?, break_limit_minutes = ?, is_active = ?
                 WHERE id = ?
             """, (
                 full_name, username, profile_image,
-                department, position, shift_start, break_limit_minutes, is_active, user_id
+                department, position, schedule_days, shift_start, break_limit_minutes, is_active, user_id
             ), commit=True)
 
-        log_activity(session["user_id"], "EDIT EMPLOYEE", f"Edited employee: {full_name} | Shift: {shift_start} | Break Limit: {break_limit_minutes}m")
+        log_activity(session["user_id"], "EDIT EMPLOYEE", f"Edited employee: {full_name} | Shift: {shift_start} | Schedule: {schedule_days} | Break Limit: {break_limit_minutes}m")
         flash("Employee updated successfully.", "success")
         return redirect(url_for("manage_employees"))
 
-    return render_template("edit_employee.html", employee=user)
+    return render_template("edit_employee.html", employee=user, weekday_options=WEEKDAY_OPTIONS, employee_schedule_days=get_schedule_day_codes(user["schedule_days"] if user["schedule_days"] else DEFAULT_SCHEDULE_DAYS))
 
 
 @app.route("/admin/delete-employee/<int:user_id>", methods=["POST"])

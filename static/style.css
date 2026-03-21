@@ -435,6 +435,30 @@ th {
     color: #312e81;
 }
 
+.schedule-picker {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.schedule-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: rgba(59, 130, 246, 0.08);
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    color: #334155;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.schedule-chip input {
+    width: auto;
+    margin: 0;
+}
+
 .logout-link {
     text-decoration: none;
     color: white;

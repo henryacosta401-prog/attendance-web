@@ -28,6 +28,16 @@
             <label style="display:block; margin-top:12px;">Position</label>
             <input class="input" type="text" name="position" placeholder="e.g. VA / Team Member">
 
+            <label style="display:block; margin-top:12px;">Work Schedule</label>
+            <div class="schedule-picker">
+                {% for code, label in weekday_options %}
+                    <label class="schedule-chip">
+                        <input type="checkbox" name="schedule_days" value="{{ code }}" {% if code in ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'] %}checked{% endif %}>
+                        <span>{{ label }}</span>
+                    </label>
+                {% endfor %}
+            </div>
+
             <label style="display:block; margin-top:12px;">Shift Start</label>
             <input class="input" type="time" name="shift_start" value="09:00">
 
@@ -53,6 +63,7 @@
                             <th>Employee</th>
                             <th>Department</th>
                             <th>Position</th>
+                            <th>Schedule</th>
                             <th>Break Limit</th>
                             <th>Status</th>
                             <th>Created</th>
@@ -77,6 +88,7 @@
                             </td>
                             <td>{{ emp.department }}</td>
                             <td>{{ emp.position }}</td>
+                            <td>{{ emp.schedule_days if emp.schedule_days else 'Mon,Tue,Wed,Thu,Fri' }}</td>
                             <td>{{ emp.break_limit_minutes }} min</td>
                             <td>
                                 {% if emp.is_active == 1 %}
