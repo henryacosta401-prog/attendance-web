@@ -41,6 +41,20 @@
             <label style="display:block; margin-top:12px;">Shift Start</label>
             <input class="input" type="time" name="shift_start" value="09:00">
 
+            <label style="display:block; margin-top:12px;">Shift End</label>
+            <input class="input" type="time" name="shift_end" value="18:00">
+
+            <div class="grid grid-2" style="margin-top:12px;">
+                <div>
+                    <label>Break Window Start</label>
+                    <input class="input" type="time" name="break_window_start" value="12:00">
+                </div>
+                <div>
+                    <label>Break Window End</label>
+                    <input class="input" type="time" name="break_window_end" value="12:15">
+                </div>
+            </div>
+
             <label style="display:block; margin-top:12px;">Break Limit (Minutes)</label>
             <input class="input" type="number" name="break_limit_minutes" value="15" min="1">
 
@@ -64,6 +78,8 @@
                             <th>Department</th>
                             <th>Position</th>
                             <th>Schedule</th>
+                            <th>Shift</th>
+                            <th>Break Window</th>
                             <th>Break Limit</th>
                             <th>Status</th>
                             <th>Created</th>
@@ -75,10 +91,10 @@
                         <tr>
                             <td>
                                 <div class="row-user">
-                                    {% if emp.profile_image %}
+                                    {% if emp.profile_image and uploaded_file_exists(emp.profile_image) %}
                                         <img class="avatar" src="{{ url_for('uploaded_file', filename=emp.profile_image) }}" alt="avatar">
                                     {% else %}
-                                        <img class="avatar" src="https://via.placeholder.com/46x46.png?text=U" alt="avatar">
+                                        <div class="avatar" style="display:inline-flex;align-items:center;justify-content:center;font-weight:800;background:rgba(148,163,184,0.18);color:#dbeafe;">{{ get_avatar_initials(emp.full_name) }}</div>
                                     {% endif %}
                                     <div>
                                         <div style="font-weight:800;">{{ emp.full_name }}</div>
@@ -89,6 +105,8 @@
                             <td>{{ emp.department }}</td>
                             <td>{{ emp.position }}</td>
                             <td>{{ emp.schedule_days if emp.schedule_days else 'Mon,Tue,Wed,Thu,Fri' }}</td>
+                            <td>{{ emp.shift_start if emp.shift_start else '09:00' }} - {{ emp.shift_end if emp.shift_end else '18:00' }}</td>
+                            <td>{{ emp.break_window_start if emp.break_window_start else '12:00' }} - {{ emp.break_window_end if emp.break_window_end else '12:15' }}</td>
                             <td>{{ emp.break_limit_minutes }} min</td>
                             <td>
                                 {% if emp.is_active == 1 %}

@@ -50,7 +50,10 @@ GOOGLE_SHEET_TAB = "Attendance Logs"
 
 APP_TIMEZONE = ZoneInfo("America/New_York")
 DEFAULT_SHIFT_START = "09:00"
+DEFAULT_SHIFT_END = "18:00"
 DEFAULT_SCHEDULE_DAYS = "Mon,Tue,Wed,Thu,Fri"
+DEFAULT_BREAK_WINDOW_START = "12:00"
+DEFAULT_BREAK_WINDOW_END = "12:15"
 WEEKDAY_OPTIONS = [
     ("Mon", "Monday"),
     ("Tue", "Tuesday"),
@@ -214,6 +217,9 @@ def init_sqlite_db():
             whatsapp_number TEXT,
             schedule_days TEXT DEFAULT 'Mon,Tue,Wed,Thu,Fri',
             shift_start TEXT DEFAULT '09:00',
+            shift_end TEXT DEFAULT '18:00',
+            break_window_start TEXT DEFAULT '12:00',
+            break_window_end TEXT DEFAULT '12:15',
             break_limit_minutes INTEGER NOT NULL DEFAULT 15,
             is_active INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL
@@ -327,6 +333,12 @@ def init_sqlite_db():
         cursor.execute(f"ALTER TABLE users ADD COLUMN schedule_days TEXT DEFAULT '{DEFAULT_SCHEDULE_DAYS}'")
     if "shift_start" not in existing_cols_users:
         cursor.execute("ALTER TABLE users ADD COLUMN shift_start TEXT DEFAULT '09:00'")
+    if "shift_end" not in existing_cols_users:
+        cursor.execute("ALTER TABLE users ADD COLUMN shift_end TEXT DEFAULT '18:00'")
+    if "break_window_start" not in existing_cols_users:
+        cursor.execute("ALTER TABLE users ADD COLUMN break_window_start TEXT DEFAULT '12:00'")
+    if "break_window_end" not in existing_cols_users:
+        cursor.execute("ALTER TABLE users ADD COLUMN break_window_end TEXT DEFAULT '12:15'")
     if "break_limit_minutes" not in existing_cols_users:
         cursor.execute("ALTER TABLE users ADD COLUMN break_limit_minutes INTEGER NOT NULL DEFAULT 15")
     if "is_active" not in existing_cols_users:
@@ -454,6 +466,9 @@ def init_postgres_db():
                 whatsapp_number TEXT,
                 schedule_days TEXT DEFAULT 'Mon,Tue,Wed,Thu,Fri',
                 shift_start TEXT DEFAULT '09:00',
+                shift_end TEXT DEFAULT '18:00',
+                break_window_start TEXT DEFAULT '12:00',
+                break_window_end TEXT DEFAULT '12:15',
                 break_limit_minutes INTEGER NOT NULL DEFAULT 15,
                 is_active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL
@@ -462,6 +477,9 @@ def init_postgres_db():
 
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS whatsapp_number TEXT")
         cur.execute(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS schedule_days TEXT DEFAULT '{DEFAULT_SCHEDULE_DAYS}'")
+        cur.execute(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS shift_end TEXT DEFAULT '{DEFAULT_SHIFT_END}'")
+        cur.execute(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS break_window_start TEXT DEFAULT '{DEFAULT_BREAK_WINDOW_START}'")
+        cur.execute(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS break_window_end TEXT DEFAULT '{DEFAULT_BREAK_WINDOW_END}'")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS break_limit_minutes INTEGER NOT NULL DEFAULT 15")
 
         cur.execute("""
@@ -666,6 +684,25 @@ def parse_shift_start(shift_start):
         return DEFAULT_SHIFT_START
 
 
+def parse_shift_end(shift_end):
+    shift_value = (shift_end or DEFAULT_SHIFT_END).strip()
+    try:
+        datetime.strptime(shift_value, "%H:%M")
+        return shift_value
+    except ValueError:
+        return DEFAULT_SHIFT_END
+
+
+def parse_optional_schedule_time(value, fallback=""):
+    raw_value = (value or "").strip()
+    if not raw_value:
+        return fallback
+    try:
+        return datetime.strptime(raw_value, "%H:%M").strftime("%H:%M")
+    except ValueError:
+        return fallback
+
+
 def normalize_schedule_days(values):
     if isinstance(values, str):
         raw_values = [v.strip() for v in values.split(",")]
@@ -685,6 +722,17 @@ def get_schedule_summary(schedule_days):
     codes = get_schedule_day_codes(schedule_days)
     labels = {code: label for code, label in WEEKDAY_OPTIONS}
     return ", ".join(labels[code] for code in codes if code in labels)
+
+
+def get_schedule_window_summary(user_row):
+    if not user_row:
+        return f"{DEFAULT_SHIFT_START} - {DEFAULT_SHIFT_END}"
+
+    shift_start = parse_shift_start(user_row["shift_start"] if user_row["shift_start"] else DEFAULT_SHIFT_START)
+    shift_end = parse_shift_end(user_row["shift_end"] if user_row["shift_end"] else DEFAULT_SHIFT_END)
+    break_start = parse_optional_schedule_time(user_row["break_window_start"], DEFAULT_BREAK_WINDOW_START)
+    break_end = parse_optional_schedule_time(user_row["break_window_end"], DEFAULT_BREAK_WINDOW_END)
+    return f"{shift_start} - {shift_end} | Break {break_start} - {break_end}"
 
 
 def get_today_schedule_code():
@@ -707,6 +755,22 @@ def is_absent_today(user_row, attendance_row):
         "%Y-%m-%d %H:%M:%S"
     ).replace(tzinfo=APP_TIMEZONE)
     return now_dt() >= (shift_dt + timedelta(minutes=LATE_GRACE_MINUTES))
+
+
+def is_missing_timeout_today(user_row, attendance_row):
+    if not user_row or user_row["is_active"] != 1 or not attendance_row:
+        return False
+    if not attendance_row["time_in"] or attendance_row["time_out"]:
+        return False
+    if not is_scheduled_today(user_row):
+        return False
+
+    shift_end = parse_shift_end(user_row["shift_end"] if user_row else DEFAULT_SHIFT_END)
+    shift_end_dt = datetime.strptime(
+        f"{today_str()} {shift_end}:00",
+        "%Y-%m-%d %H:%M:%S"
+    ).replace(tzinfo=APP_TIMEZONE)
+    return now_dt() >= (shift_end_dt + timedelta(minutes=LATE_GRACE_MINUTES))
 
 
 def parse_break_limit_minutes(value):
@@ -858,6 +922,88 @@ def save_uploaded_file(file_obj, prefix="file"):
     return filename
 
 
+def uploaded_file_exists(filename):
+    if not filename:
+        return False
+    return os.path.exists(os.path.join(app.config["UPLOAD_FOLDER"], filename))
+
+
+def get_avatar_initials(name):
+    parts = [part.strip() for part in (name or "").split() if part.strip()]
+    if not parts:
+        return "U"
+    initials = "".join(part[0] for part in parts[:2]).upper()
+    return initials or "U"
+
+
+def get_department_options():
+    return fetchall("""
+        SELECT DISTINCT department
+        FROM users
+        WHERE role = 'employee' AND department IS NOT NULL AND TRIM(department) != ''
+        ORDER BY department ASC
+    """)
+
+
+def get_employee_options():
+    return fetchall("""
+        SELECT id, full_name
+        FROM users
+        WHERE role = 'employee'
+        ORDER BY full_name ASC
+    """)
+
+
+def parse_positive_int(value, default):
+    try:
+        parsed = int(str(value).strip())
+        return parsed if parsed > 0 else default
+    except Exception:
+        return default
+
+
+def paginate_items(items, page, page_size):
+    total = len(items)
+    page_size = page_size if page_size in {10, 25, 50, 100} else 25
+    total_pages = max((total + page_size - 1) // page_size, 1)
+    page = max(min(page, total_pages), 1)
+    start = (page - 1) * page_size
+    end = start + page_size
+    return {
+        "items": items[start:end],
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "total_pages": total_pages,
+        "start_index": start + 1 if total else 0,
+        "end_index": min(end, total),
+        "has_prev": page > 1,
+        "has_next": page < total_pages,
+    }
+
+
+def get_admin_users():
+    return fetchall("""
+        SELECT id, full_name
+        FROM users
+        WHERE role = 'admin' AND is_active = 1
+        ORDER BY full_name ASC
+    """)
+
+
+def create_admin_alert_once(title, message):
+    today_start = f"{today_str()} 00:00:00"
+    for admin in get_admin_users():
+        existing = fetchone("""
+            SELECT id
+            FROM notifications
+            WHERE user_id = ? AND title = ? AND message = ? AND created_at >= ?
+            ORDER BY id DESC LIMIT 1
+        """, (admin["id"], title, message, today_start))
+        if not existing:
+            create_notification(admin["id"], title, message)
+
+
 # =========================
 # GOOGLE SHEETS SYNC (OPTIONAL)
 # =========================
@@ -935,6 +1081,8 @@ def inject_globals():
         current_user=user,
         unread_count=unread_count,
         is_image=is_image,
+        uploaded_file_exists=uploaded_file_exists,
+        get_avatar_initials=get_avatar_initials,
         format_datetime_12h=format_datetime_12h,
         format_time_12h=format_time_12h
     )
@@ -943,6 +1091,11 @@ def inject_globals():
 # =========================
 # AUTH / HOME
 # =========================
+@app.route("/health")
+def health():
+    return jsonify({"status": "ok", "time": now_str()}), 200
+
+
 @app.route("/")
 def home():
     if "user_id" in session:
@@ -1388,12 +1541,15 @@ def get_admin_employee_rows(status_filter="", search="", department_filter="", o
         attendance = get_today_attendance(user["id"])
         scheduled_today = is_scheduled_today(user)
         absent_today = is_absent_today(user, attendance)
+        missing_timeout_today = is_missing_timeout_today(user, attendance)
         status_display = live_status
 
         if user["is_active"] != 1:
             status_display = "Inactive"
         elif absent_today:
             status_display = "Absent"
+        elif missing_timeout_today:
+            status_display = "Missing Time Out"
         elif not scheduled_today and live_status == "Offline":
             status_display = "Off Day"
 
@@ -1408,20 +1564,29 @@ def get_admin_employee_rows(status_filter="", search="", department_filter="", o
             "scheduled_today": 1 if scheduled_today else 0,
             "absent_flag": 1 if absent_today else 0,
             "shift_start": user["shift_start"] or DEFAULT_SHIFT_START,
+            "shift_end": user["shift_end"] or DEFAULT_SHIFT_END,
+            "break_window_start": user["break_window_start"] or DEFAULT_BREAK_WINDOW_START,
+            "break_window_end": user["break_window_end"] or DEFAULT_BREAK_WINDOW_END,
+            "schedule_window_summary": get_schedule_window_summary(user),
             "break_limit_minutes": get_employee_break_limit(user),
             "profile_image": user["profile_image"],
+            "profile_image_available": 1 if uploaded_file_exists(user["profile_image"]) else 0,
             "is_active": user["is_active"],
             "status": live_status,
             "status_display": status_display,
             "time_in": attendance["time_in"] if attendance else None,
             "time_out": attendance["time_out"] if attendance else None,
             "proof_file": attendance["proof_file"] if attendance else None,
+            "proof_file_available": 1 if attendance and uploaded_file_exists(attendance["proof_file"]) else 0,
             "late_flag": attendance["late_flag"] if attendance else 0,
             "late_minutes": attendance["late_minutes"] if attendance else 0,
             "break_minutes": total_break_minutes(attendance["id"], include_open=True) if attendance else 0
         }
         row["over_break_minutes"] = get_overbreak_minutes(row["break_minutes"], row["break_limit_minutes"])
         row["over_break_flag"] = 1 if row["over_break_minutes"] > 0 else 0
+        row["missing_timeout_flag"] = 1 if missing_timeout_today else 0
+        row["avatar_initials"] = get_avatar_initials(user["full_name"])
+        row["attention_score"] = int(row["absent_flag"]) + int(row["late_flag"]) + int(row["over_break_flag"]) + int(row["missing_timeout_flag"])
 
         if status_filter and row["status_display"] != status_filter:
             continue
@@ -1475,6 +1640,34 @@ def get_incident_reports(report_employee="", report_department="", report_type="
 
     report_sql += " ORDER BY r.id DESC LIMIT 100"
     return fetchall(report_sql, report_params)
+
+
+def get_exception_collections(employee_rows):
+    absent = [row for row in employee_rows if row["absent_flag"] == 1]
+    late = [row for row in employee_rows if row["late_flag"] == 1]
+    over_break = [row for row in employee_rows if row["over_break_flag"] == 1]
+    missing_timeout = [row for row in employee_rows if row["missing_timeout_flag"] == 1]
+
+    return {
+        "absent": sorted(absent, key=lambda row: (row["department"] or "", row["full_name"] or "")),
+        "late": sorted(late, key=lambda row: (-row["late_minutes"], row["full_name"] or "")),
+        "over_break": sorted(over_break, key=lambda row: (-row["over_break_minutes"], row["full_name"] or "")),
+        "missing_timeout": sorted(missing_timeout, key=lambda row: (row["shift_end"] or "", row["full_name"] or "")),
+    }
+
+
+def notify_admins_for_exceptions(exception_groups):
+    for row in exception_groups["absent"]:
+        create_admin_alert_once(
+            "Absent Today",
+            f"{row['full_name']} is scheduled for today in {row['department'] or 'Unassigned'} and has not timed in yet."
+        )
+
+    for row in exception_groups["missing_timeout"]:
+        create_admin_alert_once(
+            "Missing Time Out",
+            f"{row['full_name']} reached the scheduled shift end at {row['shift_end']} without timing out."
+        )
 
 
 def get_correction_requests(user_id=None, status="", date_from="", date_to=""):
@@ -1677,25 +1870,24 @@ def admin_dashboard():
     search = request.args.get("search", "").strip()
     department_filter = request.args.get("department", "").strip()
     over_break_only = request.args.get("over_break_only", "").strip()
+    page = parse_positive_int(request.args.get("page", "1"), 1)
+    page_size = parse_positive_int(request.args.get("page_size", "25"), 25)
 
-    employees = get_admin_employee_rows(
+    filtered_rows = get_admin_employee_rows(
         status_filter=status_filter,
         search=search,
         department_filter=department_filter,
         over_break_only=over_break_only
     )
     all_employee_rows = get_admin_employee_rows()
+    pagination = paginate_items(filtered_rows, page, page_size)
+    employees = pagination["items"]
     all_users = fetchall("""
         SELECT * FROM users
         WHERE role = 'employee'
         ORDER BY full_name ASC
     """)
-    departments = fetchall("""
-        SELECT DISTINCT department
-        FROM users
-        WHERE role = 'employee' AND department IS NOT NULL AND TRIM(department) != ''
-        ORDER BY department ASC
-    """)
+    departments = get_department_options()
 
     logs = fetchall("""
         SELECT a.*, u.full_name
@@ -1712,23 +1904,32 @@ def admin_dashboard():
     """, (today_str(),))
     late_today = late_today_row["cnt"] if late_today_row else 0
     active_users = [user for user in all_users if user["is_active"] == 1]
-    absent_employees = [emp for emp in all_employee_rows if emp["absent_flag"] == 1]
+    exception_groups = get_exception_collections(all_employee_rows)
+    notify_admins_for_exceptions(exception_groups)
+    admin_notifications = fetchall("""
+        SELECT *
+        FROM notifications
+        WHERE user_id = ?
+        ORDER BY id DESC
+        LIMIT 8
+    """, (session["user_id"],))
 
     stats = {
         "total_employees": len(active_users),
         "scheduled_today": len([emp for emp in all_employee_rows if emp["scheduled_today"] == 1 and emp["is_active"] == 1]),
-        "absent_today": len(absent_employees),
+        "absent_today": len(exception_groups["absent"]),
         "timed_in": len([emp for emp in all_employee_rows if emp["status_display"] == "Timed In"]),
         "on_break": len([emp for emp in all_employee_rows if emp["status_display"] == "On Break"]),
         "timed_out": len([emp for emp in all_employee_rows if emp["status_display"] == "Timed Out"]),
         "late_today": late_today,
-        "over_break_today": len([emp for emp in all_employee_rows if emp["over_break_flag"] == 1])
+        "over_break_today": len(exception_groups["over_break"]),
+        "missing_timeout": len(exception_groups["missing_timeout"])
     }
 
     return render_template(
         "admin_dashboard.html",
         employees=employees,
-        absent_employees=absent_employees,
+        pagination=pagination,
         logs=logs,
         stats=stats,
         break_limit_minutes=BREAK_LIMIT_MINUTES,
@@ -1737,20 +1938,37 @@ def admin_dashboard():
         department_filter=department_filter,
         departments=departments,
         over_break_only=over_break_only,
-        today_schedule_code=get_today_schedule_code()
+        today_schedule_code=get_today_schedule_code(),
+        exception_groups=exception_groups,
+        admin_notifications=admin_notifications
     )
 
 
 @app.route("/admin/live-status")
 @login_required(role="admin")
 def admin_live_status():
-    employees = get_admin_employee_rows(
+    page = parse_positive_int(request.args.get("page", "1"), 1)
+    page_size = parse_positive_int(request.args.get("page_size", "25"), 25)
+    rows = get_admin_employee_rows(
         status_filter=request.args.get("status", "").strip(),
         search=request.args.get("search", "").strip(),
         department_filter=request.args.get("department", "").strip(),
         over_break_only=request.args.get("over_break_only", "").strip()
     )
-    return jsonify(employees)
+    pagination = paginate_items(rows, page, page_size)
+    return jsonify({
+        "rows": pagination["items"],
+        "pagination": {
+            "page": pagination["page"],
+            "page_size": pagination["page_size"],
+            "total": pagination["total"],
+            "total_pages": pagination["total_pages"],
+            "has_prev": pagination["has_prev"],
+            "has_next": pagination["has_next"],
+            "start_index": pagination["start_index"],
+            "end_index": pagination["end_index"],
+        }
+    })
 
 
 @app.route("/admin/history")
@@ -1794,12 +2012,7 @@ def admin_history():
     sql += " ORDER BY a.work_date DESC, a.id DESC LIMIT 200"
 
     rows = fetchall(sql, params)
-    departments = fetchall("""
-        SELECT DISTINCT department
-        FROM users
-        WHERE role = 'employee' AND department IS NOT NULL AND TRIM(department) != ''
-        ORDER BY department ASC
-    """)
+    departments = get_department_options()
 
     enriched = []
     for row in rows:
@@ -1824,6 +2037,74 @@ def admin_history():
         date_from=date_from,
         date_to=date_to,
         minutes_to_hm=minutes_to_hm
+    )
+
+
+@app.route("/admin/exceptions/export.xlsx")
+@login_required(role="admin")
+def export_admin_exceptions_excel():
+    exception_type = request.args.get("type", "absent").strip().lower()
+    department = request.args.get("department", "").strip()
+
+    exception_groups = get_exception_collections(get_admin_employee_rows(department_filter=department))
+    selected_rows = exception_groups.get(exception_type, [])
+    titles = {
+        "absent": "Absent Today",
+        "late": "Late Today",
+        "over_break": "Over Break",
+        "missing_timeout": "Missing Time Out",
+    }
+
+    try:
+        from openpyxl import Workbook
+    except Exception:
+        flash("Excel export requires openpyxl. Install dependencies and try again.", "danger")
+        return redirect(url_for("admin_dashboard", department=department))
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = titles.get(exception_type, "Exceptions")
+    sheet.append([
+        "Employee",
+        "Username",
+        "Department",
+        "Position",
+        "Schedule",
+        "Shift Start",
+        "Shift End",
+        "Status",
+        "Time In",
+        "Time Out",
+        "Late Minutes",
+        "Break Minutes",
+        "Over Break Minutes"
+    ])
+
+    for row in selected_rows:
+        sheet.append([
+            row["full_name"] or "",
+            row["username"] or "",
+            row["department"] or "",
+            row["position"] or "",
+            row["schedule_summary"] or "",
+            row["shift_start"] or "",
+            row["shift_end"] or "",
+            row["status_display"] or "",
+            row["time_in"] or "",
+            row["time_out"] or "",
+            row["late_minutes"] if row["late_flag"] else 0,
+            row["break_minutes"] or 0,
+            row["over_break_minutes"] or 0,
+        ])
+
+    output = BytesIO()
+    workbook.save(output)
+    output.seek(0)
+
+    return Response(
+        output.getvalue(),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{exception_type}-exceptions-{today_str()}.xlsx"'}
     )
 
 
@@ -2047,18 +2328,8 @@ def admin_error_reports():
     report_date_from = request.args.get("report_date_from", "").strip()
     report_date_to = request.args.get("report_date_to", "").strip()
 
-    employees = fetchall("""
-        SELECT id, full_name
-        FROM users
-        WHERE role = 'employee'
-        ORDER BY full_name ASC
-    """)
-    departments = fetchall("""
-        SELECT DISTINCT department
-        FROM users
-        WHERE role = 'employee' AND department IS NOT NULL AND TRIM(department) != ''
-        ORDER BY department ASC
-    """)
+    employees = get_employee_options()
+    departments = get_department_options()
     reports = get_incident_reports(
         report_employee=report_employee,
         report_department=report_department,
@@ -2215,6 +2486,9 @@ def manage_employees():
         position = request.form.get("position", "").strip() or "Employee"
         schedule_days = normalize_schedule_days(request.form.getlist("schedule_days"))
         shift_start = parse_shift_start(request.form.get("shift_start", DEFAULT_SHIFT_START))
+        shift_end = parse_shift_end(request.form.get("shift_end", DEFAULT_SHIFT_END))
+        break_window_start = parse_optional_schedule_time(request.form.get("break_window_start", DEFAULT_BREAK_WINDOW_START), DEFAULT_BREAK_WINDOW_START)
+        break_window_end = parse_optional_schedule_time(request.form.get("break_window_end", DEFAULT_BREAK_WINDOW_END), DEFAULT_BREAK_WINDOW_END)
         break_limit_minutes = parse_break_limit_minutes(request.form.get("break_limit_minutes", BREAK_LIMIT_MINUTES))
 
         if not full_name or not username or not password:
@@ -2237,9 +2511,9 @@ def manage_employees():
         execute_db("""
             INSERT INTO users (
                 full_name, username, password_hash, role, profile_image,
-                department, position, schedule_days, shift_start, break_limit_minutes, is_active, created_at
+                department, position, schedule_days, shift_start, shift_end, break_window_start, break_window_end, break_limit_minutes, is_active, created_at
             )
-            VALUES (?, ?, ?, 'employee', ?, ?, ?, ?, ?, ?, 1, ?)
+            VALUES (?, ?, ?, 'employee', ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
         """, (
             full_name,
             username,
@@ -2249,6 +2523,9 @@ def manage_employees():
             position,
             schedule_days,
             shift_start,
+            shift_end,
+            break_window_start,
+            break_window_end,
             break_limit_minutes,
             now_str()
         ), commit=True)
@@ -2256,7 +2533,7 @@ def manage_employees():
         new_user = fetchone("SELECT id FROM users WHERE username = ?", (username,))
         if new_user:
             create_notification(new_user["id"], "Account Created", "Your account has been created by admin.")
-            log_activity(session["user_id"], "ADD EMPLOYEE", f"Added employee: {full_name} | Shift: {shift_start} | Schedule: {schedule_days} | Break Limit: {break_limit_minutes}m")
+            log_activity(session["user_id"], "ADD EMPLOYEE", f"Added employee: {full_name} | Shift: {shift_start}-{shift_end} | Break Window: {break_window_start}-{break_window_end} | Schedule: {schedule_days} | Break Limit: {break_limit_minutes}m")
 
         flash("Employee added successfully.", "success")
         return redirect(url_for("manage_employees"))
@@ -2289,6 +2566,9 @@ def edit_employee(user_id):
         position = request.form.get("position", "").strip() or "Employee"
         schedule_days = normalize_schedule_days(request.form.getlist("schedule_days"))
         shift_start = parse_shift_start(request.form.get("shift_start", user["shift_start"] or DEFAULT_SHIFT_START))
+        shift_end = parse_shift_end(request.form.get("shift_end", user["shift_end"] or DEFAULT_SHIFT_END))
+        break_window_start = parse_optional_schedule_time(request.form.get("break_window_start", user["break_window_start"] or DEFAULT_BREAK_WINDOW_START), DEFAULT_BREAK_WINDOW_START)
+        break_window_end = parse_optional_schedule_time(request.form.get("break_window_end", user["break_window_end"] or DEFAULT_BREAK_WINDOW_END), DEFAULT_BREAK_WINDOW_END)
         break_limit_minutes = parse_break_limit_minutes(request.form.get("break_limit_minutes", user["break_limit_minutes"]))
         is_active = 1 if request.form.get("is_active") == "1" else 0
         password = request.form.get("password", "").strip()
@@ -2319,24 +2599,24 @@ def edit_employee(user_id):
             execute_db("""
                 UPDATE users
                 SET full_name = ?, username = ?, password_hash = ?, profile_image = ?,
-                    department = ?, position = ?, schedule_days = ?, shift_start = ?, break_limit_minutes = ?, is_active = ?
+                    department = ?, position = ?, schedule_days = ?, shift_start = ?, shift_end = ?, break_window_start = ?, break_window_end = ?, break_limit_minutes = ?, is_active = ?
                 WHERE id = ?
             """, (
                 full_name, username, generate_password_hash(password), profile_image,
-                department, position, schedule_days, shift_start, break_limit_minutes, is_active, user_id
+                department, position, schedule_days, shift_start, shift_end, break_window_start, break_window_end, break_limit_minutes, is_active, user_id
             ), commit=True)
         else:
             execute_db("""
                 UPDATE users
                 SET full_name = ?, username = ?, profile_image = ?,
-                    department = ?, position = ?, schedule_days = ?, shift_start = ?, break_limit_minutes = ?, is_active = ?
+                    department = ?, position = ?, schedule_days = ?, shift_start = ?, shift_end = ?, break_window_start = ?, break_window_end = ?, break_limit_minutes = ?, is_active = ?
                 WHERE id = ?
             """, (
                 full_name, username, profile_image,
-                department, position, schedule_days, shift_start, break_limit_minutes, is_active, user_id
+                department, position, schedule_days, shift_start, shift_end, break_window_start, break_window_end, break_limit_minutes, is_active, user_id
             ), commit=True)
 
-        log_activity(session["user_id"], "EDIT EMPLOYEE", f"Edited employee: {full_name} | Shift: {shift_start} | Schedule: {schedule_days} | Break Limit: {break_limit_minutes}m")
+        log_activity(session["user_id"], "EDIT EMPLOYEE", f"Edited employee: {full_name} | Shift: {shift_start}-{shift_end} | Break Window: {break_window_start}-{break_window_end} | Schedule: {schedule_days} | Break Limit: {break_limit_minutes}m")
         flash("Employee updated successfully.", "success")
         return redirect(url_for("manage_employees"))
 

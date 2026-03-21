@@ -26,10 +26,10 @@
     <div class="card">
         <div class="section-title">My Profile</div>
         <div class="row-user" style="align-items:flex-start;">
-            {% if user.profile_image %}
+            {% if user.profile_image and uploaded_file_exists(user.profile_image) %}
                 <img class="avatar-lg" src="{{ url_for('uploaded_file', filename=user.profile_image) }}" alt="profile">
             {% else %}
-                <img class="avatar-lg" src="https://via.placeholder.com/88x88.png?text=U" alt="profile">
+                <div class="avatar-lg" style="display:inline-flex;align-items:center;justify-content:center;font-weight:800;background:rgba(148,163,184,0.18);color:#dbeafe;">{{ get_avatar_initials(user.full_name) }}</div>
             {% endif %}
             <div>
                 <div style="font-size:22px; font-weight:900; color:white;">{{ user.full_name }}</div>
@@ -83,14 +83,16 @@
         {% if today_attendance and today_attendance.proof_file %}
             <div style="margin-top:18px;">
                 <div class="metric-label" style="margin-bottom:10px;">Proof File</div>
-                {% if is_image(today_attendance.proof_file) %}
+                {% if uploaded_file_exists(today_attendance.proof_file) and is_image(today_attendance.proof_file) %}
                     <a href="{{ url_for('uploaded_file', filename=today_attendance.proof_file) }}" target="_blank">
                         <img src="{{ url_for('uploaded_file', filename=today_attendance.proof_file) }}" class="proof-preview" alt="proof">
                     </a>
-                {% else %}
+                {% elif uploaded_file_exists(today_attendance.proof_file) %}
                     <a href="{{ url_for('uploaded_file', filename=today_attendance.proof_file) }}" target="_blank" style="color:#93c5fd;">
                         View Upload
                     </a>
+                {% else %}
+                    <span class="muted">Proof file is missing.</span>
                 {% endif %}
             </div>
         {% endif %}

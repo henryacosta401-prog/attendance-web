@@ -39,9 +39,28 @@
         <input class="input" type="time" name="shift_start" value="{{ employee.shift_start if employee else '09:00' }}">
     </div>
     <div>
+        <label>Shift End</label>
+        <input class="input" type="time" name="shift_end" value="{{ employee.shift_end if employee and employee.shift_end else '18:00' }}">
+    </div>
+</div>
+
+<div class="grid grid-2" style="margin-top:12px;">
+    <div>
+        <label>Break Window Start</label>
+        <input class="input" type="time" name="break_window_start" value="{{ employee.break_window_start if employee and employee.break_window_start else '12:00' }}">
+    </div>
+    <div>
+        <label>Break Window End</label>
+        <input class="input" type="time" name="break_window_end" value="{{ employee.break_window_end if employee and employee.break_window_end else '12:15' }}">
+    </div>
+</div>
+
+<div class="grid grid-2" style="margin-top:12px;">
+    <div>
         <label>Break Limit (Minutes)</label>
         <input class="input" type="number" name="break_limit_minutes" value="{{ employee.break_limit_minutes if employee.break_limit_minutes else 15 }}" min="1">
     </div>
+    <div></div>
 </div>
 
 <label style="display:block; margin-top:12px;">Work Schedule</label>
@@ -59,9 +78,13 @@
         <label style="display:block; margin-top:12px;">Profile Image</label>
         <input class="file-input" type="file" name="profile_image">
 
-        {% if employee.profile_image %}
+        {% if employee.profile_image and uploaded_file_exists(employee.profile_image) %}
             <div style="margin-top:12px;">
                 <img class="avatar-lg" src="{{ url_for('uploaded_file', filename=employee.profile_image) }}" alt="profile">
+            </div>
+        {% else %}
+            <div style="margin-top:12px;">
+                <div class="avatar-lg" style="display:inline-flex;align-items:center;justify-content:center;font-weight:800;background:rgba(148,163,184,0.18);color:#dbeafe;">{{ get_avatar_initials(employee.full_name) }}</div>
             </div>
         {% endif %}
 

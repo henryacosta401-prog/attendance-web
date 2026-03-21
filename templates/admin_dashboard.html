@@ -3,251 +3,66 @@
 
 {% block extra_head %}
 <style>
-.admin-shell {
-    display: grid;
-    gap: 20px;
-}
-
-.admin-stats {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 14px;
-}
-
-.admin-stat-card {
-    padding: 18px;
-    border-radius: 18px;
-    background: linear-gradient(180deg, rgba(19, 28, 48, 0.92), rgba(36, 45, 71, 0.88));
-    border: 1px solid rgba(148, 163, 184, 0.18);
-    box-shadow: 0 16px 30px rgba(15, 23, 42, 0.18);
-}
-
-.admin-stat-label {
-    color: #9fb0d4;
-    font-size: 12px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-}
-
-.admin-stat-value {
-    margin-top: 10px;
-    color: #f8fbff;
-    font-size: 34px;
-    font-weight: 800;
-    line-height: 1;
-}
-
-.admin-dashboard-grid {
-    display: grid;
-    grid-template-columns: minmax(0, 2fr) minmax(300px, 0.95fr);
-    gap: 20px;
-    align-items: start;
-}
-
-.admin-panel {
-    padding: 20px;
+.admin-shell { display: grid; gap: 20px; }
+.admin-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; }
+.admin-stat-card, .admin-panel, .admin-exception-card {
     border-radius: 22px;
-    background: linear-gradient(180deg, rgba(25, 34, 58, 0.96), rgba(20, 28, 48, 0.95));
-    border: 1px solid rgba(148, 163, 184, 0.15);
-    box-shadow: 0 22px 34px rgba(15, 23, 42, 0.24);
-}
-
-.admin-panel h2 {
-    margin: 0;
-    color: #f8fbff;
-    font-size: 24px;
-}
-
-.admin-panel-subtitle {
-    margin-top: 8px;
-    color: #9fb0d4;
-    font-size: 13px;
-}
-
-.admin-filter-grid {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 12px;
-    margin-top: 18px;
-    margin-bottom: 16px;
-}
-
-.admin-filter-check {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    height: 48px;
-    padding: 0 14px;
-    border-radius: 14px;
-    background: rgba(15, 23, 42, 0.28);
+    background: linear-gradient(180deg, rgba(22, 31, 53, 0.98), rgba(15, 23, 42, 0.96));
     border: 1px solid rgba(148, 163, 184, 0.16);
-    color: #dbe7ff;
-    font-weight: 600;
+    box-shadow: 0 22px 34px rgba(15, 23, 42, 0.22);
 }
-
-.admin-table-wrap {
-    overflow-x: auto;
-    border-radius: 18px;
-    border: 1px solid rgba(148, 163, 184, 0.14);
-    background: rgba(8, 13, 24, 0.18);
+.admin-stat-card { padding: 18px; }
+.admin-stat-label { color: #9fb0d4; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
+.admin-stat-value { margin-top: 10px; color: #f8fbff; font-size: 34px; font-weight: 900; line-height: 1; }
+.admin-stat-note, .admin-panel-subtitle, .admin-meta, .admin-subtext, .admin-username { color: #9fb0d4; font-size: 12px; }
+.admin-panel { padding: 20px; }
+.admin-panel h2 { margin: 0; color: #f8fbff; font-size: 24px; }
+.department-tabs, .admin-exception-actions, .admin-flags, .admin-pagination-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.department-tab {
+    padding: 10px 14px; border-radius: 999px; border: 1px solid rgba(148, 163, 184, 0.18);
+    background: rgba(59, 130, 246, 0.08); color: #dbe7ff; font-size: 13px; font-weight: 700;
 }
-
-.admin-live-table {
-    width: 100%;
-    border-collapse: collapse;
+.department-tab.active { background: linear-gradient(135deg, rgba(59, 130, 246, 0.32), rgba(96, 165, 250, 0.16)); border-color: rgba(96, 165, 250, 0.45); color: #fff; }
+.admin-exception-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+.admin-exception-card { padding: 16px; }
+.admin-exception-top, .admin-toolbar, .admin-pagination { display: flex; justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap; }
+.admin-exception-count { color: #fff; font-size: 30px; font-weight: 900; }
+.admin-exception-label { color: #dbe7ff; font-weight: 800; }
+.admin-dashboard-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(320px, 0.95fr); gap: 20px; align-items: start; }
+.admin-filter-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin: 18px 0 16px; }
+.admin-filter-check {
+    display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 0 14px; border-radius: 14px;
+    background: rgba(15, 23, 42, 0.28); border: 1px solid rgba(148, 163, 184, 0.16); color: #dbe7ff; font-weight: 600;
 }
-
-.admin-live-table th,
-.admin-live-table td {
-    padding: 14px 16px;
-    border-bottom: 1px solid rgba(148, 163, 184, 0.12);
-    vertical-align: top;
-}
-
-.admin-live-table th {
-    background: rgba(59, 130, 246, 0.08);
-    color: #bad0ff;
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-}
-
-.admin-live-table td {
-    color: #ecf3ff;
-    font-size: 14px;
-}
-
-.admin-row-user {
-    display: flex;
-    gap: 12px;
-    align-items: center;
-}
-
-.admin-avatar {
-    width: 44px;
-    height: 44px;
-    border-radius: 50%;
-    object-fit: cover;
-    border: 1px solid rgba(148, 163, 184, 0.22);
-}
-
-.admin-avatar-placeholder {
-    width: 44px;
-    height: 44px;
-    border-radius: 50%;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(148, 163, 184, 0.18);
-    color: #dbe7ff;
-    font-weight: 800;
-}
-
-.admin-name {
-    color: #ffffff;
-    font-weight: 800;
-}
-
-.admin-username,
-.admin-meta,
-.admin-subtext {
-    color: #9fb0d4;
-    font-size: 12px;
-}
-
-.admin-pill {
-    display: inline-flex;
-    align-items: center;
-    padding: 6px 10px;
-    border-radius: 999px;
-    font-size: 12px;
-    font-weight: 800;
-    white-space: nowrap;
-}
-
+.admin-table-wrap { overflow-x: auto; border-radius: 18px; border: 1px solid rgba(148, 163, 184, 0.14); background: rgba(8, 13, 24, 0.18); }
+.admin-live-table { width: 100%; border-collapse: collapse; }
+.admin-live-table th, .admin-live-table td { padding: 14px 16px; border-bottom: 1px solid rgba(148, 163, 184, 0.12); vertical-align: top; }
+.admin-live-table th { background: rgba(59, 130, 246, 0.08); color: #bad0ff; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+.admin-live-table td { color: #ecf3ff; font-size: 14px; }
+.admin-row-user { display: flex; gap: 12px; align-items: center; }
+.admin-avatar, .admin-avatar-placeholder { width: 46px; height: 46px; border-radius: 50%; border: 1px solid rgba(148, 163, 184, 0.22); }
+.admin-avatar { object-fit: cover; }
+.admin-avatar-placeholder { display: inline-flex; align-items: center; justify-content: center; background: rgba(148, 163, 184, 0.18); color: #dbe7ff; font-weight: 800; }
+.admin-name { color: #fff; font-weight: 800; }
+.admin-pill { display: inline-flex; align-items: center; padding: 6px 10px; border-radius: 999px; font-size: 12px; font-weight: 800; white-space: nowrap; }
 .admin-pill-gray { background: rgba(148, 163, 184, 0.18); color: #dbe7ff; }
 .admin-pill-green { background: rgba(16, 185, 129, 0.18); color: #7ef5bf; }
 .admin-pill-yellow { background: rgba(245, 158, 11, 0.2); color: #ffd38a; }
 .admin-pill-red { background: rgba(239, 68, 68, 0.18); color: #ffb4b4; }
 .admin-pill-blue { background: rgba(59, 130, 246, 0.18); color: #9fccff; }
-
-.admin-flags {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
+.admin-sidebar, .admin-list { display: grid; gap: 12px; }
+.admin-list-card { padding: 14px 16px; border-radius: 16px; background: rgba(10, 16, 29, 0.34); border: 1px solid rgba(148, 163, 184, 0.12); }
+.admin-empty { margin-top: 16px; padding: 14px 16px; border-radius: 16px; border: 1px dashed rgba(148, 163, 184, 0.2); color: #9fb0d4; text-align: center; }
+@media (max-width: 1200px) {
+    .admin-dashboard-grid { grid-template-columns: 1fr; }
+    .admin-filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-
-.admin-sidebar {
-    display: grid;
-    gap: 20px;
-}
-
-.admin-list {
-    display: grid;
-    gap: 12px;
-    margin-top: 16px;
-}
-
-.admin-list-card {
-    padding: 14px 16px;
-    border-radius: 16px;
-    background: rgba(10, 16, 29, 0.34);
-    border: 1px solid rgba(148, 163, 184, 0.12);
-}
-
-.admin-empty {
-    margin-top: 16px;
-    padding: 14px 16px;
-    border-radius: 16px;
-    border: 1px dashed rgba(148, 163, 184, 0.2);
-    color: #9fb0d4;
-    text-align: center;
-}
-
-.schedule-picker {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-}
-
-.schedule-chip {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 12px;
-    border-radius: 12px;
-    background: rgba(59, 130, 246, 0.08);
-    border: 1px solid rgba(148, 163, 184, 0.18);
-    color: #dbe7ff;
-    font-size: 13px;
-    font-weight: 700;
-}
-
-.schedule-chip input {
-    width: auto;
-    margin: 0;
-}
-
-@media (max-width: 1100px) {
-    .admin-dashboard-grid {
-        grid-template-columns: 1fr;
-    }
-
-    .admin-filter-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-}
-
-@media (max-width: 700px) {
-    .admin-filter-grid {
-        grid-template-columns: 1fr;
-    }
-}
+@media (max-width: 720px) { .admin-filter-grid { grid-template-columns: 1fr; } }
 </style>
 <script>
 document.addEventListener("DOMContentLoaded", function () {
+    let currentPage = {{ pagination.page }};
+    let currentPageSize = {{ pagination.page_size }};
     function formatDateTime12h(value) {
         if (!value) return "";
         try {
@@ -258,99 +73,74 @@ document.addEventListener("DOMContentLoaded", function () {
             hour = hour % 12;
             if (hour === 0) hour = 12;
             return `${datePart} ${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:${String(second).padStart(2, "0")} ${ampm}`;
-        } catch (e) {
-            return value;
-        }
+        } catch (e) { return value; }
     }
-
     function statusClass(status) {
         if (status === "Timed In") return "admin-pill-green";
         if (status === "On Break") return "admin-pill-yellow";
         if (status === "Timed Out") return "admin-pill-blue";
-        if (status === "Absent" || status === "Inactive") return "admin-pill-red";
+        if (status === "Absent" || status === "Inactive" || status === "Missing Time Out") return "admin-pill-red";
         return "admin-pill-gray";
     }
-
-    async function refreshLiveStatus() {
+    function avatarMarkup(emp) {
+        if (emp.profile_image && emp.profile_image_available) return `<img class="admin-avatar" src="/uploads/${emp.profile_image}" alt="avatar">`;
+        return `<div class="admin-avatar-placeholder">${emp.avatar_initials || "U"}</div>`;
+    }
+    function buildQuery() {
+        const searchVal = document.getElementById("searchBox")?.value || "";
+        const statusVal = document.getElementById("statusFilter")?.value || "";
+        const departmentVal = document.getElementById("departmentFilter")?.value || "";
+        const overBreakOnlyVal = document.getElementById("overBreakOnly")?.checked ? "1" : "";
+        return `search=${encodeURIComponent(searchVal)}&status=${encodeURIComponent(statusVal)}&department=${encodeURIComponent(departmentVal)}&over_break_only=${encodeURIComponent(overBreakOnlyVal)}&page=${encodeURIComponent(currentPage)}&page_size=${encodeURIComponent(currentPageSize)}`;
+    }
+    function updatePager(pagination) {
+        const summary = document.getElementById("pageSummary");
+        if (summary) summary.textContent = pagination.total ? `Showing ${pagination.start_index}-${pagination.end_index} of ${pagination.total}` : "No matching employees";
+        document.getElementById("prevPageBtn").disabled = !pagination.has_prev;
+        document.getElementById("nextPageBtn").disabled = !pagination.has_next;
+    }
+    async function refreshLiveStatus(resetPage) {
+        if (resetPage) currentPage = 1;
         try {
-            const searchVal = document.getElementById("searchBox")?.value || "";
-            const statusVal = document.getElementById("statusFilter")?.value || "";
-            const departmentVal = document.getElementById("departmentFilter")?.value || "";
-            const overBreakOnlyVal = document.getElementById("overBreakOnly")?.checked ? "1" : "";
-
-            const response = await fetch(`/admin/live-status?search=${encodeURIComponent(searchVal)}&status=${encodeURIComponent(statusVal)}&department=${encodeURIComponent(departmentVal)}&over_break_only=${encodeURIComponent(overBreakOnlyVal)}`);
+            const response = await fetch(`/admin/live-status?${buildQuery()}`);
             const data = await response.json();
+            const rows = data.rows || [];
             const tbody = document.getElementById("liveStatusBody");
-            if (!tbody) return;
-
-            if (!data.length) {
+            if (!rows.length) {
                 tbody.innerHTML = `<tr><td colspan="7"><div class="admin-empty">No employees match the current filters.</div></td></tr>`;
+                updatePager(data.pagination || {});
                 return;
             }
-
-            tbody.innerHTML = data.map(emp => {
-                const profile = emp.profile_image
-                    ? `<img class="admin-avatar" src="/uploads/${emp.profile_image}" alt="avatar">`
-                    : `<div class="admin-avatar-placeholder">${(emp.full_name || "U").slice(0, 1)}</div>`;
-                const proofHtml = emp.proof_file
-                    ? `<a href="/uploads/${emp.proof_file}" target="_blank" class="admin-subtext">Open proof</a>`
-                    : `<span class="admin-subtext">No proof</span>`;
+            tbody.innerHTML = rows.map(emp => {
+                const proofHtml = emp.proof_file && emp.proof_file_available ? `<a href="/uploads/${emp.proof_file}" target="_blank" class="admin-subtext">Open proof</a>` : (emp.proof_file ? `<span class="admin-subtext">Proof file missing</span>` : `<span class="admin-subtext">No proof</span>`);
                 const flags = [];
+                if (emp.absent_flag) flags.push(`<span class="admin-pill admin-pill-red">Absent</span>`);
                 if (emp.late_flag) flags.push(`<span class="admin-pill admin-pill-red">Late ${emp.late_minutes}m</span>`);
                 if (emp.over_break_flag) flags.push(`<span class="admin-pill admin-pill-yellow">Over break ${emp.over_break_minutes}m</span>`);
-                if (emp.scheduled_today && !emp.absent_flag) flags.push(`<span class="admin-pill admin-pill-green">Scheduled today</span>`);
+                if (emp.missing_timeout_flag) flags.push(`<span class="admin-pill admin-pill-red">Missing time out</span>`);
                 if (!emp.scheduled_today) flags.push(`<span class="admin-pill admin-pill-gray">Off today</span>`);
-
-                return `
-                    <tr>
-                        <td>
-                            <div class="admin-row-user">
-                                ${profile}
-                                <div>
-                                    <div class="admin-name">${emp.full_name}</div>
-                                    <div class="admin-username">@${emp.username}</div>
-                                </div>
-                            </div>
-                        </td>
-                        <td>
-                            <div>${emp.department || "-"}</div>
-                            <div class="admin-subtext">${emp.position || "-"}</div>
-                        </td>
-                        <td>
-                            <div>${emp.schedule_summary || "-"}</div>
-                            <div class="admin-subtext">Shift ${emp.shift_start || "-"}</div>
-                        </td>
-                        <td>
-                            <span class="admin-pill ${statusClass(emp.status_display)}">${emp.status_display}</span>
-                        </td>
-                        <td>
-                            <div>${emp.time_in ? formatDateTime12h(emp.time_in) : "-"}</div>
-                            <div class="admin-subtext">${emp.time_out ? `Out ${formatDateTime12h(emp.time_out)}` : "No time out yet"}</div>
-                        </td>
-                        <td>
-                            <div>${emp.break_minutes || 0}m used</div>
-                            <div class="admin-subtext">Limit ${emp.break_limit_minutes || 15}m</div>
-                        </td>
-                        <td>
-                            <div class="admin-flags">${flags.join("") || `<span class="admin-pill admin-pill-gray">No alerts</span>`}</div>
-                            <div style="margin-top:8px;">${proofHtml}</div>
-                        </td>
-                    </tr>
-                `;
+                return `<tr>
+                    <td><div class="admin-row-user">${avatarMarkup(emp)}<div><div class="admin-name">${emp.full_name}</div><div class="admin-username">@${emp.username}</div></div></div></td>
+                    <td><div>${emp.department || "-"}</div><div class="admin-subtext">${emp.position || "-"}</div></td>
+                    <td><div>${emp.schedule_summary || "-"}</div><div class="admin-subtext">${emp.schedule_window_summary || "-"}</div></td>
+                    <td><span class="admin-pill ${statusClass(emp.status_display)}">${emp.status_display}</span></td>
+                    <td><div>${emp.time_in ? formatDateTime12h(emp.time_in) : "-"}</div><div class="admin-subtext">${emp.time_out ? `Out ${formatDateTime12h(emp.time_out)}` : `Expected out ${emp.shift_end || "-"}`}</div></td>
+                    <td><div>${emp.break_minutes || 0}m used</div><div class="admin-subtext">Limit ${emp.break_limit_minutes || 15}m</div></td>
+                    <td><div class="admin-flags">${flags.join("") || `<span class="admin-pill admin-pill-gray">No alerts</span>`}</div><div style="margin-top:8px;">${proofHtml}</div></td>
+                </tr>`;
             }).join("");
-        } catch (error) {
-            console.error("Live status refresh failed:", error);
-        }
+            updatePager(data.pagination || {});
+        } catch (error) { console.error("Live status refresh failed:", error); }
     }
-
-    refreshLiveStatus();
-    setInterval(refreshLiveStatus, 10000);
-
+    document.getElementById("pageSize")?.addEventListener("change", function () { currentPageSize = Number(this.value); refreshLiveStatus(true); });
+    document.getElementById("prevPageBtn")?.addEventListener("click", function () { currentPage = Math.max(currentPage - 1, 1); refreshLiveStatus(false); });
+    document.getElementById("nextPageBtn")?.addEventListener("click", function () { currentPage += 1; refreshLiveStatus(false); });
     ["searchBox", "statusFilter", "departmentFilter", "overBreakOnly"].forEach(id => {
         const el = document.getElementById(id);
-        if (!el) return;
-        el.addEventListener(id === "searchBox" ? "input" : "change", refreshLiveStatus);
+        if (el) el.addEventListener(id === "searchBox" ? "input" : "change", function () { refreshLiveStatus(true); });
     });
+    refreshLiveStatus(false);
+    setInterval(function () { refreshLiveStatus(false); }, 15000);
 });
 </script>
 {% endblock %}
@@ -360,223 +150,120 @@ document.addEventListener("DOMContentLoaded", function () {
     <div class="hero">
         <div>
             <h1>Admin Control Center</h1>
-            <p class="section-subtitle">Track today’s workforce, spot absences from schedules, and stay on top of attendance issues faster.</p>
+            <p class="section-subtitle">Track schedules, spot absences and missing time outs, and focus on exceptions before they become payroll problems.</p>
         </div>
-        <div class="status status-purple">Live Workforce View</div>
+        <div class="status status-purple">Operational View</div>
     </div>
 </div>
 
 <div class="admin-shell">
     <div class="admin-stats">
-        <div class="admin-stat-card">
-            <div class="admin-stat-label">Active Employees</div>
-            <div class="admin-stat-value">{{ stats.total_employees }}</div>
+        <div class="admin-stat-card"><div class="admin-stat-label">Active Employees</div><div class="admin-stat-value">{{ stats.total_employees }}</div><div class="admin-stat-note">Current active employee accounts</div></div>
+        <div class="admin-stat-card"><div class="admin-stat-label">Scheduled Today</div><div class="admin-stat-value">{{ stats.scheduled_today }}</div><div class="admin-stat-note">Based on each employee workdays</div></div>
+        <div class="admin-stat-card"><div class="admin-stat-label">Absent Today</div><div class="admin-stat-value">{{ stats.absent_today }}</div><div class="admin-stat-note">Scheduled but not timed in</div></div>
+        <div class="admin-stat-card"><div class="admin-stat-label">Late Today</div><div class="admin-stat-value">{{ stats.late_today }}</div><div class="admin-stat-note">Past shift start plus grace</div></div>
+        <div class="admin-stat-card"><div class="admin-stat-label">Over Break</div><div class="admin-stat-value">{{ stats.over_break_today }}</div><div class="admin-stat-note">Exceeded break limit</div></div>
+        <div class="admin-stat-card"><div class="admin-stat-label">Missing Time Out</div><div class="admin-stat-value">{{ stats.missing_timeout }}</div><div class="admin-stat-note">Past shift end without time out</div></div>
+    </div>
+
+    <section class="admin-panel">
+        <h2>Department Tabs</h2>
+        <p class="admin-panel-subtitle">Switch departments quickly without rebuilding every filter from scratch.</p>
+        <div class="department-tabs" style="margin-top:16px;">
+            <a class="department-tab {% if not department_filter %}active{% endif %}" href="{{ url_for('admin_dashboard', search=search, status=status_filter, over_break_only=over_break_only, page_size=pagination.page_size) }}">All Departments</a>
+            {% for dept in departments %}
+                <a class="department-tab {% if department_filter == dept.department %}active{% endif %}" href="{{ url_for('admin_dashboard', search=search, status=status_filter, department=dept.department, over_break_only=over_break_only, page_size=pagination.page_size) }}">{{ dept.department }}</a>
+            {% endfor %}
         </div>
-        <div class="admin-stat-card">
-            <div class="admin-stat-label">Scheduled Today</div>
-            <div class="admin-stat-value">{{ stats.scheduled_today }}</div>
-        </div>
-        <div class="admin-stat-card">
-            <div class="admin-stat-label">Absent Today</div>
-            <div class="admin-stat-value">{{ stats.absent_today }}</div>
-        </div>
-        <div class="admin-stat-card">
-            <div class="admin-stat-label">Timed In</div>
-            <div class="admin-stat-value">{{ stats.timed_in }}</div>
-        </div>
-        <div class="admin-stat-card">
-            <div class="admin-stat-label">On Break</div>
-            <div class="admin-stat-value">{{ stats.on_break }}</div>
-        </div>
-        <div class="admin-stat-card">
-            <div class="admin-stat-label">Late Today</div>
-            <div class="admin-stat-value">{{ stats.late_today }}</div>
-        </div>
+    </section>
+
+    <div class="admin-exception-grid">
+        <div class="admin-exception-card"><div class="admin-exception-top"><div><div class="admin-exception-label">Absent Today</div><div class="admin-exception-count">{{ exception_groups.absent|length }}</div></div><span class="admin-pill admin-pill-red">Critical</span></div><div class="admin-stat-note">Scheduled staff who passed shift start without time in.</div><div class="admin-exception-actions"><a class="btn btn-primary" href="{{ url_for('export_admin_exceptions_excel', type='absent', department=department_filter) }}">Export</a></div></div>
+        <div class="admin-exception-card"><div class="admin-exception-top"><div><div class="admin-exception-label">Late Today</div><div class="admin-exception-count">{{ exception_groups.late|length }}</div></div><span class="admin-pill admin-pill-yellow">Watch</span></div><div class="admin-stat-note">Employees who timed in after the scheduled start.</div><div class="admin-exception-actions"><a class="btn btn-primary" href="{{ url_for('export_admin_exceptions_excel', type='late', department=department_filter) }}">Export</a></div></div>
+        <div class="admin-exception-card"><div class="admin-exception-top"><div><div class="admin-exception-label">Over Break</div><div class="admin-exception-count">{{ exception_groups.over_break|length }}</div></div><span class="admin-pill admin-pill-yellow">Review</span></div><div class="admin-stat-note">Break totals already over each employee limit.</div><div class="admin-exception-actions"><a class="btn btn-primary" href="{{ url_for('export_admin_exceptions_excel', type='over_break', department=department_filter) }}">Export</a></div></div>
+        <div class="admin-exception-card"><div class="admin-exception-top"><div><div class="admin-exception-label">Missing Time Out</div><div class="admin-exception-count">{{ exception_groups.missing_timeout|length }}</div></div><span class="admin-pill admin-pill-red">Urgent</span></div><div class="admin-stat-note">Shift end passed but no time out was recorded yet.</div><div class="admin-exception-actions"><a class="btn btn-primary" href="{{ url_for('export_admin_exceptions_excel', type='missing_timeout', department=department_filter) }}">Export</a></div></div>
     </div>
 
     <div class="admin-dashboard-grid">
         <section class="admin-panel">
             <h2>Live Employee Status</h2>
-            <p class="admin-panel-subtitle">Use schedule, department, and status filters together to focus on who needs attention right now.</p>
-
+            <p class="admin-panel-subtitle">Search, filter, and page through the live roster without letting the page get endlessly taller.</p>
             <div class="admin-filter-grid">
-                <div>
-                    <label>Search</label>
-                    <input id="searchBox" class="input" type="text" value="{{ search }}" placeholder="Search employee...">
-                </div>
-                <div>
-                    <label>Status</label>
-                    <select id="statusFilter" class="input">
-                        <option value="">All</option>
-                        <option value="Absent" {% if status_filter == 'Absent' %}selected{% endif %}>Absent</option>
-                        <option value="Timed In" {% if status_filter == 'Timed In' %}selected{% endif %}>Timed In</option>
-                        <option value="On Break" {% if status_filter == 'On Break' %}selected{% endif %}>On Break</option>
-                        <option value="Timed Out" {% if status_filter == 'Timed Out' %}selected{% endif %}>Timed Out</option>
-                        <option value="Offline" {% if status_filter == 'Offline' %}selected{% endif %}>Offline</option>
-                        <option value="Off Day" {% if status_filter == 'Off Day' %}selected{% endif %}>Off Day</option>
-                        <option value="Inactive" {% if status_filter == 'Inactive' %}selected{% endif %}>Inactive</option>
-                    </select>
-                </div>
-                <div>
-                    <label>Department</label>
-                    <select id="departmentFilter" class="input">
-                        <option value="">All Departments</option>
-                        {% for dept in departments %}
-                            <option value="{{ dept.department }}" {% if department_filter == dept.department %}selected{% endif %}>{{ dept.department }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div>
-                    <label>Attention Filter</label>
-                    <label class="admin-filter-check">
-                        <input id="overBreakOnly" type="checkbox" {% if over_break_only == '1' %}checked{% endif %}>
-                        <span>Overbreak only</span>
-                    </label>
-                </div>
+                <div><label>Search</label><input id="searchBox" class="input" type="text" value="{{ search }}" placeholder="Search employee"></div>
+                <div><label>Status</label><select id="statusFilter" class="input"><option value="">All</option><option value="Absent" {% if status_filter == 'Absent' %}selected{% endif %}>Absent</option><option value="Timed In" {% if status_filter == 'Timed In' %}selected{% endif %}>Timed In</option><option value="On Break" {% if status_filter == 'On Break' %}selected{% endif %}>On Break</option><option value="Timed Out" {% if status_filter == 'Timed Out' %}selected{% endif %}>Timed Out</option><option value="Missing Time Out" {% if status_filter == 'Missing Time Out' %}selected{% endif %}>Missing Time Out</option><option value="Offline" {% if status_filter == 'Offline' %}selected{% endif %}>Offline</option><option value="Off Day" {% if status_filter == 'Off Day' %}selected{% endif %}>Off Day</option><option value="Inactive" {% if status_filter == 'Inactive' %}selected{% endif %}>Inactive</option></select></div>
+                <div><label>Department</label><select id="departmentFilter" class="input"><option value="">All Departments</option>{% for dept in departments %}<option value="{{ dept.department }}" {% if department_filter == dept.department %}selected{% endif %}>{{ dept.department }}</option>{% endfor %}</select></div>
+                <div><label>Rows</label><select id="pageSize" class="input">{% for size in [10, 25, 50, 100] %}<option value="{{ size }}" {% if pagination.page_size == size %}selected{% endif %}>Show {{ size }}</option>{% endfor %}</select></div>
+                <div><label>Attention Filter</label><label class="admin-filter-check"><input id="overBreakOnly" type="checkbox" {% if over_break_only == '1' %}checked{% endif %}><span>Overbreak only</span></label></div>
             </div>
-
+            <div class="admin-toolbar">
+                <div class="admin-panel-subtitle" id="pageSummary">{% if pagination.total %}Showing {{ pagination.start_index }}-{{ pagination.end_index }} of {{ pagination.total }}{% else %}No matching employees{% endif %}</div>
+                <a class="btn btn-purple" href="{{ url_for('admin_history', department=department_filter) }}">Open Full History</a>
+            </div>
             <div class="admin-table-wrap">
                 <table class="admin-live-table">
-                    <thead>
-                        <tr>
-                            <th>Employee</th>
-                            <th>Team</th>
-                            <th>Schedule</th>
-                            <th>Status</th>
-                            <th>Today</th>
-                            <th>Break</th>
-                            <th>Alerts & Proof</th>
-                        </tr>
-                    </thead>
+                    <thead><tr><th>Employee</th><th>Team</th><th>Schedule</th><th>Status</th><th>Today</th><th>Break</th><th>Alerts & Proof</th></tr></thead>
                     <tbody id="liveStatusBody">
                         {% if employees %}
                             {% for emp in employees %}
                             <tr>
-                                <td>
-                                    <div class="admin-row-user">
-                                        {% if emp.profile_image %}
-                                            <img class="admin-avatar" src="{{ url_for('uploaded_file', filename=emp.profile_image) }}" alt="avatar">
-                                        {% else %}
-                                            <div class="admin-avatar-placeholder">{{ emp.full_name[:1] }}</div>
-                                        {% endif %}
-                                        <div>
-                                            <div class="admin-name">{{ emp.full_name }}</div>
-                                            <div class="admin-username">@{{ emp.username }}</div>
-                                        </div>
-                                    </div>
-                                </td>
-                                <td>
-                                    <div>{{ emp.department or '-' }}</div>
-                                    <div class="admin-subtext">{{ emp.position or '-' }}</div>
-                                </td>
-                                <td>
-                                    <div>{{ emp.schedule_summary }}</div>
-                                    <div class="admin-subtext">Shift {{ emp.shift_start }}</div>
-                                </td>
-                                <td>
-                                    {% set live_class = 'admin-pill-gray' %}
-                                    {% if emp.status_display == 'Timed In' %}
-                                        {% set live_class = 'admin-pill-green' %}
-                                    {% elif emp.status_display == 'On Break' %}
-                                        {% set live_class = 'admin-pill-yellow' %}
-                                    {% elif emp.status_display == 'Timed Out' %}
-                                        {% set live_class = 'admin-pill-blue' %}
-                                    {% elif emp.status_display in ['Absent', 'Inactive'] %}
-                                        {% set live_class = 'admin-pill-red' %}
-                                    {% endif %}
-                                    <span class="admin-pill {{ live_class }}">{{ emp.status_display }}</span>
-                                </td>
-                                <td>
-                                    <div>{{ format_datetime_12h(emp.time_in) if emp.time_in else '-' }}</div>
-                                    <div class="admin-subtext">
-                                        {% if emp.time_out %}
-                                            Out {{ format_datetime_12h(emp.time_out) }}
-                                        {% elif emp.absent_flag == 1 %}
-                                            Missed scheduled start
-                                        {% elif emp.scheduled_today == 1 %}
-                                            Scheduled today
-                                        {% else %}
-                                            Off day
-                                        {% endif %}
-                                    </div>
-                                </td>
-                                <td>
-                                    <div>{{ emp.break_minutes }}m used</div>
-                                    <div class="admin-subtext">Limit {{ emp.break_limit_minutes }}m</div>
-                                </td>
-                                <td>
-                                    <div class="admin-flags">
-                                        {% if emp.late_flag == 1 %}
-                                            <span class="admin-pill admin-pill-red">Late {{ emp.late_minutes }}m</span>
-                                        {% endif %}
-                                        {% if emp.over_break_flag == 1 %}
-                                            <span class="admin-pill admin-pill-yellow">Over break {{ emp.over_break_minutes }}m</span>
-                                        {% endif %}
-                                        {% if emp.scheduled_today == 1 and emp.absent_flag == 0 %}
-                                            <span class="admin-pill admin-pill-green">Scheduled today</span>
-                                        {% endif %}
-                                        {% if emp.scheduled_today == 0 %}
-                                            <span class="admin-pill admin-pill-gray">Off today</span>
-                                        {% endif %}
-                                        {% if emp.late_flag != 1 and emp.over_break_flag != 1 and emp.scheduled_today == 1 and emp.absent_flag == 1 %}
-                                            <span class="admin-pill admin-pill-red">Needs follow-up</span>
-                                        {% endif %}
-                                    </div>
-                                    <div style="margin-top:8px;">
-                                        {% if emp.proof_file %}
-                                            <a class="admin-subtext" href="{{ url_for('uploaded_file', filename=emp.proof_file) }}" target="_blank">Open proof</a>
-                                        {% else %}
-                                            <span class="admin-subtext">No proof</span>
-                                        {% endif %}
-                                    </div>
-                                </td>
+                                <td><div class="admin-row-user">{% if emp.profile_image and emp.profile_image_available %}<img class="admin-avatar" src="{{ url_for('uploaded_file', filename=emp.profile_image) }}" alt="avatar">{% else %}<div class="admin-avatar-placeholder">{{ emp.avatar_initials }}</div>{% endif %}<div><div class="admin-name">{{ emp.full_name }}</div><div class="admin-username">@{{ emp.username }}</div></div></div></td>
+                                <td><div>{{ emp.department or '-' }}</div><div class="admin-subtext">{{ emp.position or '-' }}</div></td>
+                                <td><div>{{ emp.schedule_summary }}</div><div class="admin-subtext">{{ emp.schedule_window_summary }}</div></td>
+                                <td>{% set live_class = 'admin-pill-gray' %}{% if emp.status_display == 'Timed In' %}{% set live_class = 'admin-pill-green' %}{% elif emp.status_display == 'On Break' %}{% set live_class = 'admin-pill-yellow' %}{% elif emp.status_display == 'Timed Out' %}{% set live_class = 'admin-pill-blue' %}{% elif emp.status_display in ['Absent', 'Inactive', 'Missing Time Out'] %}{% set live_class = 'admin-pill-red' %}{% endif %}<span class="admin-pill {{ live_class }}">{{ emp.status_display }}</span></td>
+                                <td><div>{{ format_datetime_12h(emp.time_in) if emp.time_in else '-' }}</div><div class="admin-subtext">{% if emp.time_out %}Out {{ format_datetime_12h(emp.time_out) }}{% else %}Expected out {{ emp.shift_end }}{% endif %}</div></td>
+                                <td><div>{{ emp.break_minutes }}m used</div><div class="admin-subtext">Limit {{ emp.break_limit_minutes }}m</div></td>
+                                <td><div class="admin-flags">{% if emp.absent_flag == 1 %}<span class="admin-pill admin-pill-red">Absent</span>{% endif %}{% if emp.late_flag == 1 %}<span class="admin-pill admin-pill-red">Late {{ emp.late_minutes }}m</span>{% endif %}{% if emp.over_break_flag == 1 %}<span class="admin-pill admin-pill-yellow">Over break {{ emp.over_break_minutes }}m</span>{% endif %}{% if emp.missing_timeout_flag == 1 %}<span class="admin-pill admin-pill-red">Missing time out</span>{% endif %}{% if emp.scheduled_today == 0 %}<span class="admin-pill admin-pill-gray">Off today</span>{% endif %}</div><div style="margin-top:8px;">{% if emp.proof_file and emp.proof_file_available %}<a class="admin-subtext" href="{{ url_for('uploaded_file', filename=emp.proof_file) }}" target="_blank">Open proof</a>{% elif emp.proof_file %}<span class="admin-subtext">Proof file missing</span>{% else %}<span class="admin-subtext">No proof</span>{% endif %}</div></td>
                             </tr>
                             {% endfor %}
                         {% else %}
-                            <tr>
-                                <td colspan="7">
-                                    <div class="admin-empty">No employees match the current filters.</div>
-                                </td>
-                            </tr>
+                            <tr><td colspan="7"><div class="admin-empty">No employees match the current filters.</div></td></tr>
                         {% endif %}
                     </tbody>
                 </table>
             </div>
-
-            <p class="admin-panel-subtitle" style="margin-top:14px;">Auto-refreshes every 10 seconds. “Absent” appears only after a scheduled employee passes their shift start without timing in.</p>
+            <div class="admin-pagination">
+                <div class="admin-panel-subtitle">Auto-refreshes every 15 seconds without jumping back to the top.</div>
+                <div class="admin-pagination-actions"><button class="btn btn-dark" id="prevPageBtn" type="button" {% if not pagination.has_prev %}disabled{% endif %}>Previous</button><button class="btn btn-primary" id="nextPageBtn" type="button" {% if not pagination.has_next %}disabled{% endif %}>Next</button></div>
+            </div>
         </section>
 
         <aside class="admin-sidebar">
             <section class="admin-panel">
-                <h2>Absent Today</h2>
-                <p class="admin-panel-subtitle">Scheduled employees for {{ today_schedule_code }} who have not timed in yet.</p>
-                {% if absent_employees %}
+                <h2>Exception Queue</h2>
+                <p class="admin-panel-subtitle">The fastest way to review the people who need follow-up right now.</p>
+                {% for key, title in [('absent', 'Absent Today'), ('late', 'Late Today'), ('over_break', 'Over Break'), ('missing_timeout', 'Missing Time Out')] %}
+                    <div class="admin-list" style="margin-top:14px;">
+                        <div class="admin-subtext" style="font-size:13px; text-transform:uppercase; letter-spacing:0.08em;">{{ title }}</div>
+                        {% if exception_groups[key] %}
+                            {% for emp in exception_groups[key][:4] %}
+                                <div class="admin-list-card"><div class="admin-name">{{ emp.full_name }}</div><div class="admin-meta">{{ emp.department or '-' }} | {{ emp.position or '-' }}</div><div class="admin-subtext" style="margin-top:6px;">{{ emp.schedule_window_summary }}</div></div>
+                            {% endfor %}
+                        {% else %}
+                            <div class="admin-empty" style="margin-top:0;">No {{ title|lower }} right now.</div>
+                        {% endif %}
+                    </div>
+                {% endfor %}
+            </section>
+            <section class="admin-panel">
+                <h2>Admin Alerts</h2>
+                <p class="admin-panel-subtitle">In-app notifications for absences and missing time outs.</p>
+                {% if admin_notifications %}
                     <div class="admin-list">
-                        {% for emp in absent_employees %}
-                            <div class="admin-list-card">
-                                <div class="admin-name">{{ emp.full_name }}</div>
-                                <div class="admin-meta">{{ emp.department or '-' }} • {{ emp.position or '-' }}</div>
-                                <div class="admin-subtext" style="margin-top:6px;">Expected {{ emp.shift_start }} • {{ emp.schedule_summary }}</div>
-                            </div>
+                        {% for notif in admin_notifications %}
+                            <div class="admin-list-card"><div class="admin-name">{{ notif.title }}</div><div class="admin-subtext" style="margin-top:6px;">{{ notif.message }}</div><div class="admin-subtext" style="margin-top:8px;">{{ format_datetime_12h(notif.created_at) }}</div></div>
                         {% endfor %}
                     </div>
                 {% else %}
-                    <div class="admin-empty">No scheduled absences detected right now.</div>
+                    <div class="admin-empty">No admin alerts yet.</div>
                 {% endif %}
             </section>
-
             <section class="admin-panel">
                 <h2>Recent Activity</h2>
                 <p class="admin-panel-subtitle">Latest actions across attendance, corrections, and reports.</p>
                 {% if logs %}
                     <div class="admin-list">
-                        {% for log in logs[:10] %}
-                            <div class="admin-list-card">
-                                <div class="admin-name">{{ log.full_name }}</div>
-                                <div class="admin-meta">{{ log.action }}</div>
-                                <div class="admin-subtext" style="margin-top:6px;">{{ log.details if log.details else 'No extra details' }}</div>
-                                <div class="admin-subtext" style="margin-top:8px;">{{ format_datetime_12h(log.created_at) }}</div>
-                            </div>
+                        {% for log in logs[:8] %}
+                            <div class="admin-list-card"><div class="admin-name">{{ log.full_name }}</div><div class="admin-meta">{{ log.action }}</div><div class="admin-subtext" style="margin-top:6px;">{{ log.details if log.details else 'No extra details' }}</div><div class="admin-subtext" style="margin-top:8px;">{{ format_datetime_12h(log.created_at) }}</div></div>
                         {% endfor %}
                     </div>
                 {% else %}
