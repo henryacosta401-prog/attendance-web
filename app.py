@@ -1977,6 +1977,7 @@ def admin_history():
     search = request.args.get("search", "").strip()
     department = request.args.get("department", "").strip()
     late_only = request.args.get("late_only", "").strip()
+    absent_only = request.args.get("absent_only", "").strip()
     over_break_only = request.args.get("over_break_only", "").strip()
     date_from = request.args.get("date_from", "").strip()
     date_to = request.args.get("date_to", "").strip()
@@ -2016,12 +2017,16 @@ def admin_history():
 
     enriched = []
     for row in rows:
+        employee = get_user_by_id(row["user_id"])
         item = {
             "row": row,
             "break_minutes": total_break_minutes(row["id"]),
             "work_minutes": total_work_minutes(row),
-            "over_break_minutes": get_overbreak_minutes(total_break_minutes(row["id"]), row["break_limit_minutes"])
+            "over_break_minutes": get_overbreak_minutes(total_break_minutes(row["id"]), row["break_limit_minutes"]),
+            "absent_flag": 1 if is_absent_today(employee, row) else 0
         }
+        if absent_only == "1" and item["absent_flag"] != 1:
+            continue
         if over_break_only == "1" and item["over_break_minutes"] <= 0:
             continue
         enriched.append(item)
@@ -2033,6 +2038,7 @@ def admin_history():
         department=department,
         departments=departments,
         late_only=late_only,
+        absent_only=absent_only,
         over_break_only=over_break_only,
         date_from=date_from,
         date_to=date_to,
@@ -2220,6 +2226,7 @@ def export_admin_history_excel():
     search = request.args.get("search", "").strip()
     department = request.args.get("department", "").strip()
     late_only = request.args.get("late_only", "").strip()
+    absent_only = request.args.get("absent_only", "").strip()
     over_break_only = request.args.get("over_break_only", "").strip()
     date_from = request.args.get("date_from", "").strip()
     date_to = request.args.get("date_to", "").strip()
@@ -2264,6 +2271,7 @@ def export_admin_history_excel():
             search=search,
             department=department,
             late_only=late_only,
+            absent_only=absent_only,
             over_break_only=over_break_only,
             date_from=date_from,
             date_to=date_to
@@ -2290,6 +2298,9 @@ def export_admin_history_excel():
     for row in rows:
         break_minutes = total_break_minutes(row["id"])
         over_break_minutes = get_overbreak_minutes(break_minutes, row["break_limit_minutes"])
+        employee = get_user_by_id(row["user_id"])
+        if absent_only == "1" and not is_absent_today(employee, row):
+            continue
         if over_break_only == "1" and over_break_minutes <= 0:
             continue
 
