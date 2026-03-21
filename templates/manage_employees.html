@@ -68,7 +68,16 @@
     </div>
 
     <div class="card">
-        <div class="section-title">Employee List</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
+            <div class="section-title" style="margin-bottom:0;">Employee List</div>
+            <form method="GET" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+                <input class="input" type="text" name="search" value="{{ employee_search }}" placeholder="Search employee..." style="min-width:260px;">
+                <button class="btn btn-primary" type="submit">Search</button>
+                {% if employee_search %}
+                    <a class="btn btn-gray" href="{{ url_for('manage_employees') }}">Clear</a>
+                {% endif %}
+            </form>
+        </div>
         {% if employees %}
             <div style="overflow-x:auto;">
                 <table>
@@ -130,7 +139,7 @@
                 </table>
             </div>
         {% else %}
-            <p class="muted">No employees yet.</p>
+            <p class="muted">{% if employee_search %}No employees matched your search.{% else %}No employees yet.{% endif %}</p>
         {% endif %}
     </div>
 </div>

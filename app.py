@@ -2538,13 +2538,34 @@ def manage_employees():
         flash("Employee added successfully.", "success")
         return redirect(url_for("manage_employees"))
 
-    employees = fetchall("""
+    employee_search = request.args.get("search", "").strip()
+    sql = """
         SELECT * FROM users
         WHERE role = 'employee'
-        ORDER BY id DESC
-    """)
+    """
+    params = []
 
-    return render_template("manage_employees.html", employees=employees, weekday_options=WEEKDAY_OPTIONS)
+    if employee_search:
+        sql += """
+            AND (
+                LOWER(full_name) LIKE ?
+                OR LOWER(username) LIKE ?
+                OR LOWER(COALESCE(department, '')) LIKE ?
+                OR LOWER(COALESCE(position, '')) LIKE ?
+            )
+        """
+        search_like = f"%{employee_search.lower()}%"
+        params.extend([search_like, search_like, search_like, search_like])
+
+    sql += " ORDER BY id DESC"
+    employees = fetchall(sql, params)
+
+    return render_template(
+        "manage_employees.html",
+        employees=employees,
+        weekday_options=WEEKDAY_OPTIONS,
+        employee_search=employee_search
+    )
 
 
 @app.route("/admin/edit-employee/<int:user_id>", methods=["GET", "POST"])
