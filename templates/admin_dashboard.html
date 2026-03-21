@@ -30,9 +30,10 @@ document.addEventListener("DOMContentLoaded", function () {
         try {
             const searchVal = document.getElementById("searchBox") ? document.getElementById("searchBox").value : "";
             const statusVal = document.getElementById("statusFilter") ? document.getElementById("statusFilter").value : "";
+            const departmentVal = document.getElementById("departmentFilter") ? document.getElementById("departmentFilter").value : "";
             const overBreakOnlyVal = document.getElementById("overBreakOnly") && document.getElementById("overBreakOnly").checked ? "1" : "";
 
-            const response = await fetch(`/admin/live-status?search=${encodeURIComponent(searchVal)}&status=${encodeURIComponent(statusVal)}&over_break_only=${encodeURIComponent(overBreakOnlyVal)}`);
+            const response = await fetch(`/admin/live-status?search=${encodeURIComponent(searchVal)}&status=${encodeURIComponent(statusVal)}&department=${encodeURIComponent(departmentVal)}&over_break_only=${encodeURIComponent(overBreakOnlyVal)}`);
             const data = await response.json();
 
             const tbody = document.getElementById("liveStatusBody");
@@ -101,10 +102,12 @@ document.addEventListener("DOMContentLoaded", function () {
 
     const searchBox = document.getElementById("searchBox");
     const statusFilter = document.getElementById("statusFilter");
+    const departmentFilter = document.getElementById("departmentFilter");
     const overBreakOnly = document.getElementById("overBreakOnly");
 
     if (searchBox) searchBox.addEventListener("input", refreshLiveStatus);
     if (statusFilter) statusFilter.addEventListener("change", refreshLiveStatus);
+    if (departmentFilter) departmentFilter.addEventListener("change", refreshLiveStatus);
     if (overBreakOnly) overBreakOnly.addEventListener("change", refreshLiveStatus);
 });
 </script>
@@ -162,6 +165,15 @@ document.addEventListener("DOMContentLoaded", function () {
                     <option value="On Break" {% if status_filter == 'On Break' %}selected{% endif %}>On Break</option>
                     <option value="Timed Out" {% if status_filter == 'Timed Out' %}selected{% endif %}>Timed Out</option>
                     <option value="Offline" {% if status_filter == 'Offline' %}selected{% endif %}>Offline</option>
+                </select>
+            </div>
+            <div>
+                <label>Department</label>
+                <select id="departmentFilter" class="input">
+                    <option value="">All Departments</option>
+                    {% for dept in departments %}
+                        <option value="{{ dept.department }}" {% if department_filter == dept.department %}selected{% endif %}>{{ dept.department }}</option>
+                    {% endfor %}
                 </select>
             </div>
             <div>
