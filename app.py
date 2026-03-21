@@ -1387,7 +1387,7 @@ def uploaded_file(filename):
 # =========================
 # ADMIN
 # =========================
-def get_admin_employee_rows(status_filter="", search="", over_break_only=""):
+def get_admin_employee_rows(status_filter="", search="", department_filter="", over_break_only=""):
     users = fetchall("""
         SELECT * FROM users
         WHERE role = 'employee'
@@ -1431,6 +1431,9 @@ def get_admin_employee_rows(status_filter="", search="", over_break_only=""):
             hay = f"{row['full_name']} {row['username']} {row['department']} {row['position']} {row['shift_start']}".lower()
             if s not in hay:
                 continue
+
+        if department_filter and (row["department"] or "").strip() != department_filter:
+            continue
 
         employees.append(row)
 
@@ -1665,14 +1668,26 @@ def admin_dashboard():
 
     status_filter = request.args.get("status", "").strip()
     search = request.args.get("search", "").strip()
+    department_filter = request.args.get("department", "").strip()
     over_break_only = request.args.get("over_break_only", "").strip()
 
-    employees = get_admin_employee_rows(status_filter=status_filter, search=search, over_break_only=over_break_only)
+    employees = get_admin_employee_rows(
+        status_filter=status_filter,
+        search=search,
+        department_filter=department_filter,
+        over_break_only=over_break_only
+    )
     all_employee_rows = get_admin_employee_rows()
     all_users = fetchall("""
         SELECT * FROM users
         WHERE role = 'employee'
         ORDER BY full_name ASC
+    """)
+    departments = fetchall("""
+        SELECT DISTINCT department
+        FROM users
+        WHERE role = 'employee' AND department IS NOT NULL AND TRIM(department) != ''
+        ORDER BY department ASC
     """)
 
     logs = fetchall("""
@@ -1710,6 +1725,8 @@ def admin_dashboard():
         break_limit_minutes=BREAK_LIMIT_MINUTES,
         status_filter=status_filter,
         search=search,
+        department_filter=department_filter,
+        departments=departments,
         over_break_only=over_break_only
     )
 
@@ -1720,6 +1737,7 @@ def admin_live_status():
     employees = get_admin_employee_rows(
         status_filter=request.args.get("status", "").strip(),
         search=request.args.get("search", "").strip(),
+        department_filter=request.args.get("department", "").strip(),
         over_break_only=request.args.get("over_break_only", "").strip()
     )
     return jsonify(employees)
@@ -1729,6 +1747,7 @@ def admin_live_status():
 @login_required(role="admin")
 def admin_history():
     search = request.args.get("search", "").strip()
+    department = request.args.get("department", "").strip()
     late_only = request.args.get("late_only", "").strip()
     over_break_only = request.args.get("over_break_only", "").strip()
     date_from = request.args.get("date_from", "").strip()
@@ -1747,6 +1766,10 @@ def admin_history():
         s = f"%{search.lower()}%"
         params.extend([s, s])
 
+    if department:
+        sql += " AND COALESCE(u.department, '') = ?"
+        params.append(department)
+
     if late_only == "1":
         sql += " AND a.late_flag = 1"
 
@@ -1761,6 +1784,12 @@ def admin_history():
     sql += " ORDER BY a.work_date DESC, a.id DESC LIMIT 200"
 
     rows = fetchall(sql, params)
+    departments = fetchall("""
+        SELECT DISTINCT department
+        FROM users
+        WHERE role = 'employee' AND department IS NOT NULL AND TRIM(department) != ''
+        ORDER BY department ASC
+    """)
 
     enriched = []
     for row in rows:
@@ -1778,6 +1807,8 @@ def admin_history():
         "admin_history.html",
         records=enriched,
         search=search,
+        department=department,
+        departments=departments,
         late_only=late_only,
         over_break_only=over_break_only,
         date_from=date_from,
@@ -1896,6 +1927,7 @@ def update_correction_request(request_id):
 @login_required(role="admin")
 def export_admin_history_excel():
     search = request.args.get("search", "").strip()
+    department = request.args.get("department", "").strip()
     late_only = request.args.get("late_only", "").strip()
     over_break_only = request.args.get("over_break_only", "").strip()
     date_from = request.args.get("date_from", "").strip()
@@ -1913,6 +1945,10 @@ def export_admin_history_excel():
         sql += " AND (LOWER(u.full_name) LIKE ? OR LOWER(u.username) LIKE ?)"
         s = f"%{search.lower()}%"
         params.extend([s, s])
+
+    if department:
+        sql += " AND COALESCE(u.department, '') = ?"
+        params.append(department)
 
     if late_only == "1":
         sql += " AND a.late_flag = 1"
@@ -1935,6 +1971,7 @@ def export_admin_history_excel():
         return redirect(url_for(
             "admin_history",
             search=search,
+            department=department,
             late_only=late_only,
             over_break_only=over_break_only,
             date_from=date_from,

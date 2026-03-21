@@ -17,6 +17,15 @@
                 <input class="input" type="text" name="search" value="{{ search }}" placeholder="Name or username">
             </div>
             <div>
+                <label>Department</label>
+                <select class="input" name="department">
+                    <option value="">All Departments</option>
+                    {% for dept in departments %}
+                        <option value="{{ dept.department }}" {% if department == dept.department %}selected{% endif %}>{{ dept.department }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
                 <label>Date From</label>
                 <input class="input" type="date" name="date_from" value="{{ date_from }}">
             </div>
@@ -42,7 +51,7 @@
 
         <div class="top-actions" style="margin-top:16px;">
             <button class="btn btn-primary" type="submit">Filter</button>
-            <a class="btn btn-purple" href="{{ url_for('export_admin_history_excel', search=search, late_only=late_only, over_break_only=over_break_only, date_from=date_from, date_to=date_to) }}">Export Excel</a>
+            <a class="btn btn-purple" href="{{ url_for('export_admin_history_excel', search=search, department=department, late_only=late_only, over_break_only=over_break_only, date_from=date_from, date_to=date_to) }}">Export Excel</a>
             <a class="btn btn-gray" href="{{ url_for('admin_history') }}">Reset</a>
         </div>
     </form>
