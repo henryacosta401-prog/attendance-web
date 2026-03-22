@@ -878,9 +878,7 @@ def total_work_minutes(attendance_row):
 
     start = datetime.strptime(attendance_row["time_in"], "%Y-%m-%d %H:%M:%S")
     end = datetime.strptime(attendance_row["time_out"], "%Y-%m-%d %H:%M:%S")
-    raw_minutes = int((end - start).total_seconds() // 60)
-    break_minutes = total_break_minutes(attendance_row["id"])
-    return max(raw_minutes - break_minutes, 0)
+    return max(int((end - start).total_seconds() // 60), 0)
 
 
 def minutes_to_hm(minutes):
