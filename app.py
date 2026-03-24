@@ -34,11 +34,13 @@ except Exception:
 # CONFIG
 # =========================
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-SQLITE_DATABASE = os.path.join(BASE_DIR, "attendance.db")
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
-
-DEFAULT_UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
 PERSISTENT_DISK_PATH = os.environ.get("RENDER_DISK_PATH", "").strip()
+DEFAULT_SQLITE_DATABASE = os.path.join(BASE_DIR, "attendance.db")
+SQLITE_DATABASE = os.environ.get("SQLITE_DATABASE_PATH", "").strip() or (
+    os.path.join(PERSISTENT_DISK_PATH, "attendance.db") if PERSISTENT_DISK_PATH else DEFAULT_SQLITE_DATABASE
+)
+DEFAULT_UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
 UPLOAD_FOLDER = os.environ.get("UPLOAD_FOLDER", "").strip() or (
     os.path.join(PERSISTENT_DISK_PATH, "uploads") if PERSISTENT_DISK_PATH else DEFAULT_UPLOAD_FOLDER
 )
@@ -586,6 +588,7 @@ def init_postgres_db():
         ), commit=True)
 
 
+os.makedirs(os.path.dirname(SQLITE_DATABASE), exist_ok=True)
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 with app.app_context():
     init_db()
