@@ -791,10 +791,82 @@ def normalize_optional_clock_time(value):
         raise ValueError("Use HH:MM format for correction times.")
 
 
-def combine_work_date_and_time(work_date, clock_time):
+def parse_db_datetime(datetime_str):
+    if not datetime_str:
+        return None
+    try:
+        return datetime.strptime(datetime_str, "%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return None
+
+
+def combine_work_date_and_time(work_date, clock_time, not_before=None):
     if not clock_time:
         return None
-    return f"{work_date} {clock_time}:00"
+    candidate_dt = datetime.strptime(f"{work_date} {clock_time}:00", "%Y-%m-%d %H:%M:%S")
+    reference_dt = parse_db_datetime(not_before) if isinstance(not_before, str) else not_before
+    if reference_dt and candidate_dt < reference_dt:
+        candidate_dt += timedelta(days=1)
+    return candidate_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def get_attendance_context(user_id, work_date):
+    attendance = fetchone("""
+        SELECT *
+        FROM attendance
+        WHERE user_id = ? AND work_date = ?
+        ORDER BY id DESC LIMIT 1
+    """, (user_id, work_date))
+
+    break_row = None
+    if attendance:
+        break_row = fetchone("""
+            SELECT *
+            FROM breaks
+            WHERE attendance_id = ?
+            ORDER BY id ASC LIMIT 1
+        """, (attendance["id"],))
+
+    return attendance, break_row
+
+
+def resolve_correction_datetimes(
+    work_date,
+    time_in_value="",
+    break_start_value="",
+    break_end_value="",
+    time_out_value="",
+    existing_time_in=None,
+    existing_break_start=None,
+    existing_break_end=None,
+    existing_time_out=None,
+    use_existing_values=True
+):
+    final_time_in = combine_work_date_and_time(work_date, time_in_value) if time_in_value else None
+    resolved_time_in = final_time_in if time_in_value else (existing_time_in if use_existing_values else None)
+
+    break_start_reference = resolved_time_in or existing_break_start
+    final_break_start = (
+        combine_work_date_and_time(work_date, break_start_value, not_before=break_start_reference)
+        if break_start_value else None
+    )
+    resolved_break_start = final_break_start if break_start_value else (existing_break_start if use_existing_values else None)
+
+    break_end_reference = resolved_break_start or existing_break_end or break_start_reference
+    final_break_end = (
+        combine_work_date_and_time(work_date, break_end_value, not_before=break_end_reference)
+        if break_end_value else None
+    )
+    resolved_break_end = final_break_end if break_end_value else (existing_break_end if use_existing_values else None)
+
+    time_out_reference = resolved_break_end or resolved_break_start or resolved_time_in or existing_time_out
+    final_time_out = (
+        combine_work_date_and_time(work_date, time_out_value, not_before=time_out_reference)
+        if time_out_value else None
+    )
+    resolved_time_out = final_time_out if time_out_value else (existing_time_out if use_existing_values else None)
+
+    return resolved_time_in, resolved_break_start, resolved_break_end, resolved_time_out
 
 
 def split_datetime_to_time(datetime_str):
@@ -1362,6 +1434,20 @@ def employee_corrections():
             flash(str(exc), "danger")
             return redirect(url_for("employee_corrections"))
 
+        attendance, break_row = get_attendance_context(user["id"], work_date)
+        requested_time_in_dt, requested_break_start_dt, requested_break_end_dt, requested_time_out_dt = resolve_correction_datetimes(
+            work_date,
+            time_in_value=requested_time_in,
+            break_start_value=requested_break_start,
+            break_end_value=requested_break_end,
+            time_out_value=requested_time_out,
+            existing_time_in=attendance["time_in"] if attendance else None,
+            existing_break_start=break_row["break_start"] if break_row else None,
+            existing_break_end=break_row["break_end"] if break_row else None,
+            existing_time_out=attendance["time_out"] if attendance else None,
+            use_existing_values=False
+        )
+
         execute_db("""
             INSERT INTO correction_requests (
                 user_id, request_type, work_date, message,
@@ -1374,10 +1460,10 @@ def employee_corrections():
             request_type,
             work_date,
             message,
-            combine_work_date_and_time(work_date, requested_time_in),
-            combine_work_date_and_time(work_date, requested_break_start),
-            combine_work_date_and_time(work_date, requested_break_end),
-            combine_work_date_and_time(work_date, requested_time_out),
+            requested_time_in_dt,
+            requested_break_start_dt,
+            requested_break_end_dt,
+            requested_time_out_dt,
             now_str()
         ), commit=True)
 
@@ -1804,21 +1890,7 @@ def get_correction_requests(user_id=None, status="", date_from="", date_to=""):
 
 
 def apply_attendance_correction(user_id, work_date, time_in_value="", break_start_value="", break_end_value="", time_out_value=""):
-    attendance = fetchone("""
-        SELECT *
-        FROM attendance
-        WHERE user_id = ? AND work_date = ?
-        ORDER BY id DESC LIMIT 1
-    """, (user_id, work_date))
-    break_row = None
-
-    if attendance:
-        break_row = fetchone("""
-            SELECT *
-            FROM breaks
-            WHERE attendance_id = ?
-            ORDER BY id ASC LIMIT 1
-        """, (attendance["id"],))
+    attendance, break_row = get_attendance_context(user_id, work_date)
 
     before_values = {
         "time_in": attendance["time_in"] if attendance else None,
@@ -1827,10 +1899,17 @@ def apply_attendance_correction(user_id, work_date, time_in_value="", break_star
         "time_out": attendance["time_out"] if attendance else None,
     }
 
-    final_time_in = combine_work_date_and_time(work_date, time_in_value) if time_in_value else (attendance["time_in"] if attendance else None)
-    final_time_out = combine_work_date_and_time(work_date, time_out_value) if time_out_value else (attendance["time_out"] if attendance else None)
-    final_break_start = combine_work_date_and_time(work_date, break_start_value) if break_start_value else (break_row["break_start"] if break_row else None)
-    final_break_end = combine_work_date_and_time(work_date, break_end_value) if break_end_value else (break_row["break_end"] if break_row else None)
+    final_time_in, final_break_start, final_break_end, final_time_out = resolve_correction_datetimes(
+        work_date,
+        time_in_value=time_in_value,
+        break_start_value=break_start_value,
+        break_end_value=break_end_value,
+        time_out_value=time_out_value,
+        existing_time_in=attendance["time_in"] if attendance else None,
+        existing_break_start=break_row["break_start"] if break_row else None,
+        existing_break_end=break_row["break_end"] if break_row else None,
+        existing_time_out=attendance["time_out"] if attendance else None
+    )
 
     if (time_in_value or (attendance and attendance["time_in"])) and final_time_in and final_time_out:
         if final_time_out < final_time_in:
@@ -2249,8 +2328,22 @@ def update_correction_request(request_id):
             flash(str(exc), "danger")
             return redirect(url_for("admin_corrections"))
 
-    reviewed_at = now_str() if status in {"Approved", "Rejected"} else None
+        reviewed_at = now_str() if status in {"Approved", "Rejected"} else None
     reviewed_by = session["user_id"] if status in {"Approved", "Rejected"} else None
+
+    attendance, break_row = get_attendance_context(correction["user_id"], correction["work_date"])
+    requested_time_in_dt, requested_break_start_dt, requested_break_end_dt, requested_time_out_dt = resolve_correction_datetimes(
+        correction["work_date"],
+        time_in_value=requested_time_in,
+        break_start_value=requested_break_start,
+        break_end_value=requested_break_end,
+        time_out_value=requested_time_out,
+        existing_time_in=attendance["time_in"] if attendance else None,
+        existing_break_start=break_row["break_start"] if break_row else None,
+        existing_break_end=break_row["break_end"] if break_row else None,
+        existing_time_out=attendance["time_out"] if attendance else None,
+        use_existing_values=False
+    )
 
     execute_db("""
         UPDATE correction_requests
@@ -2263,10 +2356,10 @@ def update_correction_request(request_id):
         admin_note,
         reviewed_by,
         reviewed_at,
-        combine_work_date_and_time(correction["work_date"], requested_time_in),
-        combine_work_date_and_time(correction["work_date"], requested_break_start),
-        combine_work_date_and_time(correction["work_date"], requested_break_end),
-        combine_work_date_and_time(correction["work_date"], requested_time_out),
+        requested_time_in_dt,
+        requested_break_start_dt,
+        requested_break_end_dt,
+        requested_time_out_dt,
         applied_changes if status == "Approved" else None,
         request_id
     ), commit=True)
