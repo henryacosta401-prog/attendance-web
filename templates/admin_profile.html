@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Admin Account{% endblock %}
+
+{% block content %}
+<div class="hero-card" style="margin-bottom:20px;">
+    <div class="hero">
+        <div>
+            <h1>Admin Account</h1>
+            <p class="section-subtitle">Update your admin name, password, and profile image.</p>
+        </div>
+        <div class="status status-purple">Account Settings</div>
+    </div>
+</div>
+
+<div class="card" style="max-width:820px;">
+    <form method="POST" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+        <label>Full Name</label>
+        <input class="input" type="text" name="full_name" value="{{ user.full_name }}" required>
+
+        <label style="display:block; margin-top:12px;">Username</label>
+        <input class="input" type="text" value="{{ user.username }}" disabled>
+
+        <label style="display:block; margin-top:12px;">New Password</label>
+        <input class="input" type="password" name="password" placeholder="Leave blank to keep the current password">
+
+        <label style="display:block; margin-top:12px;">Profile Image</label>
+        <input class="file-input" type="file" name="profile_image">
+
+        {% if user.profile_image and uploaded_file_exists(user.profile_image) %}
+            <div style="margin-top:12px;">
+                <img class="avatar-lg" src="{{ url_for('uploaded_file', filename=user.profile_image) }}" alt="profile">
+            </div>
+        {% else %}
+            <div style="margin-top:12px;">
+                <div class="avatar-lg" style="display:inline-flex;align-items:center;justify-content:center;font-weight:800;background:rgba(148,163,184,0.18);color:#dbeafe;">{{ get_avatar_initials(user.full_name) }}</div>
+            </div>
+        {% endif %}
+
+        <div class="top-actions" style="margin-top:16px;">
+            <button class="btn btn-success" type="submit">Save Account</button>
+            <a class="btn btn-gray" href="{{ url_for('admin_dashboard') }}">Back</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

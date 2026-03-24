@@ -69,13 +69,34 @@ WEEKDAY_OPTIONS = [
 LATE_GRACE_MINUTES = 1
 BREAK_LIMIT_MINUTES = 15
 
+DEFAULT_SECRET_KEY = "dev-secret-key"
+
+
+def is_production_environment():
+    return any([
+        os.environ.get("RENDER"),
+        os.environ.get("RENDER_EXTERNAL_URL"),
+        os.environ.get("DATABASE_URL"),
+        os.environ.get("FLASK_ENV") == "production",
+    ])
+
+
+def get_configured_secret_key():
+    secret_key = os.environ.get("SECRET_KEY", DEFAULT_SECRET_KEY).strip() or DEFAULT_SECRET_KEY
+    if secret_key == DEFAULT_SECRET_KEY and is_production_environment():
+        raise RuntimeError(
+            "SECRET_KEY must be set to a strong random value in production before the app can start."
+        )
+    return secret_key
+
+
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key")
+app.secret_key = get_configured_secret_key()
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10MB
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-app.config["SESSION_COOKIE_SECURE"] = os.environ.get("FLASK_ENV") == "production"
+app.config["SESSION_COOKIE_SECURE"] = is_production_environment()
 
 
 # =========================
@@ -1480,6 +1501,54 @@ def employee_profile():
         return redirect(url_for("employee_profile"))
 
     return render_template("employee_profile.html", user=user)
+
+
+@app.route("/admin/profile", methods=["GET", "POST"])
+@login_required(role="admin")
+def admin_profile():
+    user = get_user_by_id(session["user_id"])
+    if not user or user["role"] != "admin":
+        session.clear()
+        flash("Your session expired. Please log in again.", "warning")
+        return redirect(url_for("login"))
+
+    if request.method == "POST":
+        full_name = request.form.get("full_name", "").strip()
+        if not full_name:
+            flash("Full name is required.", "danger")
+            return redirect(url_for("admin_profile"))
+
+        password = request.form.get("password", "").strip()
+
+        profile_image = user["profile_image"]
+        file = request.files.get("profile_image")
+        if file and file.filename:
+            saved = save_uploaded_file(file, prefix=f"profile_{user['id']}")
+            if not saved:
+                flash("Invalid profile image type.", "danger")
+                return redirect(url_for("admin_profile"))
+            profile_image = saved
+
+        if password:
+            execute_db("""
+                UPDATE users
+                SET full_name = ?, password_hash = ?, profile_image = ?
+                WHERE id = ?
+            """, (full_name, generate_password_hash(password), profile_image, user["id"]), commit=True)
+            log_activity(user["id"], "UPDATE ADMIN PROFILE", "Admin updated profile and password")
+        else:
+            execute_db("""
+                UPDATE users
+                SET full_name = ?, profile_image = ?
+                WHERE id = ?
+            """, (full_name, profile_image, user["id"]), commit=True)
+            log_activity(user["id"], "UPDATE ADMIN PROFILE", "Admin updated profile")
+
+        session["full_name"] = full_name
+        flash("Admin profile updated successfully.", "success")
+        return redirect(url_for("admin_profile"))
+
+    return render_template("admin_profile.html", user=user)
 
 
 @app.route("/corrections", methods=["GET", "POST"])
