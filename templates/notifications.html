@@ -17,6 +17,7 @@
         <div class="section-title" style="margin-bottom:0;">All Notifications</div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;">
             <form method="POST" action="{{ url_for('read_all_notifications') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <button class="btn btn-dark" type="submit">Mark All Read</button>
             </form>
             {% if session.get('role') == 'admin' %}
@@ -39,6 +40,7 @@
                     <div>
                         {% if notif.is_read == 0 %}
                             <form method="POST" action="{{ url_for('read_notification', notif_id=notif.id) }}">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                 <button class="btn btn-dark" type="submit">Mark Read</button>
                             </form>
                         {% else %}

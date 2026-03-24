@@ -16,6 +16,7 @@
     <div class="card">
         <div class="section-title">Submit Request</div>
         <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <label>Request Type</label>
             <select name="request_type" class="input" required>
                 <option value="">Select type</option>

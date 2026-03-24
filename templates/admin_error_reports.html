@@ -123,6 +123,7 @@
                         </td>
                         <td style="min-width:270px;">
                             <form method="POST" action="{{ url_for('update_incident_report', report_id=report.id) }}" class="grid" style="gap:8px;">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                 <select name="status" class="input" required>
                                     <option value="Open" {% if report_status == 'Open' %}selected{% endif %}>Open</option>
                                     <option value="Reviewed" {% if report_status == 'Reviewed' %}selected{% endif %}>Reviewed</option>

@@ -17,6 +17,7 @@
         <div class="section-title">Time In</div>
         <p class="section-subtitle" style="margin-bottom:14px;">Add notes and upload proof before you start the day.</p>
         <form method="POST" action="{{ url_for('time_in') }}" enctype="multipart/form-data">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <label>Notes</label>
             <textarea class="textarea" name="notes" placeholder="Optional notes..."></textarea>
 
@@ -29,15 +30,18 @@
 
     <div class="card">
         <div class="section-title">Break and Time Out</div>
-        <p class="section-subtitle" style="margin-bottom:14px;">Use the action that matches what you’re doing right now.</p>
+        <p class="section-subtitle" style="margin-bottom:14px;">Use the action that matches what you're doing right now.</p>
         <div class="grid" style="gap:12px;">
             <form method="POST" action="{{ url_for('start_break') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <button class="btn btn-warning" type="submit" style="width:100%;">Start Break</button>
             </form>
             <form method="POST" action="{{ url_for('end_break') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <button class="btn btn-primary" type="submit" style="width:100%;">End Break</button>
             </form>
             <form method="POST" action="{{ url_for('time_out') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <button class="btn btn-danger" type="submit" style="width:100%;">Time Out</button>
             </form>
             <a class="btn btn-gray" href="{{ url_for('employee_corrections') }}">Request Attendance Correction</a>

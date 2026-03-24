@@ -75,6 +75,7 @@
                         <td>{{ item.admin_note if item.admin_note else '-' }}</td>
                         <td style="min-width:320px;">
                             <form method="POST" action="{{ url_for('update_correction_request', request_id=item.id) }}" class="grid" style="gap:8px;">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                 <div class="grid grid-2" style="gap:8px;">
                                     <div>
                                         <label>Time In</label>

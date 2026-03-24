@@ -11,6 +11,7 @@
 
 <div class="card" style="max-width:800px;">
     <form method="POST" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <label>Full Name</label>
         <input class="input" type="text" name="full_name" value="{{ user.full_name }}" required>
 

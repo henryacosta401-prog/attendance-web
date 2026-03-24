@@ -112,7 +112,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 return;
             }
             tbody.innerHTML = rows.map(emp => {
-                const proofHtml = emp.proof_file && emp.proof_file_available ? `<a href="/uploads/${emp.proof_file}" target="_blank" class="admin-subtext">Open proof</a>` : (emp.proof_file ? `<span class="admin-subtext">Proof file missing</span>` : `<span class="admin-subtext">No proof</span>`);
+                const proofHtml = emp.proof_file && emp.proof_file_available ? `<a href="/uploads/${emp.proof_file}" target="_blank" class="admin-subtext">Open proof</a>` : (emp.proof_file ? `<span class="admin-subtext">Proof file missing</span>` : `<span class="admin-subtext">No proof uploaded</span>`);
                 const flags = [];
                 if (emp.absent_flag) flags.push(`<span class="admin-pill admin-pill-red">Absent</span>`);
                 if (emp.late_flag) flags.push(`<span class="admin-pill admin-pill-red">Late ${emp.late_minutes}m</span>`);
@@ -150,7 +150,7 @@ document.addEventListener("DOMContentLoaded", function () {
     <div class="hero">
         <div>
             <h1>Admin Control Center</h1>
-            <p class="section-subtitle">Track schedules, spot absences and missing time outs, and focus on exceptions before they become payroll problems.</p>
+            <p class="section-subtitle">Track schedules, spot absences and missing time-outs, and focus on exceptions before they become payroll problems.</p>
         </div>
         <div class="status status-purple">Operational View</div>
     </div>
@@ -159,7 +159,7 @@ document.addEventListener("DOMContentLoaded", function () {
 <div class="admin-shell">
     <div class="admin-stats">
         <div class="admin-stat-card"><div class="admin-stat-label">Active Employees</div><div class="admin-stat-value">{{ stats.total_employees }}</div><div class="admin-stat-note">Current active employee accounts</div></div>
-        <div class="admin-stat-card"><div class="admin-stat-label">Scheduled Today</div><div class="admin-stat-value">{{ stats.scheduled_today }}</div><div class="admin-stat-note">Based on each employee workdays</div></div>
+        <div class="admin-stat-card"><div class="admin-stat-label">Scheduled Today</div><div class="admin-stat-value">{{ stats.scheduled_today }}</div><div class="admin-stat-note">Based on each employee's workdays</div></div>
         <div class="admin-stat-card"><div class="admin-stat-label">Absent Today</div><div class="admin-stat-value">{{ stats.absent_today }}</div><div class="admin-stat-note">Scheduled but not timed in</div></div>
         <div class="admin-stat-card"><div class="admin-stat-label">Late Today</div><div class="admin-stat-value">{{ stats.late_today }}</div><div class="admin-stat-note">Past shift start plus grace</div></div>
         <div class="admin-stat-card"><div class="admin-stat-label">Over Break</div><div class="admin-stat-value">{{ stats.over_break_today }}</div><div class="admin-stat-note">Exceeded break limit</div></div>
@@ -180,7 +180,7 @@ document.addEventListener("DOMContentLoaded", function () {
     <div class="admin-exception-grid">
         <div class="admin-exception-card"><div class="admin-exception-top"><div><div class="admin-exception-label">Absent Today</div><div class="admin-exception-count">{{ exception_groups.absent|length }}</div></div><span class="admin-pill admin-pill-red">Critical</span></div><div class="admin-stat-note">Scheduled staff who passed shift start without time in.</div><div class="admin-exception-actions"><a class="btn btn-primary" href="{{ url_for('export_admin_exceptions_excel', type='absent', department=department_filter) }}">Export</a></div></div>
         <div class="admin-exception-card"><div class="admin-exception-top"><div><div class="admin-exception-label">Late Today</div><div class="admin-exception-count">{{ exception_groups.late|length }}</div></div><span class="admin-pill admin-pill-yellow">Watch</span></div><div class="admin-stat-note">Employees who timed in after the scheduled start.</div><div class="admin-exception-actions"><a class="btn btn-primary" href="{{ url_for('export_admin_exceptions_excel', type='late', department=department_filter) }}">Export</a></div></div>
-        <div class="admin-exception-card"><div class="admin-exception-top"><div><div class="admin-exception-label">Over Break</div><div class="admin-exception-count">{{ exception_groups.over_break|length }}</div></div><span class="admin-pill admin-pill-yellow">Review</span></div><div class="admin-stat-note">Break totals already over each employee limit.</div><div class="admin-exception-actions"><a class="btn btn-primary" href="{{ url_for('export_admin_exceptions_excel', type='over_break', department=department_filter) }}">Export</a></div></div>
+        <div class="admin-exception-card"><div class="admin-exception-top"><div><div class="admin-exception-label">Over Break</div><div class="admin-exception-count">{{ exception_groups.over_break|length }}</div></div><span class="admin-pill admin-pill-yellow">Review</span></div><div class="admin-stat-note">Break totals already over each employee's limit.</div><div class="admin-exception-actions"><a class="btn btn-primary" href="{{ url_for('export_admin_exceptions_excel', type='over_break', department=department_filter) }}">Export</a></div></div>
         <div class="admin-exception-card"><div class="admin-exception-top"><div><div class="admin-exception-label">Missing Time Out</div><div class="admin-exception-count">{{ exception_groups.missing_timeout|length }}</div></div><span class="admin-pill admin-pill-red">Urgent</span></div><div class="admin-stat-note">Shift end passed but no time out was recorded yet.</div><div class="admin-exception-actions"><a class="btn btn-primary" href="{{ url_for('export_admin_exceptions_excel', type='missing_timeout', department=department_filter) }}">Export</a></div></div>
     </div>
 
@@ -212,7 +212,7 @@ document.addEventListener("DOMContentLoaded", function () {
                                 <td>{% set live_class = 'admin-pill-gray' %}{% if emp.status_display == 'Timed In' %}{% set live_class = 'admin-pill-green' %}{% elif emp.status_display == 'On Break' %}{% set live_class = 'admin-pill-yellow' %}{% elif emp.status_display == 'Timed Out' %}{% set live_class = 'admin-pill-blue' %}{% elif emp.status_display in ['Absent', 'Inactive', 'Missing Time Out'] %}{% set live_class = 'admin-pill-red' %}{% endif %}<span class="admin-pill {{ live_class }}">{{ emp.status_display }}</span></td>
                                 <td><div>{{ format_datetime_12h(emp.time_in) if emp.time_in else '-' }}</div><div class="admin-subtext">{% if emp.time_out %}Out {{ format_datetime_12h(emp.time_out) }}{% else %}Expected out {{ emp.shift_end }}{% endif %}</div></td>
                                 <td><div>{{ emp.break_minutes }}m used</div><div class="admin-subtext">Limit {{ emp.break_limit_minutes }}m</div></td>
-                                <td><div class="admin-flags">{% if emp.absent_flag == 1 %}<span class="admin-pill admin-pill-red">Absent</span>{% endif %}{% if emp.late_flag == 1 %}<span class="admin-pill admin-pill-red">Late {{ emp.late_minutes }}m</span>{% endif %}{% if emp.over_break_flag == 1 %}<span class="admin-pill admin-pill-yellow">Over break {{ emp.over_break_minutes }}m</span>{% endif %}{% if emp.missing_timeout_flag == 1 %}<span class="admin-pill admin-pill-red">Missing time out</span>{% endif %}{% if emp.scheduled_today == 0 %}<span class="admin-pill admin-pill-gray">Off today</span>{% endif %}</div><div style="margin-top:8px;">{% if emp.proof_file and emp.proof_file_available %}<a class="admin-subtext" href="{{ url_for('uploaded_file', filename=emp.proof_file) }}" target="_blank">Open proof</a>{% elif emp.proof_file %}<span class="admin-subtext">Proof file missing</span>{% else %}<span class="admin-subtext">No proof</span>{% endif %}</div></td>
+                                <td><div class="admin-flags">{% if emp.absent_flag == 1 %}<span class="admin-pill admin-pill-red">Absent</span>{% endif %}{% if emp.late_flag == 1 %}<span class="admin-pill admin-pill-red">Late {{ emp.late_minutes }}m</span>{% endif %}{% if emp.over_break_flag == 1 %}<span class="admin-pill admin-pill-yellow">Over break {{ emp.over_break_minutes }}m</span>{% endif %}{% if emp.missing_timeout_flag == 1 %}<span class="admin-pill admin-pill-red">Missing time out</span>{% endif %}{% if emp.scheduled_today == 0 %}<span class="admin-pill admin-pill-gray">Off today</span>{% endif %}</div><div style="margin-top:8px;">{% if emp.proof_file and emp.proof_file_available %}<a class="admin-subtext" href="{{ url_for('uploaded_file', filename=emp.proof_file) }}" target="_blank">Open proof</a>{% elif emp.proof_file %}<span class="admin-subtext">Proof file missing</span>{% else %}<span class="admin-subtext">No proof uploaded</span>{% endif %}</div></td>
                             </tr>
                             {% endfor %}
                         {% else %}
@@ -249,7 +249,7 @@ document.addEventListener("DOMContentLoaded", function () {
                     <h2>Admin Alerts</h2>
                     <a class="btn btn-gray" href="{{ url_for('notifications_page') }}">View All</a>
                 </div>
-                <p class="admin-panel-subtitle">In-app notifications for absences and missing time outs.</p>
+                <p class="admin-panel-subtitle">In-app notifications for absences and missing time-outs.</p>
                 {% if admin_notifications %}
                     <div class="admin-list">
                         {% for notif in admin_notifications %}

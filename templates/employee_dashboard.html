@@ -395,6 +395,7 @@
                         <div>
                             {% if notif.is_read == 0 %}
                                 <form method="POST" action="{{ url_for('read_notification', notif_id=notif.id) }}">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                     <button class="btn btn-dark" type="submit">Mark Read</button>
                                 </form>
                             {% else %}

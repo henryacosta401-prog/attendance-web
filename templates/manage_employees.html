@@ -13,6 +13,7 @@
     <div class="card">
         <div class="section-title">Add Employee</div>
         <form method="POST" enctype="multipart/form-data">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <label>Full Name</label>
             <input class="input" type="text" name="full_name" placeholder="e.g. Charlie Reyes" required>
 
@@ -129,6 +130,7 @@
                                 <div class="top-actions">
                                     <a class="btn btn-primary" href="{{ url_for('edit_employee', user_id=emp.id) }}">Edit</a>
                                     <form method="POST" action="{{ url_for('delete_employee', user_id=emp.id) }}" onsubmit="return confirm('Delete this employee?')">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                         <button class="btn btn-danger" type="submit">Delete</button>
                                     </form>
                                 </div>

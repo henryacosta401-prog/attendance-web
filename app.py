@@ -1,4 +1,5 @@
 import os
+import secrets
 import sqlite3
 from io import BytesIO
 from datetime import datetime, timedelta
@@ -7,7 +8,7 @@ from functools import wraps
 
 from flask import (
     Flask, render_template, request, redirect, url_for,
-    session, flash, g, send_from_directory, jsonify, Response
+    session, flash, g, send_from_directory, jsonify, Response, abort
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -72,6 +73,9 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key")
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10MB
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = os.environ.get("FLASK_ENV") == "production"
 
 
 # =========================
@@ -91,6 +95,33 @@ def today_str():
 
 def now_timestamp():
     return int(now_dt().timestamp())
+
+
+def ensure_csrf_token():
+    token = session.get("_csrf_token")
+    if not token:
+        token = secrets.token_hex(32)
+        session["_csrf_token"] = token
+    return token
+
+
+@app.context_processor
+def inject_csrf_token():
+    return {"csrf_token": ensure_csrf_token()}
+
+
+@app.before_request
+def verify_csrf_token():
+    if request.method != "POST":
+        return None
+
+    session_token = session.get("_csrf_token")
+    form_token = request.form.get("csrf_token", "")
+    if not session_token or not form_token or not secrets.compare_digest(session_token, form_token):
+        flash("Your session expired or the form is no longer valid. Please try again.", "danger")
+        return redirect(request.referrer or url_for("login"))
+
+    return None
 
 
 # =========================
@@ -644,6 +675,10 @@ def get_user_by_id(user_id):
     return fetchone("SELECT * FROM users WHERE id = ?", (user_id,))
 
 
+def get_attendance_by_id(attendance_id):
+    return fetchone("SELECT * FROM attendance WHERE id = ?", (attendance_id,))
+
+
 def get_today_attendance(user_id):
     return fetchone("""
         SELECT * FROM attendance
@@ -652,17 +687,39 @@ def get_today_attendance(user_id):
     """, (user_id, today_str()))
 
 
-def get_open_break(user_id):
+def get_active_attendance(user_id):
+    return fetchone("""
+        SELECT * FROM attendance
+        WHERE user_id = ? AND time_in IS NOT NULL AND time_out IS NULL
+        ORDER BY work_date DESC, id DESC LIMIT 1
+    """, (user_id,))
+
+
+def get_current_attendance(user_id):
+    active_attendance = get_active_attendance(user_id)
+    if active_attendance:
+        return active_attendance
+    return get_today_attendance(user_id)
+
+
+def get_open_break_for_attendance(attendance_id):
     return fetchone("""
         SELECT * FROM breaks
-        WHERE user_id = ? AND work_date = ? AND break_end IS NULL
+        WHERE attendance_id = ? AND break_end IS NULL
         ORDER BY id DESC LIMIT 1
-    """, (user_id, today_str()))
+    """, (attendance_id,))
+
+
+def get_open_break(user_id, attendance_row=None):
+    attendance = attendance_row or get_current_attendance(user_id)
+    if not attendance:
+        return None
+    return get_open_break_for_attendance(attendance["id"])
 
 
 def get_user_live_status(user_id):
-    attendance = get_today_attendance(user_id)
-    open_break = get_open_break(user_id)
+    attendance = get_current_attendance(user_id)
+    open_break = get_open_break(user_id, attendance)
 
     if not attendance:
         return "Offline"
@@ -746,17 +803,29 @@ def is_scheduled_today(user_row):
     return get_today_schedule_code() in get_schedule_day_codes(user_row["schedule_days"] if user_row else DEFAULT_SCHEDULE_DAYS)
 
 
+def get_shift_bounds_for_work_date(user_row, work_date):
+    shift_start = parse_shift_start(user_row["shift_start"] if user_row else DEFAULT_SHIFT_START)
+    shift_end = parse_shift_end(user_row["shift_end"] if user_row else DEFAULT_SHIFT_END)
+    shift_start_dt = datetime.strptime(
+        f"{work_date} {shift_start}:00",
+        "%Y-%m-%d %H:%M:%S"
+    ).replace(tzinfo=APP_TIMEZONE)
+    shift_end_dt = datetime.strptime(
+        f"{work_date} {shift_end}:00",
+        "%Y-%m-%d %H:%M:%S"
+    ).replace(tzinfo=APP_TIMEZONE)
+    if shift_end_dt <= shift_start_dt:
+        shift_end_dt += timedelta(days=1)
+    return shift_start_dt, shift_end_dt
+
+
 def is_absent_today(user_row, attendance_row):
     if not user_row or user_row["is_active"] != 1 or attendance_row:
         return False
     if not is_scheduled_today(user_row):
         return False
 
-    shift_start = parse_shift_start(user_row["shift_start"] if user_row else DEFAULT_SHIFT_START)
-    shift_dt = datetime.strptime(
-        f"{today_str()} {shift_start}:00",
-        "%Y-%m-%d %H:%M:%S"
-    ).replace(tzinfo=APP_TIMEZONE)
+    shift_dt, _ = get_shift_bounds_for_work_date(user_row, today_str())
     return now_dt() >= (shift_dt + timedelta(minutes=LATE_GRACE_MINUTES))
 
 
@@ -765,14 +834,8 @@ def is_missing_timeout_today(user_row, attendance_row):
         return False
     if not attendance_row["time_in"] or attendance_row["time_out"]:
         return False
-    if not is_scheduled_today(user_row):
-        return False
 
-    shift_end = parse_shift_end(user_row["shift_end"] if user_row else DEFAULT_SHIFT_END)
-    shift_end_dt = datetime.strptime(
-        f"{today_str()} {shift_end}:00",
-        "%Y-%m-%d %H:%M:%S"
-    ).replace(tzinfo=APP_TIMEZONE)
+    _, shift_end_dt = get_shift_bounds_for_work_date(user_row, attendance_row["work_date"])
     return now_dt() >= (shift_end_dt + timedelta(minutes=LATE_GRACE_MINUTES))
 
 
@@ -999,6 +1062,23 @@ def uploaded_file_exists(filename):
     if not filename:
         return False
     return os.path.exists(os.path.join(app.config["UPLOAD_FOLDER"], filename))
+
+
+def can_access_uploaded_file(user_row, filename):
+    if not user_row or not filename:
+        return False
+    if user_row["role"] == "admin":
+        return True
+    if user_row["profile_image"] == filename:
+        return True
+
+    proof_row = fetchone("""
+        SELECT id
+        FROM attendance
+        WHERE user_id = ? AND proof_file = ?
+        ORDER BY id DESC LIMIT 1
+    """, (user_row["id"], filename))
+    return bool(proof_row)
 
 
 def get_avatar_initials(name):
@@ -1244,8 +1324,8 @@ def dashboard():
         flash("Your session expired. Please log in again.", "warning")
         return redirect(url_for("login"))
 
-    today_attendance = get_today_attendance(user["id"])
-    open_break = get_open_break(user["id"])
+    today_attendance = get_current_attendance(user["id"])
+    open_break = get_open_break(user["id"], today_attendance)
 
     notifications = fetchall("""
         SELECT * FROM notifications
@@ -1489,7 +1569,7 @@ def time_in():
         flash("Your session expired. Please log in again.", "warning")
         return redirect(url_for("login"))
 
-    existing = get_today_attendance(user_id)
+    existing = get_current_attendance(user_id)
     if existing and existing["time_in"] and not existing["time_out"]:
         flash("You are already timed in.", "warning")
         return redirect(url_for("dashboard"))
@@ -1523,7 +1603,7 @@ def time_in():
     ), commit=True)
 
     shift_start = parse_shift_start(user["shift_start"] if user else DEFAULT_SHIFT_START)
-    latest_attendance = get_today_attendance(user_id)
+    latest_attendance = get_current_attendance(user_id)
 
     if latest_attendance and latest_attendance["late_flag"]:
         create_notification(
@@ -1543,13 +1623,13 @@ def time_in():
 @login_required(role="employee")
 def start_break():
     user_id = session["user_id"]
-    attendance = get_today_attendance(user_id)
+    attendance = get_current_attendance(user_id)
 
     if not attendance or not attendance["time_in"] or attendance["time_out"]:
         flash("You must be timed in first.", "danger")
         return redirect(url_for("dashboard"))
 
-    open_break = get_open_break(user_id)
+    open_break = get_open_break(user_id, attendance)
     if open_break:
         flash("You are already on break.", "warning")
         return redirect(url_for("dashboard"))
@@ -1557,7 +1637,7 @@ def start_break():
     execute_db("""
         INSERT INTO breaks (user_id, attendance_id, work_date, break_start, created_at)
         VALUES (?, ?, ?, ?, ?)
-    """, (user_id, attendance["id"], today_str(), now_str(), now_str()), commit=True)
+    """, (user_id, attendance["id"], attendance["work_date"], now_str(), now_str()), commit=True)
 
     execute_db("""
         UPDATE attendance
@@ -1575,8 +1655,8 @@ def start_break():
 @login_required(role="employee")
 def end_break():
     user_id = session["user_id"]
-    open_break = get_open_break(user_id)
-    attendance = get_today_attendance(user_id)
+    attendance = get_current_attendance(user_id)
+    open_break = get_open_break(user_id, attendance)
 
     if not open_break:
         flash("No active break found.", "warning")
@@ -1615,7 +1695,7 @@ def end_break():
 @login_required(role="employee")
 def time_out():
     user_id = session["user_id"]
-    attendance = get_today_attendance(user_id)
+    attendance = get_current_attendance(user_id)
 
     if not attendance or not attendance["time_in"]:
         flash("You are not timed in.", "danger")
@@ -1625,7 +1705,7 @@ def time_out():
         flash("You are already timed out.", "warning")
         return redirect(url_for("dashboard"))
 
-    open_break = get_open_break(user_id)
+    open_break = get_open_break(user_id, attendance)
     if open_break:
         execute_db("""
             UPDATE breaks
@@ -1640,7 +1720,7 @@ def time_out():
     """, (now_str(), "Timed Out", now_str(), attendance["id"]), commit=True)
 
     user_row = get_user_by_id(user_id)
-    updated_attendance = get_today_attendance(user_id)
+    updated_attendance = get_attendance_by_id(attendance["id"])
     ok, msg = append_attendance_to_google_sheet(user_row, updated_attendance)
 
     create_notification(user_id, "Timed Out", f"You timed out at {now_str()} ET.")
@@ -1679,6 +1759,9 @@ def read_all_notifications():
 @app.route("/uploads/<path:filename>")
 @login_required()
 def uploaded_file(filename):
+    user = get_user_by_id(session["user_id"])
+    if not can_access_uploaded_file(user, filename):
+        abort(403)
     return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
 
 
@@ -1695,7 +1778,7 @@ def get_admin_employee_rows(status_filter="", search="", department_filter="", o
     employees = []
     for user in users:
         live_status = get_user_live_status(user["id"])
-        attendance = get_today_attendance(user["id"])
+        attendance = get_current_attendance(user["id"])
         scheduled_today = is_scheduled_today(user)
         absent_today = is_absent_today(user, attendance)
         missing_timeout_today = is_missing_timeout_today(user, attendance)

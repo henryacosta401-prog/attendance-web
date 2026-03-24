@@ -11,6 +11,7 @@
 
 <div class="card" style="max-width:800px;">
     <form method="POST" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <div class="grid grid-2">
             <div>
                 <label>Full Name</label>

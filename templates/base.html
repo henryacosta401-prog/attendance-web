@@ -798,6 +798,7 @@ document.addEventListener("DOMContentLoaded", function () {
                     <div class="small muted">{{ unread_count }} unread</div>
                 </div>
                 <form method="POST" action="{{ url_for('read_all_notifications') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <button class="btn btn-dark" type="submit">Mark All Read</button>
                 </form>
             </div>
