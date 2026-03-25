@@ -829,6 +829,20 @@ def get_today_schedule_code():
     return WEEKDAY_OPTIONS[now_dt().weekday()][0]
 
 
+def get_schedule_code_for_date(date_str):
+    try:
+        parsed = datetime.strptime(date_str, "%Y-%m-%d")
+        return WEEKDAY_OPTIONS[parsed.weekday()][0]
+    except Exception:
+        return ""
+
+
+def is_scheduled_on_date(user_row, date_str):
+    return get_schedule_code_for_date(date_str) in get_schedule_day_codes(
+        user_row["schedule_days"] if user_row else DEFAULT_SCHEDULE_DAYS
+    )
+
+
 def is_scheduled_today(user_row):
     return get_today_schedule_code() in get_schedule_day_codes(user_row["schedule_days"] if user_row else DEFAULT_SCHEDULE_DAYS)
 
@@ -2200,6 +2214,7 @@ def build_admin_history_records(search="", department="", type_filter="", late_o
         date_to=date_to
     )]
     request_map = {(row["user_id"], row["work_date"]): row for row in special_requests}
+    attendance_key_map = {(row["user_id"], row["work_date"]): row for row in attendance_rows}
 
     enriched = []
     seen_keys = set()
@@ -2249,6 +2264,81 @@ def build_admin_history_records(search="", department="", type_filter="", late_o
         if type_filter and item["record_type"] != type_filter:
             continue
         enriched.append(item)
+
+    candidate_dates = []
+    if date_from or date_to:
+        try:
+            start_date = datetime.strptime(date_from or date_to, "%Y-%m-%d").date()
+            end_date = datetime.strptime(date_to or date_from, "%Y-%m-%d").date()
+            if start_date <= end_date:
+                total_days = (end_date - start_date).days
+                if total_days <= 60:
+                    candidate_dates = [
+                        (start_date + timedelta(days=offset)).strftime("%Y-%m-%d")
+                        for offset in range(total_days + 1)
+                    ]
+        except Exception:
+            candidate_dates = []
+    else:
+        candidate_dates = [today_str()]
+
+    if candidate_dates and (not type_filter or type_filter == "Absent"):
+        employee_sql = """
+            SELECT *
+            FROM users
+            WHERE role = 'employee'
+        """
+        employee_params = []
+
+        if search:
+            employee_sql += " AND (LOWER(full_name) LIKE ? OR LOWER(username) LIKE ?)"
+            s = f"%{search.lower()}%"
+            employee_params.extend([s, s])
+
+        if department:
+            employee_sql += " AND COALESCE(department, '') = ?"
+            employee_params.append(department)
+
+        employee_sql += " ORDER BY full_name ASC"
+        employees = fetchall(employee_sql, employee_params)
+
+        for employee in employees:
+            if employee["is_active"] != 1:
+                continue
+            for work_date in candidate_dates:
+                key = (employee["id"], work_date)
+                special_request = request_map.get(key)
+                if key in attendance_key_map:
+                    continue
+                if special_request and special_request["request_type"] == "Leave Request":
+                    continue
+                if not is_scheduled_on_date(employee, work_date):
+                    continue
+
+                synthetic_row = {
+                    "id": None,
+                    "user_id": employee["id"],
+                    "full_name": employee["full_name"],
+                    "username": employee["username"],
+                    "break_limit_minutes": employee["break_limit_minutes"],
+                    "work_date": work_date,
+                    "time_in": None,
+                    "time_out": None,
+                    "status": "Absent",
+                    "proof_file": None,
+                    "late_flag": 0,
+                    "late_minutes": 0,
+                    "request_type": "Absent",
+                    "admin_note": "",
+                    "message": "",
+                    "source_type": "request",
+                }
+                item = enrich_history_record(synthetic_row, parse_break_limit_minutes(employee["break_limit_minutes"]))
+                if type_filter and item["record_type"] != type_filter:
+                    continue
+                if over_break_only == "1":
+                    continue
+                enriched.append(item)
 
     enriched.sort(key=lambda item: (item["row"]["work_date"] or "", item["row"].get("id") or 0), reverse=True)
     return enriched[:limit]
