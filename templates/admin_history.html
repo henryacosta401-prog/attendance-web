@@ -5,7 +5,7 @@
 <div class="hero">
     <div>
         <h1>Attendance History</h1>
-        <p class="muted" style="margin-top:8px;">Review employee logs, late records, and proof uploads.</p>
+        <p class="muted" style="margin-top:8px;">Review employee logs, approved undertime or leave records, late records, and proof uploads.</p>
     </div>
 </div>
 
@@ -34,6 +34,15 @@
                 <input class="input" type="date" name="date_to" value="{{ date_to }}">
             </div>
             <div>
+                <label>Type</label>
+                <select class="input" name="type_filter">
+                    <option value="">All</option>
+                    <option value="Attendance" {% if type_filter == 'Attendance' %}selected{% endif %}>Attendance</option>
+                    <option value="Undertime" {% if type_filter == 'Undertime' %}selected{% endif %}>Undertime</option>
+                    <option value="Leave Request" {% if type_filter == 'Leave Request' %}selected{% endif %}>Leave Request</option>
+                </select>
+            </div>
+            <div>
                 <label>Late Only</label>
                 <select class="input" name="late_only">
                     <option value="">All</option>
@@ -58,7 +67,7 @@
 
         <div class="top-actions" style="margin-top:16px;">
             <button class="btn btn-primary" type="submit">Filter</button>
-            <a class="btn btn-purple" href="{{ url_for('export_admin_history_excel', search=search, department=department, late_only=late_only, absent_only=absent_only, over_break_only=over_break_only, date_from=date_from, date_to=date_to) }}">Export Excel</a>
+            <a class="btn btn-purple" href="{{ url_for('export_admin_history_excel', search=search, department=department, type_filter=type_filter, late_only=late_only, absent_only=absent_only, over_break_only=over_break_only, date_from=date_from, date_to=date_to) }}">Export Excel</a>
             <a class="btn btn-gray" href="{{ url_for('admin_history') }}">Reset</a>
         </div>
     </form>
@@ -72,6 +81,7 @@
                     <tr>
                         <th>Employee</th>
                         <th>Date</th>
+                        <th>Type</th>
                         <th>Time In</th>
                         <th>Time Out</th>
                         <th>Status</th>
@@ -90,14 +100,15 @@
                             <span class="small muted">@{{ item.row.username }}</span>
                         </td>
                         <td>{{ item.row.work_date }}</td>
-                        <td>{{ item.row.time_in or '—' }}</td>
-                        <td>{{ item.row.time_out or '—' }}</td>
+                        <td>{{ item.record_type }}</td>
+                        <td>{{ item.row.time_in or '-' }}</td>
+                        <td>{{ item.row.time_out or '-' }}</td>
                         <td>{{ item.row.status }}</td>
                         <td>
                             {% if item.row.late_flag == 1 %}
                                 <span class="status status-red">{{ item.row.late_minutes }} min</span>
                             {% else %}
-                                —
+                                -
                             {% endif %}
                         </td>
                         <td>{{ minutes_to_hm(item.break_minutes) }}</td>
@@ -119,7 +130,7 @@
                                     <a href="{{ url_for('uploaded_file', filename=item.row.proof_file) }}" target="_blank">View</a>
                                 {% endif %}
                             {% else %}
-                                —
+                                -
                             {% endif %}
                         </td>
                     </tr>

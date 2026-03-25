@@ -68,6 +68,15 @@ WEEKDAY_OPTIONS = [
 ]
 LATE_GRACE_MINUTES = 1
 BREAK_LIMIT_MINUTES = 15
+ATTENDANCE_REQUEST_TYPES = {
+    "Missed Time In",
+    "Missed Time Out",
+    "Wrong Break",
+    "Wrong Proof",
+    "Undertime",
+    "Leave Request",
+    "Other",
+}
 
 DEFAULT_SECRET_KEY = "dev-secret-key"
 
@@ -981,6 +990,14 @@ def build_correction_change_summary(before_values, after_values):
     return "; ".join(parts) if parts else "No attendance times changed."
 
 
+def describe_request_review_result(request_type, work_date, requested_time_out=""):
+    if request_type == "Leave Request":
+        return f"Leave request approved for {work_date}."
+    if request_type == "Undertime":
+        return f"Undertime request approved for {work_date}" + (f" at {requested_time_out}." if requested_time_out else ".")
+    return ""
+
+
 def calculate_late_info(time_in_str, shift_start):
     if not time_in_str:
         return 0, 0
@@ -1436,24 +1453,8 @@ def notifications_page():
 @login_required(role="employee")
 def employee_history():
     user = get_user_by_id(session["user_id"])
-    break_limit_minutes = get_employee_break_limit(user)
-    records = fetchall("""
-        SELECT * FROM attendance
-        WHERE user_id = ?
-        ORDER BY work_date DESC, id DESC
-        LIMIT 60
-    """, (session["user_id"],))
-
-    enriched = []
-    for row in records:
-        enriched.append({
-            "row": row,
-            "break_minutes": total_break_minutes(row["id"]),
-            "work_minutes": total_work_minutes(row),
-            "over_break_minutes": get_overbreak_minutes(total_break_minutes(row["id"]), break_limit_minutes)
-        })
-
-    return render_template("employee_history.html", records=enriched, minutes_to_hm=minutes_to_hm)
+    records = build_employee_history_records(user, limit=60)
+    return render_template("employee_history.html", records=records, minutes_to_hm=minutes_to_hm)
 
 
 @app.route("/profile", methods=["GET", "POST"])
@@ -1569,7 +1570,7 @@ def employee_corrections():
         requested_break_end = request.form.get("requested_break_end", "")
         requested_time_out = request.form.get("requested_time_out", "")
 
-        if request_type not in {"Missed Time In", "Missed Time Out", "Wrong Break", "Wrong Proof", "Other"}:
+        if request_type not in ATTENDANCE_REQUEST_TYPES:
             flash("Please choose a valid correction type.", "danger")
             return redirect(url_for("employee_corrections"))
 
@@ -1585,6 +1586,16 @@ def employee_corrections():
         except ValueError as exc:
             flash(str(exc), "danger")
             return redirect(url_for("employee_corrections"))
+
+        if request_type == "Undertime" and not requested_time_out:
+            flash("Requested time out is required for undertime requests.", "danger")
+            return redirect(url_for("employee_corrections"))
+
+        if request_type == "Leave Request":
+            requested_time_in = ""
+            requested_break_start = ""
+            requested_break_end = ""
+            requested_time_out = ""
 
         attendance, break_row = get_attendance_context(user["id"], work_date)
         requested_time_in_dt, requested_break_start_dt, requested_break_end_dt, requested_time_out_dt = resolve_correction_datetimes(
@@ -2044,6 +2055,205 @@ def get_correction_requests(user_id=None, status="", date_from="", date_to=""):
     return enriched_rows
 
 
+def get_approved_special_requests(user_id=None, search="", department="", date_from="", date_to=""):
+    sql = """
+        SELECT c.*, u.full_name, u.username, u.break_limit_minutes
+        FROM correction_requests c
+        JOIN users u ON u.id = c.user_id
+        WHERE c.status = 'Approved' AND c.request_type IN ('Undertime', 'Leave Request')
+    """
+    params = []
+
+    if user_id:
+        sql += " AND c.user_id = ?"
+        params.append(user_id)
+
+    if search:
+        sql += " AND (LOWER(u.full_name) LIKE ? OR LOWER(u.username) LIKE ?)"
+        s = f"%{search.lower()}%"
+        params.extend([s, s])
+
+    if department:
+        sql += " AND COALESCE(u.department, '') = ?"
+        params.append(department)
+
+    if date_from:
+        sql += " AND c.work_date >= ?"
+        params.append(date_from)
+
+    if date_to:
+        sql += " AND c.work_date <= ?"
+        params.append(date_to)
+
+    sql += " ORDER BY c.work_date DESC, c.id DESC"
+    return fetchall(sql, params)
+
+
+def enrich_history_record(row, break_limit_minutes, employee_row=None):
+    record_type = row.get("request_type") or "Attendance"
+    is_attendance = row.get("source_type", "attendance") == "attendance"
+    break_minutes = total_break_minutes(row["id"]) if is_attendance and row.get("id") else 0
+    work_minutes = total_work_minutes(row) if is_attendance else 0
+    over_break_minutes = get_overbreak_minutes(break_minutes, break_limit_minutes)
+
+    return {
+        "row": row,
+        "break_minutes": break_minutes,
+        "work_minutes": work_minutes,
+        "over_break_minutes": over_break_minutes,
+        "absent_flag": 1 if employee_row and is_attendance and is_absent_today(employee_row, row) else 0,
+        "record_type": record_type,
+        "request_note": row.get("admin_note") or row.get("message") or "",
+    }
+
+
+def build_employee_history_records(user_row, limit=60):
+    attendance_rows = [
+        dict(row) for row in fetchall("""
+            SELECT * FROM attendance
+            WHERE user_id = ?
+            ORDER BY work_date DESC, id DESC
+            LIMIT ?
+        """, (user_row["id"], limit))
+    ]
+    special_requests = [dict(row) for row in get_approved_special_requests(user_id=user_row["id"])]
+    request_map = {(
+        row["user_id"],
+        row["work_date"]
+    ): row for row in special_requests}
+
+    combined = []
+    seen_keys = set()
+
+    for row in attendance_rows:
+        key = (row["user_id"], row["work_date"])
+        special_request = request_map.get(key)
+        row["source_type"] = "attendance"
+        row["request_type"] = special_request["request_type"] if special_request else ""
+        row["admin_note"] = special_request["admin_note"] if special_request else ""
+        row["message"] = special_request["message"] if special_request else ""
+        combined.append(enrich_history_record(row, get_employee_break_limit(user_row), employee_row=user_row))
+        seen_keys.add(key)
+
+    for row in special_requests:
+        key = (row["user_id"], row["work_date"])
+        if key in seen_keys or row["request_type"] != "Leave Request":
+            continue
+        synthetic_row = {
+            "id": None,
+            "user_id": row["user_id"],
+            "work_date": row["work_date"],
+            "time_in": None,
+            "time_out": None,
+            "status": "Approved Leave",
+            "proof_file": None,
+            "late_flag": 0,
+            "late_minutes": 0,
+            "request_type": row["request_type"],
+            "admin_note": row["admin_note"],
+            "message": row["message"],
+            "source_type": "request",
+        }
+        combined.append(enrich_history_record(synthetic_row, get_employee_break_limit(user_row), employee_row=user_row))
+
+    combined.sort(key=lambda item: (item["row"]["work_date"] or "", item["row"].get("id") or 0), reverse=True)
+    return combined[:limit]
+
+
+def build_admin_history_records(search="", department="", type_filter="", late_only="", absent_only="", over_break_only="", date_from="", date_to="", limit=200):
+    sql = """
+        SELECT a.*, u.full_name, u.username, u.break_limit_minutes
+        FROM attendance a
+        JOIN users u ON u.id = a.user_id
+        WHERE 1=1
+    """
+    params = []
+
+    if search:
+        sql += " AND (LOWER(u.full_name) LIKE ? OR LOWER(u.username) LIKE ?)"
+        s = f"%{search.lower()}%"
+        params.extend([s, s])
+
+    if department:
+        sql += " AND COALESCE(u.department, '') = ?"
+        params.append(department)
+
+    if late_only == "1":
+        sql += " AND a.late_flag = 1"
+
+    if date_from:
+        sql += " AND a.work_date >= ?"
+        params.append(date_from)
+
+    if date_to:
+        sql += " AND a.work_date <= ?"
+        params.append(date_to)
+
+    sql += " ORDER BY a.work_date DESC, a.id DESC LIMIT ?"
+    params.append(limit)
+
+    attendance_rows = [dict(row) for row in fetchall(sql, params)]
+    special_requests = [dict(row) for row in get_approved_special_requests(
+        search=search,
+        department=department,
+        date_from=date_from,
+        date_to=date_to
+    )]
+    request_map = {(row["user_id"], row["work_date"]): row for row in special_requests}
+
+    enriched = []
+    seen_keys = set()
+
+    for row in attendance_rows:
+        employee = get_user_by_id(row["user_id"])
+        key = (row["user_id"], row["work_date"])
+        special_request = request_map.get(key)
+        row["source_type"] = "attendance"
+        row["request_type"] = special_request["request_type"] if special_request else ""
+        row["admin_note"] = special_request["admin_note"] if special_request else ""
+        row["message"] = special_request["message"] if special_request else ""
+
+        item = enrich_history_record(row, parse_break_limit_minutes(row["break_limit_minutes"]), employee_row=employee)
+        if type_filter and item["record_type"] != type_filter:
+            continue
+        if absent_only == "1" and item["absent_flag"] != 1:
+            continue
+        if over_break_only == "1" and item["over_break_minutes"] <= 0:
+            continue
+        enriched.append(item)
+        seen_keys.add(key)
+
+    for row in special_requests:
+        key = (row["user_id"], row["work_date"])
+        if key in seen_keys or row["request_type"] != "Leave Request":
+            continue
+        synthetic_row = {
+            "id": None,
+            "user_id": row["user_id"],
+            "full_name": row["full_name"],
+            "username": row["username"],
+            "break_limit_minutes": row["break_limit_minutes"],
+            "work_date": row["work_date"],
+            "time_in": None,
+            "time_out": None,
+            "status": "Approved Leave",
+            "proof_file": None,
+            "late_flag": 0,
+            "late_minutes": 0,
+            "request_type": row["request_type"],
+            "admin_note": row["admin_note"],
+            "message": row["message"],
+            "source_type": "request",
+        }
+        item = enrich_history_record(synthetic_row, parse_break_limit_minutes(row["break_limit_minutes"]))
+        if type_filter and item["record_type"] != type_filter:
+            continue
+        enriched.append(item)
+
+    enriched.sort(key=lambda item: (item["row"]["work_date"] or "", item["row"].get("id") or 0), reverse=True)
+    return enriched[:limit]
+
+
 def apply_attendance_correction(user_id, work_date, time_in_value="", break_start_value="", break_end_value="", time_out_value=""):
     attendance, break_row = get_attendance_context(user_id, work_date)
 
@@ -2278,66 +2488,32 @@ def admin_live_status():
 def admin_history():
     search = request.args.get("search", "").strip()
     department = request.args.get("department", "").strip()
+    type_filter = request.args.get("type_filter", "").strip()
     late_only = request.args.get("late_only", "").strip()
     absent_only = request.args.get("absent_only", "").strip()
     over_break_only = request.args.get("over_break_only", "").strip()
     date_from = request.args.get("date_from", "").strip()
     date_to = request.args.get("date_to", "").strip()
 
-    sql = """
-        SELECT a.*, u.full_name, u.username, u.break_limit_minutes
-        FROM attendance a
-        JOIN users u ON u.id = a.user_id
-        WHERE 1=1
-    """
-    params = []
-
-    if search:
-        sql += " AND (LOWER(u.full_name) LIKE ? OR LOWER(u.username) LIKE ?)"
-        s = f"%{search.lower()}%"
-        params.extend([s, s])
-
-    if department:
-        sql += " AND COALESCE(u.department, '') = ?"
-        params.append(department)
-
-    if late_only == "1":
-        sql += " AND a.late_flag = 1"
-
-    if date_from:
-        sql += " AND a.work_date >= ?"
-        params.append(date_from)
-
-    if date_to:
-        sql += " AND a.work_date <= ?"
-        params.append(date_to)
-
-    sql += " ORDER BY a.work_date DESC, a.id DESC LIMIT 200"
-
-    rows = fetchall(sql, params)
     departments = get_department_options()
-
-    enriched = []
-    for row in rows:
-        employee = get_user_by_id(row["user_id"])
-        item = {
-            "row": row,
-            "break_minutes": total_break_minutes(row["id"]),
-            "work_minutes": total_work_minutes(row),
-            "over_break_minutes": get_overbreak_minutes(total_break_minutes(row["id"]), row["break_limit_minutes"]),
-            "absent_flag": 1 if is_absent_today(employee, row) else 0
-        }
-        if absent_only == "1" and item["absent_flag"] != 1:
-            continue
-        if over_break_only == "1" and item["over_break_minutes"] <= 0:
-            continue
-        enriched.append(item)
+    enriched = build_admin_history_records(
+        search=search,
+        department=department,
+        type_filter=type_filter,
+        late_only=late_only,
+        absent_only=absent_only,
+        over_break_only=over_break_only,
+        date_from=date_from,
+        date_to=date_to,
+        limit=200
+    )
 
     return render_template(
         "admin_history.html",
         records=enriched,
         search=search,
         department=department,
+        type_filter=type_filter,
         departments=departments,
         late_only=late_only,
         absent_only=absent_only,
@@ -2469,19 +2645,47 @@ def update_correction_request(request_id):
         flash(str(exc), "danger")
         return redirect(url_for("admin_corrections"))
 
+    if correction["request_type"] == "Leave Request":
+        requested_time_in = ""
+        requested_break_start = ""
+        requested_break_end = ""
+        requested_time_out = ""
+    elif correction["request_type"] == "Undertime" and status == "Approved" and not requested_time_out:
+        flash("Requested time out is required to approve an undertime request.", "danger")
+        return redirect(url_for("admin_corrections"))
+
     if status == "Approved":
-        try:
-            applied_changes = apply_attendance_correction(
-                correction["user_id"],
-                correction["work_date"],
-                time_in_value=requested_time_in,
-                break_start_value=requested_break_start,
-                break_end_value=requested_break_end,
-                time_out_value=requested_time_out
-            )
-        except ValueError as exc:
-            flash(str(exc), "danger")
-            return redirect(url_for("admin_corrections"))
+        if correction["request_type"] in {"Leave Request", "Undertime"}:
+            attendance, _ = get_attendance_context(correction["user_id"], correction["work_date"])
+            if correction["request_type"] == "Undertime" and attendance and requested_time_out:
+                try:
+                    applied_changes = apply_attendance_correction(
+                        correction["user_id"],
+                        correction["work_date"],
+                        time_out_value=requested_time_out
+                    )
+                except ValueError as exc:
+                    flash(str(exc), "danger")
+                    return redirect(url_for("admin_corrections"))
+            else:
+                applied_changes = describe_request_review_result(
+                    correction["request_type"],
+                    correction["work_date"],
+                    requested_time_out
+                )
+        else:
+            try:
+                applied_changes = apply_attendance_correction(
+                    correction["user_id"],
+                    correction["work_date"],
+                    time_in_value=requested_time_in,
+                    break_start_value=requested_break_start,
+                    break_end_value=requested_break_end,
+                    time_out_value=requested_time_out
+                )
+            except ValueError as exc:
+                flash(str(exc), "danger")
+                return redirect(url_for("admin_corrections"))
 
         reviewed_at = now_str() if status in {"Approved", "Rejected"} else None
     reviewed_by = session["user_id"] if status in {"Approved", "Rejected"} else None
@@ -2541,42 +2745,24 @@ def update_correction_request(request_id):
 def export_admin_history_excel():
     search = request.args.get("search", "").strip()
     department = request.args.get("department", "").strip()
+    type_filter = request.args.get("type_filter", "").strip()
     late_only = request.args.get("late_only", "").strip()
     absent_only = request.args.get("absent_only", "").strip()
     over_break_only = request.args.get("over_break_only", "").strip()
     date_from = request.args.get("date_from", "").strip()
     date_to = request.args.get("date_to", "").strip()
 
-    sql = """
-        SELECT a.*, u.full_name, u.username, u.break_limit_minutes
-        FROM attendance a
-        JOIN users u ON u.id = a.user_id
-        WHERE 1=1
-    """
-    params = []
-
-    if search:
-        sql += " AND (LOWER(u.full_name) LIKE ? OR LOWER(u.username) LIKE ?)"
-        s = f"%{search.lower()}%"
-        params.extend([s, s])
-
-    if department:
-        sql += " AND COALESCE(u.department, '') = ?"
-        params.append(department)
-
-    if late_only == "1":
-        sql += " AND a.late_flag = 1"
-
-    if date_from:
-        sql += " AND a.work_date >= ?"
-        params.append(date_from)
-
-    if date_to:
-        sql += " AND a.work_date <= ?"
-        params.append(date_to)
-
-    sql += " ORDER BY a.work_date DESC, a.id DESC LIMIT 500"
-    rows = fetchall(sql, params)
+    records = build_admin_history_records(
+        search=search,
+        department=department,
+        type_filter=type_filter,
+        late_only=late_only,
+        absent_only=absent_only,
+        over_break_only=over_break_only,
+        date_from=date_from,
+        date_to=date_to,
+        limit=500
+    )
 
     try:
         from openpyxl import Workbook
@@ -2586,6 +2772,7 @@ def export_admin_history_excel():
             "admin_history",
             search=search,
             department=department,
+            type_filter=type_filter,
             late_only=late_only,
             absent_only=absent_only,
             over_break_only=over_break_only,
@@ -2600,6 +2787,7 @@ def export_admin_history_excel():
         "Employee",
         "Username",
         "Work Date",
+        "Record Type",
         "Time In",
         "Time Out",
         "Status",
@@ -2608,31 +2796,27 @@ def export_admin_history_excel():
         "Break Minutes",
         "Overbreak Minutes",
         "Work Minutes",
-        "Proof File"
+        "Proof File",
+        "Admin Note"
     ])
 
-    for row in rows:
-        break_minutes = total_break_minutes(row["id"])
-        over_break_minutes = get_overbreak_minutes(break_minutes, row["break_limit_minutes"])
-        employee = get_user_by_id(row["user_id"])
-        if absent_only == "1" and not is_absent_today(employee, row):
-            continue
-        if over_break_only == "1" and over_break_minutes <= 0:
-            continue
-
+    for item in records:
+        row = item["row"]
         sheet.append([
             row["full_name"] or "",
             row["username"] or "",
             row["work_date"] or "",
+            item["record_type"] or "Attendance",
             row["time_in"] or "",
             row["time_out"] or "",
             row["status"] or "",
             row["late_minutes"] if row["late_flag"] else 0,
-            parse_break_limit_minutes(row["break_limit_minutes"]),
-            break_minutes,
-            over_break_minutes,
-            total_work_minutes(row),
-            row["proof_file"] or ""
+            parse_break_limit_minutes(row["break_limit_minutes"]) if row.get("break_limit_minutes") is not None else 0,
+            item["break_minutes"],
+            item["over_break_minutes"],
+            item["work_minutes"],
+            row["proof_file"] or "",
+            item["request_note"]
         ])
 
     output = BytesIO()
