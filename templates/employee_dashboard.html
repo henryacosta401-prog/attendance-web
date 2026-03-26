@@ -272,7 +272,7 @@
                 <div class="employee-glance-card">
                     <div class="employee-glance-label">Work Total</div>
                     <div class="employee-glance-value">{{ minutes_to_hm(todays_work_minutes) }}</div>
-                    <div class="employee-glance-note">Break window: {{ user.break_window_start if user.break_window_start else '12:00' }} - {{ user.break_window_end if user.break_window_end else '12:15' }}</div>
+                    <div class="employee-glance-note">Break limit: {{ minutes_to_hm(break_limit_minutes) }}</div>
                 </div>
             </div>
 
@@ -309,7 +309,7 @@
                 <div class="employee-meta-chip">{{ user.department }} | {{ user.position }}</div>
                 <div class="employee-meta-chip">Schedule: {{ user.schedule_days if user.schedule_days else 'Mon,Tue,Wed,Thu,Fri' }}</div>
                 <div class="employee-meta-chip">Shift: {{ user.shift_start if user.shift_start else '09:00' }} - {{ user.shift_end if user.shift_end else '18:00' }}</div>
-                <div class="employee-meta-chip">Break Window: {{ user.break_window_start if user.break_window_start else '12:00' }} - {{ user.break_window_end if user.break_window_end else '12:15' }}</div>
+                <div class="employee-meta-chip">Break Limit: {{ minutes_to_hm(break_limit_minutes) }}</div>
             </div>
 
             <a href="{{ url_for('employee_profile') }}" class="btn btn-gray" style="display:inline-flex;justify-content:center;">Edit Profile</a>
@@ -347,7 +347,16 @@
                 <div class="employee-timeline-label">Break Summary</div>
                 <div>
                     <div class="employee-timeline-value">{{ minutes_to_hm(todays_break_minutes) }} used</div>
-                    <div class="employee-panel-subtitle">Window {{ user.break_window_start if user.break_window_start else '12:00' }} - {{ user.break_window_end if user.break_window_end else '12:15' }} | Limit {{ minutes_to_hm(break_limit_minutes) }}</div>
+                    <div class="employee-panel-subtitle">Limit {{ minutes_to_hm(break_limit_minutes) }}</div>
+                    {% if todays_break_sessions %}
+                        <div class="employee-panel-subtitle" style="margin-top:8px;">
+                            {% for session in todays_break_sessions %}
+                                <div>Break {{ loop.index }}: {{ session.start_display }} -> {{ session.end_display }}</div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <div class="employee-panel-subtitle" style="margin-top:8px;">No break sessions recorded.</div>
+                    {% endif %}
                 </div>
             </div>
             <div class="employee-timeline-row">

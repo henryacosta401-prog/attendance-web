@@ -820,9 +820,7 @@ def get_schedule_window_summary(user_row):
 
     shift_start = parse_shift_start(user_row["shift_start"] if user_row["shift_start"] else DEFAULT_SHIFT_START)
     shift_end = parse_shift_end(user_row["shift_end"] if user_row["shift_end"] else DEFAULT_SHIFT_END)
-    break_start = parse_optional_schedule_time(user_row["break_window_start"], DEFAULT_BREAK_WINDOW_START)
-    break_end = parse_optional_schedule_time(user_row["break_window_end"], DEFAULT_BREAK_WINDOW_END)
-    return f"{shift_start} - {shift_end} | Break {break_start} - {break_end}"
+    return f"{shift_start} - {shift_end}"
 
 
 def get_today_schedule_code():
@@ -1033,11 +1031,7 @@ def calculate_late_info(time_in_str, shift_start):
 
 
 def total_break_minutes(attendance_id, include_open=False):
-    breaks_rows = fetchall("""
-        SELECT * FROM breaks
-        WHERE attendance_id = ?
-        ORDER BY id ASC
-    """, (attendance_id,))
+    breaks_rows = get_break_rows(attendance_id)
 
     total_minutes = 0
     for br in breaks_rows:
@@ -1046,6 +1040,39 @@ def total_break_minutes(attendance_id, include_open=False):
             end = datetime.strptime(br["break_end"] or now_str(), "%Y-%m-%d %H:%M:%S")
             total_minutes += int((end - start).total_seconds() // 60)
     return total_minutes
+
+
+def get_break_rows(attendance_id):
+    if not attendance_id:
+        return []
+    return [
+        dict(row) for row in fetchall("""
+            SELECT * FROM breaks
+            WHERE attendance_id = ?
+            ORDER BY id ASC
+        """, (attendance_id,))
+    ]
+
+
+def build_break_sessions(attendance_id):
+    sessions = []
+    for br in get_break_rows(attendance_id):
+        sessions.append({
+            "start": br.get("break_start"),
+            "end": br.get("break_end"),
+            "start_display": format_datetime_12h(br.get("break_start")) if br.get("break_start") else "-",
+            "end_display": format_datetime_12h(br.get("break_end")) if br.get("break_end") else "Open",
+        })
+    return sessions
+
+
+def summarize_break_sessions(break_sessions):
+    if not break_sessions:
+        return "No break sessions recorded."
+    parts = []
+    for index, session in enumerate(break_sessions, start=1):
+        parts.append(f"Break {index}: {session['start_display']} -> {session['end_display']}")
+    return " | ".join(parts)
 
 
 def get_employee_break_limit(user_row):
@@ -1396,6 +1423,7 @@ def dashboard():
     current_status = get_user_live_status(user["id"])
     todays_break_minutes = total_break_minutes(today_attendance["id"], include_open=True) if today_attendance else 0
     todays_work_minutes = total_work_minutes(today_attendance) if today_attendance else 0
+    todays_break_sessions = build_break_sessions(today_attendance["id"]) if today_attendance else []
     break_limit_minutes = get_employee_break_limit(user)
     over_break_minutes = get_overbreak_minutes(todays_break_minutes, break_limit_minutes)
 
@@ -1407,6 +1435,7 @@ def dashboard():
         current_status=current_status,
         todays_break_minutes=todays_break_minutes,
         todays_work_minutes=todays_work_minutes,
+        todays_break_sessions=todays_break_sessions,
         break_limit_minutes=break_limit_minutes,
         over_break_minutes=over_break_minutes,
         minutes_to_hm=minutes_to_hm
@@ -2109,10 +2138,13 @@ def enrich_history_record(row, break_limit_minutes, employee_row=None):
     break_minutes = total_break_minutes(row["id"]) if is_attendance and row.get("id") else 0
     work_minutes = total_work_minutes(row) if is_attendance else 0
     over_break_minutes = get_overbreak_minutes(break_minutes, break_limit_minutes)
+    break_sessions = build_break_sessions(row["id"]) if is_attendance and row.get("id") else []
 
     return {
         "row": row,
         "break_minutes": break_minutes,
+        "break_sessions": break_sessions,
+        "break_sessions_summary": summarize_break_sessions(break_sessions),
         "work_minutes": work_minutes,
         "over_break_minutes": over_break_minutes,
         "absent_flag": 1 if employee_row and is_attendance and is_absent_today(employee_row, row) else 0,
@@ -3088,8 +3120,6 @@ def manage_employees():
         schedule_days = normalize_schedule_days(request.form.getlist("schedule_days"))
         shift_start = parse_shift_start(request.form.get("shift_start", DEFAULT_SHIFT_START))
         shift_end = parse_shift_end(request.form.get("shift_end", DEFAULT_SHIFT_END))
-        break_window_start = parse_optional_schedule_time(request.form.get("break_window_start", DEFAULT_BREAK_WINDOW_START), DEFAULT_BREAK_WINDOW_START)
-        break_window_end = parse_optional_schedule_time(request.form.get("break_window_end", DEFAULT_BREAK_WINDOW_END), DEFAULT_BREAK_WINDOW_END)
         break_limit_minutes = parse_break_limit_minutes(request.form.get("break_limit_minutes", BREAK_LIMIT_MINUTES))
 
         if not full_name or not username or not password:
@@ -3125,8 +3155,8 @@ def manage_employees():
             schedule_days,
             shift_start,
             shift_end,
-            break_window_start,
-            break_window_end,
+            DEFAULT_BREAK_WINDOW_START,
+            DEFAULT_BREAK_WINDOW_END,
             break_limit_minutes,
             now_str()
         ), commit=True)
@@ -3134,7 +3164,7 @@ def manage_employees():
         new_user = fetchone("SELECT id FROM users WHERE username = ?", (username,))
         if new_user:
             create_notification(new_user["id"], "Account Created", "Your account has been created by admin.")
-            log_activity(session["user_id"], "ADD EMPLOYEE", f"Added employee: {full_name} | Shift: {shift_start}-{shift_end} | Break Window: {break_window_start}-{break_window_end} | Schedule: {schedule_days} | Break Limit: {break_limit_minutes}m")
+            log_activity(session["user_id"], "ADD EMPLOYEE", f"Added employee: {full_name} | Shift: {shift_start}-{shift_end} | Schedule: {schedule_days} | Break Limit: {break_limit_minutes}m")
 
         flash("Employee added successfully.", "success")
         return redirect(url_for("manage_employees"))
@@ -3189,8 +3219,6 @@ def edit_employee(user_id):
         schedule_days = normalize_schedule_days(request.form.getlist("schedule_days"))
         shift_start = parse_shift_start(request.form.get("shift_start", user["shift_start"] or DEFAULT_SHIFT_START))
         shift_end = parse_shift_end(request.form.get("shift_end", user["shift_end"] or DEFAULT_SHIFT_END))
-        break_window_start = parse_optional_schedule_time(request.form.get("break_window_start", user["break_window_start"] or DEFAULT_BREAK_WINDOW_START), DEFAULT_BREAK_WINDOW_START)
-        break_window_end = parse_optional_schedule_time(request.form.get("break_window_end", user["break_window_end"] or DEFAULT_BREAK_WINDOW_END), DEFAULT_BREAK_WINDOW_END)
         break_limit_minutes = parse_break_limit_minutes(request.form.get("break_limit_minutes", user["break_limit_minutes"]))
         is_active = 1 if request.form.get("is_active") == "1" else 0
         password = request.form.get("password", "").strip()
@@ -3225,7 +3253,7 @@ def edit_employee(user_id):
                 WHERE id = ?
             """, (
                 full_name, username, generate_password_hash(password), profile_image,
-                department, position, schedule_days, shift_start, shift_end, break_window_start, break_window_end, break_limit_minutes, is_active, user_id
+                department, position, schedule_days, shift_start, shift_end, user["break_window_start"] or DEFAULT_BREAK_WINDOW_START, user["break_window_end"] or DEFAULT_BREAK_WINDOW_END, break_limit_minutes, is_active, user_id
             ), commit=True)
         else:
             execute_db("""
@@ -3235,10 +3263,10 @@ def edit_employee(user_id):
                 WHERE id = ?
             """, (
                 full_name, username, profile_image,
-                department, position, schedule_days, shift_start, shift_end, break_window_start, break_window_end, break_limit_minutes, is_active, user_id
+                department, position, schedule_days, shift_start, shift_end, user["break_window_start"] or DEFAULT_BREAK_WINDOW_START, user["break_window_end"] or DEFAULT_BREAK_WINDOW_END, break_limit_minutes, is_active, user_id
             ), commit=True)
 
-        log_activity(session["user_id"], "EDIT EMPLOYEE", f"Edited employee: {full_name} | Shift: {shift_start}-{shift_end} | Break Window: {break_window_start}-{break_window_end} | Schedule: {schedule_days} | Break Limit: {break_limit_minutes}m")
+        log_activity(session["user_id"], "EDIT EMPLOYEE", f"Edited employee: {full_name} | Shift: {shift_start}-{shift_end} | Schedule: {schedule_days} | Break Limit: {break_limit_minutes}m")
         flash("Employee updated successfully.", "success")
         return redirect(url_for("manage_employees"))
 

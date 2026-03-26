@@ -47,17 +47,6 @@
 
 <div class="grid grid-2" style="margin-top:12px;">
     <div>
-        <label>Break Window Start</label>
-        <input class="input" type="time" name="break_window_start" value="{{ employee.break_window_start if employee and employee.break_window_start else '12:00' }}">
-    </div>
-    <div>
-        <label>Break Window End</label>
-        <input class="input" type="time" name="break_window_end" value="{{ employee.break_window_end if employee and employee.break_window_end else '12:15' }}">
-    </div>
-</div>
-
-<div class="grid grid-2" style="margin-top:12px;">
-    <div>
         <label>Break Limit (Minutes)</label>
         <input class="input" type="number" name="break_limit_minutes" value="{{ employee.break_limit_minutes if employee.break_limit_minutes else 15 }}" min="1">
     </div>

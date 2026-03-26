@@ -41,7 +41,12 @@
                                 -
                             {% endif %}
                         </td>
-                        <td>{{ minutes_to_hm(item.break_minutes) }}</td>
+                        <td>
+                            <div>{{ minutes_to_hm(item.break_minutes) }}</div>
+                            {% if item.break_sessions %}
+                                <div class="small muted" style="margin-top:6px;">{{ item.break_sessions_summary }}</div>
+                            {% endif %}
+                        </td>
                         <td>{{ minutes_to_hm(item.work_minutes) }}</td>
                         <td>
                             {% if item.row.proof_file %}

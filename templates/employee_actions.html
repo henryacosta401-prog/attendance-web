@@ -1,6 +1,21 @@
 {% extends "base.html" %}
 {% block title %}Quick Actions{% endblock %}
 
+{% block extra_head %}
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    document.querySelectorAll("form[data-confirm]").forEach(function (form) {
+        form.addEventListener("submit", function (event) {
+            var message = form.getAttribute("data-confirm");
+            if (message && !window.confirm(message)) {
+                event.preventDefault();
+            }
+        });
+    });
+});
+</script>
+{% endblock %}
+
 {% block content %}
 <div class="hero-card" style="margin-bottom:20px;">
     <div class="hero">
@@ -32,15 +47,15 @@
         <div class="section-title">Break and Time Out</div>
         <p class="section-subtitle" style="margin-bottom:14px;">Use the action that matches what you're doing right now.</p>
         <div class="grid" style="gap:12px;">
-            <form method="POST" action="{{ url_for('start_break') }}">
+            <form method="POST" action="{{ url_for('start_break') }}" data-confirm="Start break now? This will create a break record immediately.">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <button class="btn btn-warning" type="submit" style="width:100%;">Start Break</button>
             </form>
-            <form method="POST" action="{{ url_for('end_break') }}">
+            <form method="POST" action="{{ url_for('end_break') }}" data-confirm="End your current break now?">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <button class="btn btn-primary" type="submit" style="width:100%;">End Break</button>
             </form>
-            <form method="POST" action="{{ url_for('time_out') }}">
+            <form method="POST" action="{{ url_for('time_out') }}" data-confirm="Time out now? Any open break will be closed at this time.">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <button class="btn btn-danger" type="submit" style="width:100%;">Time Out</button>
             </form>
