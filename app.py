@@ -1104,6 +1104,10 @@ def minutes_to_hm(minutes):
     return f"{h}h {m}m"
 
 
+def minutes_to_decimal_hours(minutes):
+    return round((minutes or 0) / 60, 2)
+
+
 def format_datetime_12h(datetime_str):
     if not datetime_str:
         return ""
@@ -2917,7 +2921,7 @@ def export_admin_history_excel():
         "Break Limit",
         "Break Minutes",
         "Overbreak Minutes",
-        "Work Minutes",
+        "Work Hours",
         "Proof File",
         "Admin Note"
     ])
@@ -2936,7 +2940,7 @@ def export_admin_history_excel():
             parse_break_limit_minutes(row["break_limit_minutes"]) if row.get("break_limit_minutes") is not None else 0,
             item["break_minutes"],
             item["over_break_minutes"],
-            item["work_minutes"],
+            minutes_to_decimal_hours(item["work_minutes"]),
             row["proof_file"] or "",
             item["request_note"]
         ])
