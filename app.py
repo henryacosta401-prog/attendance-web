@@ -881,6 +881,23 @@ def is_missing_timeout_today(user_row, attendance_row):
     return now_dt() >= (shift_end_dt + timedelta(minutes=LATE_GRACE_MINUTES))
 
 
+def is_undertime_record(user_row, attendance_row):
+    if not user_row or not attendance_row:
+        return False
+    if not attendance_row.get("time_in") or not attendance_row.get("time_out"):
+        return False
+    if attendance_row.get("source_type") != "attendance":
+        return False
+
+    actual_time_out = parse_db_datetime(attendance_row.get("time_out"))
+    if not actual_time_out:
+        return False
+
+    _, shift_end_dt = get_shift_bounds_for_work_date(user_row, attendance_row["work_date"])
+    shift_end_naive = shift_end_dt.replace(tzinfo=None)
+    return actual_time_out < shift_end_naive
+
+
 def parse_break_limit_minutes(value):
     try:
         minutes = int(str(value).strip())
@@ -936,6 +953,47 @@ def get_attendance_context(user_id, work_date):
         """, (attendance["id"],))
 
     return attendance, break_row
+
+
+def get_attendance_context_by_row(attendance):
+    if not attendance:
+        return None, None
+    break_row = fetchone("""
+        SELECT *
+        FROM breaks
+        WHERE attendance_id = ?
+        ORDER BY id ASC LIMIT 1
+    """, (attendance["id"],))
+    return attendance, break_row
+
+
+def get_matching_attendance_context_for_request(user_id, work_date, request_type="", requested_time_out=None):
+    attendance, break_row = get_attendance_context(user_id, work_date)
+    if attendance or request_type != "Undertime":
+        return attendance, break_row
+
+    active_attendance = get_active_attendance(user_id)
+    if active_attendance:
+        return get_attendance_context_by_row(active_attendance)
+
+    requested_time_out_dt = parse_db_datetime(requested_time_out)
+    candidate_rows = fetchall("""
+        SELECT *
+        FROM attendance
+        WHERE user_id = ?
+        ORDER BY work_date DESC, id DESC
+        LIMIT 10
+    """, (user_id,))
+
+    for candidate in candidate_rows:
+        start_dt = parse_db_datetime(candidate["time_in"])
+        if not start_dt:
+            continue
+        end_dt = parse_db_datetime(candidate["time_out"]) or requested_time_out_dt
+        if requested_time_out_dt and end_dt and start_dt <= requested_time_out_dt <= end_dt:
+            return get_attendance_context_by_row(candidate)
+
+    return None, None
 
 
 def resolve_correction_datetimes(
@@ -2140,9 +2198,19 @@ def enrich_history_record(row, break_limit_minutes, employee_row=None):
     record_type = row.get("request_type") or "Attendance"
     is_attendance = row.get("source_type", "attendance") == "attendance"
     break_minutes = total_break_minutes(row["id"]) if is_attendance and row.get("id") else 0
-    work_minutes = total_work_minutes(row) if is_attendance else 0
+    work_row = dict(row)
+    if record_type == "Undertime" and row.get("requested_time_out"):
+        work_row["time_out"] = row.get("requested_time_out")
+        row["time_out"] = row.get("requested_time_out")
+    work_minutes = total_work_minutes(work_row) if is_attendance else 0
     over_break_minutes = get_overbreak_minutes(break_minutes, break_limit_minutes)
     break_sessions = build_break_sessions(row["id"]) if is_attendance and row.get("id") else []
+    undertime_flag = 1 if is_undertime_record(employee_row, work_row) else 0
+    if record_type == "Attendance" and undertime_flag:
+        record_type = "Undertime"
+    display_status = row.get("status") or ""
+    if undertime_flag and is_attendance and row.get("time_out"):
+        display_status = "Undertime"
 
     return {
         "row": row,
@@ -2151,6 +2219,8 @@ def enrich_history_record(row, break_limit_minutes, employee_row=None):
         "break_sessions_summary": summarize_break_sessions(break_sessions),
         "work_minutes": work_minutes,
         "over_break_minutes": over_break_minutes,
+        "undertime_flag": undertime_flag,
+        "display_status": display_status,
         "absent_flag": 1 if employee_row and is_attendance and is_absent_today(employee_row, row) else 0,
         "record_type": record_type,
         "request_note": row.get("admin_note") or row.get("message") or "",
@@ -2167,10 +2237,16 @@ def build_employee_history_records(user_row, limit=60):
         """, (user_row["id"], limit))
     ]
     special_requests = [dict(row) for row in get_approved_special_requests(user_id=user_row["id"])]
-    request_map = {(
-        row["user_id"],
-        row["work_date"]
-    ): row for row in special_requests}
+    request_map = {}
+    for row in special_requests:
+        matched_attendance, _ = get_matching_attendance_context_for_request(
+            row["user_id"],
+            row["work_date"],
+            request_type=row["request_type"],
+            requested_time_out=row.get("requested_time_out")
+        )
+        target_work_date = matched_attendance["work_date"] if matched_attendance else row["work_date"]
+        request_map[(row["user_id"], target_work_date)] = row
 
     combined = []
     seen_keys = set()
@@ -2182,20 +2258,29 @@ def build_employee_history_records(user_row, limit=60):
         row["request_type"] = special_request["request_type"] if special_request else ""
         row["admin_note"] = special_request["admin_note"] if special_request else ""
         row["message"] = special_request["message"] if special_request else ""
+        row["requested_time_out"] = special_request["requested_time_out"] if special_request else ""
         combined.append(enrich_history_record(row, get_employee_break_limit(user_row), employee_row=user_row))
         seen_keys.add(key)
 
     for row in special_requests:
-        key = (row["user_id"], row["work_date"])
-        if key in seen_keys or row["request_type"] != "Leave Request":
+        matched_attendance, _ = get_matching_attendance_context_for_request(
+            row["user_id"],
+            row["work_date"],
+            request_type=row["request_type"],
+            requested_time_out=row.get("requested_time_out")
+        )
+        target_work_date = matched_attendance["work_date"] if matched_attendance else row["work_date"]
+        key = (row["user_id"], target_work_date)
+        if key in seen_keys or row["request_type"] not in {"Leave Request", "Undertime"}:
             continue
+        is_leave_request = row["request_type"] == "Leave Request"
         synthetic_row = {
             "id": None,
             "user_id": row["user_id"],
-            "work_date": row["work_date"],
+            "work_date": target_work_date,
             "time_in": None,
-            "time_out": None,
-            "status": "Approved Leave",
+            "time_out": None if is_leave_request else row.get("requested_time_out"),
+            "status": "Approved Leave" if is_leave_request else "Approved Undertime",
             "proof_file": None,
             "late_flag": 0,
             "late_minutes": 0,
@@ -2249,7 +2334,16 @@ def build_admin_history_records(search="", department="", type_filter="", late_o
         date_from=date_from,
         date_to=date_to
     )]
-    request_map = {(row["user_id"], row["work_date"]): row for row in special_requests}
+    request_map = {}
+    for row in special_requests:
+        matched_attendance, _ = get_matching_attendance_context_for_request(
+            row["user_id"],
+            row["work_date"],
+            request_type=row["request_type"],
+            requested_time_out=row.get("requested_time_out")
+        )
+        target_work_date = matched_attendance["work_date"] if matched_attendance else row["work_date"]
+        request_map[(row["user_id"], target_work_date)] = row
     attendance_key_map = {(row["user_id"], row["work_date"]): row for row in attendance_rows}
 
     enriched = []
@@ -2263,6 +2357,7 @@ def build_admin_history_records(search="", department="", type_filter="", late_o
         row["request_type"] = special_request["request_type"] if special_request else ""
         row["admin_note"] = special_request["admin_note"] if special_request else ""
         row["message"] = special_request["message"] if special_request else ""
+        row["requested_time_out"] = special_request["requested_time_out"] if special_request else ""
 
         item = enrich_history_record(row, parse_break_limit_minutes(row["break_limit_minutes"]), employee_row=employee)
         if type_filter and item["record_type"] != type_filter:
@@ -2275,19 +2370,27 @@ def build_admin_history_records(search="", department="", type_filter="", late_o
         seen_keys.add(key)
 
     for row in special_requests:
-        key = (row["user_id"], row["work_date"])
-        if key in seen_keys or row["request_type"] != "Leave Request":
+        matched_attendance, _ = get_matching_attendance_context_for_request(
+            row["user_id"],
+            row["work_date"],
+            request_type=row["request_type"],
+            requested_time_out=row.get("requested_time_out")
+        )
+        target_work_date = matched_attendance["work_date"] if matched_attendance else row["work_date"]
+        key = (row["user_id"], target_work_date)
+        if key in seen_keys or row["request_type"] not in {"Leave Request", "Undertime"}:
             continue
+        is_leave_request = row["request_type"] == "Leave Request"
         synthetic_row = {
             "id": None,
             "user_id": row["user_id"],
             "full_name": row["full_name"],
             "username": row["username"],
             "break_limit_minutes": row["break_limit_minutes"],
-            "work_date": row["work_date"],
+            "work_date": target_work_date,
             "time_in": None,
-            "time_out": None,
-            "status": "Approved Leave",
+            "time_out": None if is_leave_request else row.get("requested_time_out"),
+            "status": "Approved Leave" if is_leave_request else "Approved Undertime",
             "proof_file": None,
             "late_flag": 0,
             "late_minutes": 0,
@@ -2381,7 +2484,13 @@ def build_admin_history_records(search="", department="", type_filter="", late_o
 
 
 def apply_attendance_correction(user_id, work_date, time_in_value="", break_start_value="", break_end_value="", time_out_value=""):
-    attendance, break_row = get_attendance_context(user_id, work_date)
+    attendance, break_row = get_matching_attendance_context_for_request(
+        user_id,
+        work_date,
+        request_type="Undertime" if time_out_value and not (time_in_value or break_start_value or break_end_value) else "",
+        requested_time_out=combine_work_date_and_time(work_date, time_out_value) if time_out_value else None
+    )
+    target_work_date = attendance["work_date"] if attendance else work_date
 
     before_values = {
         "time_in": attendance["time_in"] if attendance else None,
@@ -2391,7 +2500,7 @@ def apply_attendance_correction(user_id, work_date, time_in_value="", break_star
     }
 
     final_time_in, final_break_start, final_break_end, final_time_out = resolve_correction_datetimes(
-        work_date,
+        target_work_date,
         time_in_value=time_in_value,
         break_start_value=break_start_value,
         break_end_value=break_end_value,
@@ -2453,7 +2562,7 @@ def apply_attendance_correction(user_id, work_date, time_in_value="", break_star
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             user_id,
-            work_date,
+            target_work_date,
             final_time_in,
             final_time_out,
             final_status,
@@ -2469,7 +2578,7 @@ def apply_attendance_correction(user_id, work_date, time_in_value="", break_star
             FROM attendance
             WHERE user_id = ? AND work_date = ?
             ORDER BY id DESC LIMIT 1
-        """, (user_id, work_date))
+        """, (user_id, target_work_date))
 
     if not attendance:
         return
@@ -2484,7 +2593,7 @@ def apply_attendance_correction(user_id, work_date, time_in_value="", break_star
         execute_db("""
             INSERT INTO breaks (user_id, attendance_id, work_date, break_start, break_end, created_at)
             VALUES (?, ?, ?, ?, ?, ?)
-        """, (user_id, attendance["id"], work_date, final_break_start, final_break_end, now_str()), commit=True)
+        """, (user_id, attendance["id"], target_work_date, final_break_start, final_break_end, now_str()), commit=True)
 
     after_values = {
         "time_in": final_time_in,
@@ -2782,12 +2891,18 @@ def update_correction_request(request_id):
 
     if status == "Approved":
         if correction["request_type"] in {"Leave Request", "Undertime"}:
-            attendance, _ = get_attendance_context(correction["user_id"], correction["work_date"])
+            requested_time_out_dt = combine_work_date_and_time(correction["work_date"], requested_time_out) if requested_time_out else None
+            attendance, _ = get_matching_attendance_context_for_request(
+                correction["user_id"],
+                correction["work_date"],
+                request_type=correction["request_type"],
+                requested_time_out=requested_time_out_dt
+            )
             if correction["request_type"] == "Undertime" and attendance and requested_time_out:
                 try:
                     applied_changes = apply_attendance_correction(
                         correction["user_id"],
-                        correction["work_date"],
+                        attendance["work_date"],
                         time_out_value=requested_time_out
                     )
                 except ValueError as exc:
@@ -2935,7 +3050,7 @@ def export_admin_history_excel():
             item["record_type"] or "Attendance",
             row["time_in"] or "",
             row["time_out"] or "",
-            row["status"] or "",
+            item["display_status"] or row["status"] or "",
             row["late_minutes"] if row["late_flag"] else 0,
             parse_break_limit_minutes(row["break_limit_minutes"]) if row.get("break_limit_minutes") is not None else 0,
             item["break_minutes"],

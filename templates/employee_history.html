@@ -33,7 +33,7 @@
                         <td>{{ item.record_type }}</td>
                         <td>{{ format_datetime_12h(item.row.time_in) if item.row.time_in else '-' }}</td>
                         <td>{{ format_datetime_12h(item.row.time_out) if item.row.time_out else '-' }}</td>
-                        <td>{{ item.row.status }}</td>
+                        <td>{{ item.display_status }}</td>
                         <td>
                             {% if item.row.late_flag == 1 %}
                                 <span class="status status-red">{{ item.row.late_minutes }} min</span>

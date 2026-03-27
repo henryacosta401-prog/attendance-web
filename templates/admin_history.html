@@ -104,7 +104,7 @@
                         <td>{{ item.record_type }}</td>
                         <td>{{ item.row.time_in or '-' }}</td>
                         <td>{{ item.row.time_out or '-' }}</td>
-                        <td>{{ item.row.status }}</td>
+                        <td>{{ item.display_status }}</td>
                         <td>
                             {% if item.row.late_flag == 1 %}
                                 <span class="status status-red">{{ item.row.late_minutes }} min</span>
