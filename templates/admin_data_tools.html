@@ -49,6 +49,21 @@
     </div>
 </div>
 
+<div class="card" style="margin-top:18px; border-color:rgba(239,68,68,0.28); background:linear-gradient(180deg, rgba(78, 20, 20, 0.18), rgba(255,255,255,0.04));">
+    <h3 style="margin-top:0;">Go-Live Reset</h3>
+    <p class="muted">Use this only when you are ready to start permanent use with clean records. This clears attendance, breaks, corrections, notifications, activity logs, incident reports, and old proof uploads, but keeps employee accounts, admin accounts, schedules, passwords, departments, positions, and profile images.</p>
+    <div class="small muted" style="margin-top:10px;">A SQLite backup is created automatically before the reset runs.</div>
+    <form method="POST" style="margin-top:16px;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="action" value="go_live_reset">
+        <label>Type RESET to confirm</label>
+        <input class="input" type="text" name="confirmation_text" placeholder="RESET" autocomplete="off">
+        <div class="top-actions" style="margin-top:14px;">
+            <button class="btn btn-danger" type="submit" onclick="return confirm('Run the go-live reset? This will clear attendance activity and requests, but keep users and schedules.')">Run Go-Live Reset</button>
+        </div>
+    </form>
+</div>
+
 <div class="card" style="margin-top:18px;">
     <h3 style="margin-top:0;">Suspicious Attendance Rows</h3>
     {% if candidates %}

@@ -1275,6 +1275,79 @@ def create_sqlite_backup():
     return backup_path
 
 
+def remove_orphaned_proof_uploads():
+    if not os.path.isdir(app.config["UPLOAD_FOLDER"]):
+        return 0
+
+    protected_files = {
+        row["profile_image"]
+        for row in fetchall("""
+            SELECT profile_image
+            FROM users
+            WHERE profile_image IS NOT NULL AND TRIM(profile_image) != ''
+        """)
+    }
+    removed = 0
+    for name in os.listdir(app.config["UPLOAD_FOLDER"]):
+        full_path = os.path.join(app.config["UPLOAD_FOLDER"], name)
+        if not os.path.isfile(full_path):
+            continue
+        if name in protected_files:
+            continue
+        try:
+            os.remove(full_path)
+            removed += 1
+        except OSError:
+            continue
+    return removed
+
+
+def perform_go_live_reset():
+    backup_path = None
+    if not using_postgres():
+        backup_path = create_sqlite_backup()
+
+    db = get_db()
+    if using_postgres():
+        with db.cursor() as cur:
+            cur.execute("""
+                TRUNCATE TABLE
+                    breaks,
+                    attendance,
+                    correction_requests,
+                    notifications,
+                    activity_logs,
+                    incident_reports
+                RESTART IDENTITY
+            """)
+        db.commit()
+    else:
+        cur = db.cursor()
+        for table_name in [
+            "breaks",
+            "attendance",
+            "correction_requests",
+            "notifications",
+            "activity_logs",
+            "incident_reports",
+        ]:
+            cur.execute(f"DELETE FROM {table_name}")
+        try:
+            cur.execute("""
+                DELETE FROM sqlite_sequence
+                WHERE name IN ('breaks', 'attendance', 'correction_requests', 'notifications', 'activity_logs', 'incident_reports')
+            """)
+        except sqlite3.OperationalError:
+            pass
+        db.commit()
+
+    removed_uploads = remove_orphaned_proof_uploads()
+    return {
+        "backup_path": backup_path,
+        "removed_uploads": removed_uploads,
+    }
+
+
 def get_employee_break_limit(user_row):
     if not user_row:
         return BREAK_LIMIT_MINUTES
@@ -3047,6 +3120,20 @@ def admin_data_tools():
                 backup_path = create_sqlite_backup()
                 log_activity(session["user_id"], "CREATE BACKUP", f"Created SQLite backup at {backup_path}")
                 flash(f"Backup created: {os.path.basename(backup_path)}", "success")
+            except ValueError as exc:
+                flash(str(exc), "danger")
+            return redirect(url_for("admin_data_tools", search=search))
+        if action == "go_live_reset":
+            confirmation = request.form.get("confirmation_text", "").strip().upper()
+            if confirmation != "RESET":
+                flash("Type RESET exactly before running the go-live reset.", "danger")
+                return redirect(url_for("admin_data_tools", search=search))
+            try:
+                result = perform_go_live_reset()
+                backup_note = f" Backup: {os.path.basename(result['backup_path'])}." if result.get("backup_path") else ""
+                upload_note = f" Removed {result['removed_uploads']} orphaned proof uploads." if result.get("removed_uploads") else ""
+                log_activity(session["user_id"], "GO-LIVE RESET", "Cleared operational attendance data for go-live.")
+                flash(f"Go-live reset completed.{backup_note}{upload_note}", "success")
             except ValueError as exc:
                 flash(str(exc), "danger")
             return redirect(url_for("admin_data_tools", search=search))
