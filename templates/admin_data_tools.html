@@ -60,7 +60,11 @@
                             <div style="font-size:20px; font-weight:900; color:#fff;">{{ item.full_name }}</div>
                             <div class="small muted" style="margin-top:6px;">@{{ item.username }} | {{ item.work_date }} | {{ item.department or '-' }} | {{ item.position or '-' }}</div>
                         </div>
-                        <div class="status status-red">{{ item.issue_summary }}</div>
+                        {% if item.severity == 'error' %}
+                            <div class="status status-red">{{ item.issue_summary }}</div>
+                        {% else %}
+                            <div class="status status-yellow">{{ item.warning_summary }}</div>
+                        {% endif %}
                     </div>
 
                     <div class="grid grid-4" style="margin-top:14px;">
@@ -83,6 +87,9 @@
                     </div>
 
                     <div class="small muted" style="margin-top:10px;">{{ item.break_summary }}</div>
+                    {% if item.warnings %}
+                        <div class="small muted" style="margin-top:8px;">Review note: {{ item.warning_summary }}</div>
+                    {% endif %}
 
                     <form method="POST" style="margin-top:14px;">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

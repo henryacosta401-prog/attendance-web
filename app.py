@@ -939,10 +939,11 @@ def is_suspicious_work_duration(user_row, attendance_row):
     return False
 
 
-def collect_attendance_issues(user_row, attendance_row):
+def collect_attendance_diagnostics(user_row, attendance_row):
     issues = []
+    warnings = []
     if not user_row or not attendance_row:
-        return issues
+        return issues, warnings
 
     time_in_dt = parse_db_datetime(attendance_row.get("time_in"))
     time_out_dt = parse_db_datetime(attendance_row.get("time_out"))
@@ -973,9 +974,9 @@ def collect_attendance_issues(user_row, attendance_row):
             issues.append(f"{label} ends after time out")
 
     if len(break_rows) > 1:
-        issues.append(f"{len(break_rows)} break rows attached")
+        warnings.append(f"{len(break_rows)} break rows attached")
 
-    return issues
+    return issues, warnings
 
 
 def parse_break_limit_minutes(value):
@@ -2260,12 +2261,15 @@ def get_suspicious_attendance_records(search="", limit=50):
             hay = f"{item['full_name']} {item['username']} {item['work_date']}".lower()
             if search.lower() not in hay:
                 continue
-        issues = collect_attendance_issues(item, item)
-        if not issues:
+        issues, warnings = collect_attendance_diagnostics(item, item)
+        if not issues and not warnings:
             continue
         break_rows = get_break_rows(item["id"])
-        item["issue_summary"] = "; ".join(issues)
+        item["issue_summary"] = "; ".join(issues) if issues else "Needs review"
         item["issues"] = issues
+        item["warnings"] = warnings
+        item["severity"] = "error" if issues else "warning"
+        item["warning_summary"] = "; ".join(warnings)
         item["break_count"] = len(break_rows)
         item["raw_work_minutes"] = total_work_minutes(item)
         item["break_summary"] = summarize_break_sessions(build_break_sessions(item["id"])) if break_rows else "No break sessions recorded."
