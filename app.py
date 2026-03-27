@@ -2533,10 +2533,11 @@ def build_admin_history_records(search="", department="", type_filter="", late_o
 
 
 def apply_attendance_correction(user_id, work_date, time_in_value="", break_start_value="", break_end_value="", time_out_value=""):
+    undertime_only_adjustment = bool(time_out_value and not (time_in_value or break_start_value or break_end_value))
     attendance, break_row = get_matching_attendance_context_for_request(
         user_id,
         work_date,
-        request_type="Undertime" if time_out_value and not (time_in_value or break_start_value or break_end_value) else "",
+        request_type="Undertime" if undertime_only_adjustment else "",
         requested_time_out=combine_work_date_and_time(work_date, time_out_value) if time_out_value else None
     )
     target_work_date = attendance["work_date"] if attendance else work_date
@@ -2559,6 +2560,13 @@ def apply_attendance_correction(user_id, work_date, time_in_value="", break_star
         existing_break_end=break_row["break_end"] if break_row else None,
         existing_time_out=attendance["time_out"] if attendance else None
     )
+
+    if undertime_only_adjustment and final_time_out:
+        if final_break_start and final_break_start > final_time_out:
+            final_break_start = None
+            final_break_end = None
+        elif final_break_end and final_break_end > final_time_out:
+            final_break_end = final_time_out
 
     if (time_in_value or (attendance and attendance["time_in"])) and final_time_in and final_time_out:
         if final_time_out < final_time_in:
@@ -2982,9 +2990,22 @@ def update_correction_request(request_id):
         reviewed_at = now_str() if status in {"Approved", "Rejected"} else None
     reviewed_by = session["user_id"] if status in {"Approved", "Rejected"} else None
 
-    attendance, break_row = get_attendance_context(correction["user_id"], correction["work_date"])
-    requested_time_in_dt, requested_break_start_dt, requested_break_end_dt, requested_time_out_dt = resolve_correction_datetimes(
+    preview_request_type = correction["request_type"] if correction["request_type"] == "Undertime" else ""
+    preview_requested_time_out = combine_work_date_and_time(correction["work_date"], requested_time_out) if requested_time_out else None
+    attendance, break_row = get_matching_attendance_context_for_request(
+        correction["user_id"],
         correction["work_date"],
+        request_type=preview_request_type,
+        requested_time_out=preview_requested_time_out
+    )
+    preview_work_date = attendance["work_date"] if attendance and correction["request_type"] == "Undertime" else correction["work_date"]
+
+    if correction["request_type"] == "Undertime":
+        requested_break_start = ""
+        requested_break_end = ""
+
+    requested_time_in_dt, requested_break_start_dt, requested_break_end_dt, requested_time_out_dt = resolve_correction_datetimes(
+        preview_work_date,
         time_in_value=requested_time_in,
         break_start_value=requested_break_start,
         break_end_value=requested_break_end,
