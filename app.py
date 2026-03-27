@@ -969,6 +969,19 @@ def combine_work_date_and_time(work_date, clock_time, not_before=None):
     return candidate_dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
+def extract_clock_time(value):
+    parsed_dt = parse_db_datetime(value)
+    if parsed_dt:
+        return parsed_dt.strftime("%H:%M")
+    raw_value = (value or "").strip()
+    if not raw_value:
+        return ""
+    try:
+        return datetime.strptime(raw_value, "%H:%M").strftime("%H:%M")
+    except ValueError:
+        return ""
+
+
 def get_attendance_context(user_id, work_date):
     attendance = fetchone("""
         SELECT *
@@ -1003,14 +1016,10 @@ def get_attendance_context_by_row(attendance):
 
 def get_matching_attendance_context_for_request(user_id, work_date, request_type="", requested_time_out=None):
     attendance, break_row = get_attendance_context(user_id, work_date)
-    if attendance or request_type != "Undertime":
+    if request_type != "Undertime":
         return attendance, break_row
-
-    active_attendance = get_active_attendance(user_id)
-    if active_attendance:
-        return get_attendance_context_by_row(active_attendance)
-
-    requested_time_out_dt = parse_db_datetime(requested_time_out)
+    requested_clock_time = extract_clock_time(requested_time_out)
+    user_row = get_user_by_id(user_id)
     candidate_rows = fetchall("""
         SELECT *
         FROM attendance
@@ -1018,15 +1027,36 @@ def get_matching_attendance_context_for_request(user_id, work_date, request_type
         ORDER BY work_date DESC, id DESC
         LIMIT 10
     """, (user_id,))
+    if attendance and not any(candidate["id"] == attendance["id"] for candidate in candidate_rows):
+        candidate_rows.insert(0, attendance)
 
+    best_candidate = None
+    best_score = None
     for candidate in candidate_rows:
         start_dt = parse_db_datetime(candidate["time_in"])
         if not start_dt:
             continue
-        end_dt = parse_db_datetime(candidate["time_out"]) or requested_time_out_dt
-        if requested_time_out_dt and end_dt and start_dt <= requested_time_out_dt <= end_dt:
-            return get_attendance_context_by_row(candidate)
+        candidate_time_out = combine_work_date_and_time(candidate["work_date"], requested_clock_time, not_before=candidate["time_in"]) if requested_clock_time else None
+        candidate_time_out_dt = parse_db_datetime(candidate_time_out)
+        if not candidate_time_out_dt:
+            continue
+        _, shift_end_dt = get_shift_bounds_for_work_date(user_row, candidate["work_date"])
+        shift_end_naive = shift_end_dt.replace(tzinfo=None)
+        existing_time_out_dt = parse_db_datetime(candidate["time_out"]) or shift_end_naive
+        if candidate_time_out_dt < start_dt or candidate_time_out_dt > shift_end_naive:
+            continue
+        if existing_time_out_dt and candidate_time_out_dt > existing_time_out_dt:
+            continue
 
+        score = abs(int((existing_time_out_dt - candidate_time_out_dt).total_seconds())) if existing_time_out_dt else 0
+        if best_score is None or score < best_score:
+            best_candidate = candidate
+            best_score = score
+
+    if best_candidate:
+        return get_attendance_context_by_row(best_candidate)
+    if attendance:
+        return attendance, break_row
     return None, None
 
 
