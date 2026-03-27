@@ -2287,6 +2287,14 @@ def update_attendance_record_by_admin(attendance_id, time_in_value="", time_out_
     final_time_out = parse_datetime_local_input(time_out_value) if time_out_value else attendance["time_out"]
 
     if final_time_in and final_time_out and final_time_out < final_time_in:
+        shift_start = parse_shift_start(user["shift_start"] if user else DEFAULT_SHIFT_START)
+        shift_end = parse_shift_end(user["shift_end"] if user else DEFAULT_SHIFT_END)
+        overnight_shift = shift_end <= shift_start
+        if overnight_shift:
+            adjusted_time_out = parse_db_datetime(final_time_out) + timedelta(days=1)
+            final_time_out = adjusted_time_out.strftime("%Y-%m-%d %H:%M:%S")
+
+    if final_time_in and final_time_out and final_time_out < final_time_in:
         raise ValueError("Time out cannot be earlier than time in.")
 
     late_flag, late_minutes = calculate_late_info(final_time_in, parse_shift_start(user["shift_start"] if user else DEFAULT_SHIFT_START))
