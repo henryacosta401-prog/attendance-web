@@ -889,13 +889,47 @@ def is_undertime_record(user_row, attendance_row):
     if attendance_row.get("source_type") != "attendance":
         return False
 
+    actual_time_in = parse_db_datetime(attendance_row.get("time_in"))
     actual_time_out = parse_db_datetime(attendance_row.get("time_out"))
-    if not actual_time_out:
+    if not actual_time_in or not actual_time_out:
         return False
 
-    _, shift_end_dt = get_shift_bounds_for_work_date(user_row, attendance_row["work_date"])
+    shift_start_dt, shift_end_dt = get_shift_bounds_for_work_date(user_row, attendance_row["work_date"])
+    shift_start_naive = shift_start_dt.replace(tzinfo=None)
     shift_end_naive = shift_end_dt.replace(tzinfo=None)
-    return actual_time_out < shift_end_naive
+    worked_minutes = max(int((actual_time_out - actual_time_in).total_seconds() // 60), 0)
+    scheduled_minutes = max(int((shift_end_naive - shift_start_naive).total_seconds() // 60), 0)
+    if worked_minutes <= 0 or scheduled_minutes <= 0:
+        return False
+    if worked_minutes > scheduled_minutes:
+        return False
+    return shift_start_naive <= actual_time_out < shift_end_naive
+
+
+def get_scheduled_shift_minutes(user_row, work_date):
+    shift_start_dt, shift_end_dt = get_shift_bounds_for_work_date(user_row, work_date)
+    return max(int((shift_end_dt - shift_start_dt).total_seconds() // 60), 0)
+
+
+def is_suspicious_work_duration(user_row, attendance_row):
+    if not user_row or not attendance_row:
+        return False
+    if not attendance_row.get("time_in") or not attendance_row.get("time_out"):
+        return False
+
+    time_in_dt = parse_db_datetime(attendance_row.get("time_in"))
+    time_out_dt = parse_db_datetime(attendance_row.get("time_out"))
+    if not time_in_dt or not time_out_dt or time_out_dt < time_in_dt:
+        return True
+
+    worked_minutes = max(int((time_out_dt - time_in_dt).total_seconds() // 60), 0)
+    scheduled_minutes = get_scheduled_shift_minutes(user_row, attendance_row["work_date"])
+
+    if worked_minutes > (18 * 60):
+        return True
+    if scheduled_minutes > 0 and worked_minutes > (scheduled_minutes + 240):
+        return True
+    return False
 
 
 def parse_break_limit_minutes(value):
@@ -1967,6 +2001,10 @@ def get_admin_employee_rows(status_filter="", search="", department_filter="", o
         scheduled_today = is_scheduled_today(user)
         absent_today = is_absent_today(user, attendance)
         missing_timeout_today = is_missing_timeout_today(user, attendance)
+        undertime_today = 1 if is_undertime_record(
+            user,
+            {**dict(attendance), "source_type": "attendance"} if attendance else None
+        ) else 0
         status_display = live_status
 
         if user["is_active"] != 1:
@@ -1975,6 +2013,8 @@ def get_admin_employee_rows(status_filter="", search="", department_filter="", o
             status_display = "Absent"
         elif missing_timeout_today:
             status_display = "Missing Time Out"
+        elif undertime_today:
+            status_display = "Undertime"
         elif not scheduled_today and live_status == "Offline":
             status_display = "Off Day"
 
@@ -2010,8 +2050,9 @@ def get_admin_employee_rows(status_filter="", search="", department_filter="", o
         row["over_break_minutes"] = get_overbreak_minutes(row["break_minutes"], row["break_limit_minutes"])
         row["over_break_flag"] = 1 if row["over_break_minutes"] > 0 else 0
         row["missing_timeout_flag"] = 1 if missing_timeout_today else 0
+        row["undertime_flag"] = undertime_today
         row["avatar_initials"] = get_avatar_initials(user["full_name"])
-        row["attention_score"] = int(row["absent_flag"]) + int(row["late_flag"]) + int(row["over_break_flag"]) + int(row["missing_timeout_flag"])
+        row["attention_score"] = int(row["absent_flag"]) + int(row["late_flag"]) + int(row["over_break_flag"]) + int(row["missing_timeout_flag"]) + int(row["undertime_flag"])
 
         if status_filter and row["status_display"] != status_filter:
             continue
@@ -2072,12 +2113,14 @@ def get_exception_collections(employee_rows):
     late = [row for row in employee_rows if row["late_flag"] == 1]
     over_break = [row for row in employee_rows if row["over_break_flag"] == 1]
     missing_timeout = [row for row in employee_rows if row["missing_timeout_flag"] == 1]
+    undertime = [row for row in employee_rows if row["undertime_flag"] == 1]
 
     return {
         "absent": sorted(absent, key=lambda row: (row["department"] or "", row["full_name"] or "")),
         "late": sorted(late, key=lambda row: (-row["late_minutes"], row["full_name"] or "")),
         "over_break": sorted(over_break, key=lambda row: (-row["over_break_minutes"], row["full_name"] or "")),
         "missing_timeout": sorted(missing_timeout, key=lambda row: (row["shift_end"] or "", row["full_name"] or "")),
+        "undertime": sorted(undertime, key=lambda row: (row["shift_end"] or "", row["full_name"] or "")),
     }
 
 
@@ -2202,15 +2245,18 @@ def enrich_history_record(row, break_limit_minutes, employee_row=None):
     if record_type == "Undertime" and row.get("requested_time_out"):
         work_row["time_out"] = row.get("requested_time_out")
         row["time_out"] = row.get("requested_time_out")
-    work_minutes = total_work_minutes(work_row) if is_attendance else 0
+    suspicious_work_flag = 1 if is_suspicious_work_duration(employee_row, work_row) else 0
+    raw_work_minutes = total_work_minutes(work_row) if is_attendance else 0
+    work_minutes = 0 if suspicious_work_flag else raw_work_minutes
     over_break_minutes = get_overbreak_minutes(break_minutes, break_limit_minutes)
     break_sessions = build_break_sessions(row["id"]) if is_attendance and row.get("id") else []
-    undertime_flag = 1 if is_undertime_record(employee_row, work_row) else 0
+    undertime_flag = 1 if not suspicious_work_flag and is_undertime_record(employee_row, work_row) else 0
     if record_type == "Attendance" and undertime_flag:
         record_type = "Undertime"
     display_status = row.get("status") or ""
     if undertime_flag and is_attendance and row.get("time_out"):
         display_status = "Undertime"
+    data_issue_note = "Suspicious work duration hidden. Please review this record." if suspicious_work_flag else ""
 
     return {
         "row": row,
@@ -2218,12 +2264,15 @@ def enrich_history_record(row, break_limit_minutes, employee_row=None):
         "break_sessions": break_sessions,
         "break_sessions_summary": summarize_break_sessions(break_sessions),
         "work_minutes": work_minutes,
+        "raw_work_minutes": raw_work_minutes,
         "over_break_minutes": over_break_minutes,
         "undertime_flag": undertime_flag,
+        "suspicious_work_flag": suspicious_work_flag,
+        "data_issue_note": data_issue_note,
         "display_status": display_status,
         "absent_flag": 1 if employee_row and is_attendance and is_absent_today(employee_row, row) else 0,
         "record_type": record_type,
-        "request_note": row.get("admin_note") or row.get("message") or "",
+        "request_note": " | ".join(part for part in [row.get("admin_note") or row.get("message") or "", data_issue_note] if part),
     }
 
 
@@ -2670,7 +2719,8 @@ def admin_dashboard():
         "timed_out": len([emp for emp in all_employee_rows if emp["status_display"] == "Timed Out"]),
         "late_today": late_today,
         "over_break_today": len(exception_groups["over_break"]),
-        "missing_timeout": len(exception_groups["missing_timeout"])
+        "missing_timeout": len(exception_groups["missing_timeout"]),
+        "undertime_today": len(exception_groups["undertime"])
     }
 
     return render_template(
@@ -2772,6 +2822,7 @@ def export_admin_exceptions_excel():
         "late": "Late Today",
         "over_break": "Over Break",
         "missing_timeout": "Missing Time Out",
+        "undertime": "Undertime Today",
     }
 
     try:

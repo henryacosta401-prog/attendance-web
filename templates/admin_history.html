@@ -125,7 +125,12 @@
                                 <span class="status status-green">No</span>
                             {% endif %}
                         </td>
-                        <td>{{ minutes_to_hm(item.work_minutes) }}</td>
+                        <td>
+                            <div>{{ minutes_to_hm(item.work_minutes) }}</div>
+                            {% if item.data_issue_note %}
+                                <div class="small muted" style="margin-top:6px;">{{ item.data_issue_note }}</div>
+                            {% endif %}
+                        </td>
                         <td>
                             {% if item.row.proof_file %}
                                 {% if is_image(item.row.proof_file) %}

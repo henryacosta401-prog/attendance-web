@@ -47,7 +47,12 @@
                                 <div class="small muted" style="margin-top:6px;">{{ item.break_sessions_summary }}</div>
                             {% endif %}
                         </td>
-                        <td>{{ minutes_to_hm(item.work_minutes) }}</td>
+                        <td>
+                            <div>{{ minutes_to_hm(item.work_minutes) }}</div>
+                            {% if item.data_issue_note %}
+                                <div class="small muted" style="margin-top:6px;">{{ item.data_issue_note }}</div>
+                            {% endif %}
+                        </td>
                         <td>
                             {% if item.row.proof_file %}
                                 <a href="{{ url_for('uploaded_file', filename=item.row.proof_file) }}" target="_blank">View</a>
