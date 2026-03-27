@@ -159,7 +159,7 @@ document.addEventListener("DOMContentLoaded", function () {
 </div>
 
 <div class="admin-shell">
-    <div class="admin-stats">
+    <div class="admin-stats" data-tour-id="admin-stats">
         <div class="admin-stat-card"><div class="admin-stat-label">Active Employees</div><div class="admin-stat-value">{{ stats.total_employees }}</div><div class="admin-stat-note">Current active employee accounts</div></div>
         <div class="admin-stat-card"><div class="admin-stat-label">Scheduled Today</div><div class="admin-stat-value">{{ stats.scheduled_today }}</div><div class="admin-stat-note">Based on each employee's workdays</div></div>
         <div class="admin-stat-card"><div class="admin-stat-label">Absent Today</div><div class="admin-stat-value">{{ stats.absent_today }}</div><div class="admin-stat-note">Scheduled but not timed in</div></div>
@@ -180,7 +180,7 @@ document.addEventListener("DOMContentLoaded", function () {
         </div>
     </section>
 
-    <div class="admin-exception-grid">
+    <div class="admin-exception-grid" data-tour-id="admin-exceptions">
         <div class="admin-exception-card"><div class="admin-exception-top"><div><div class="admin-exception-label">Absent Today</div><div class="admin-exception-count">{{ exception_groups.absent|length }}</div></div><span class="admin-pill admin-pill-red">Critical</span></div><div class="admin-stat-note">Scheduled staff who passed shift start without time in.</div><div class="admin-exception-actions"><a class="btn btn-primary" href="{{ url_for('export_admin_exceptions_excel', type='absent', department=department_filter) }}">Export</a></div></div>
         <div class="admin-exception-card"><div class="admin-exception-top"><div><div class="admin-exception-label">Late Today</div><div class="admin-exception-count">{{ exception_groups.late|length }}</div></div><span class="admin-pill admin-pill-yellow">Watch</span></div><div class="admin-stat-note">Employees who timed in after the scheduled start.</div><div class="admin-exception-actions"><a class="btn btn-primary" href="{{ url_for('export_admin_exceptions_excel', type='late', department=department_filter) }}">Export</a></div></div>
         <div class="admin-exception-card"><div class="admin-exception-top"><div><div class="admin-exception-label">Undertime Today</div><div class="admin-exception-count">{{ exception_groups.undertime|length }}</div></div><span class="admin-pill admin-pill-yellow">Track</span></div><div class="admin-stat-note">Employees who timed out before the scheduled shift end.</div><div class="admin-exception-actions"><a class="btn btn-primary" href="{{ url_for('export_admin_exceptions_excel', type='undertime', department=department_filter) }}">Export</a></div></div>
@@ -189,7 +189,7 @@ document.addEventListener("DOMContentLoaded", function () {
     </div>
 
     <div class="admin-dashboard-grid">
-        <section class="admin-panel">
+        <section class="admin-panel" data-tour-id="admin-live-status">
             <h2>Live Employee Status</h2>
             <p class="admin-panel-subtitle">Search, filter, and page through the live roster without letting the page get endlessly taller.</p>
             <div class="admin-filter-grid">
@@ -201,7 +201,7 @@ document.addEventListener("DOMContentLoaded", function () {
             </div>
             <div class="admin-toolbar">
                 <div class="admin-panel-subtitle" id="pageSummary">{% if pagination.total %}Showing {{ pagination.start_index }}-{{ pagination.end_index }} of {{ pagination.total }}{% else %}No matching employees{% endif %}</div>
-                <a class="btn btn-purple" href="{{ url_for('admin_history', department=department_filter) }}">Open Full History</a>
+                <a class="btn btn-purple" data-tour-id="admin-history-link" href="{{ url_for('admin_history', department=department_filter) }}">Open Full History</a>
             </div>
             <div class="admin-table-wrap">
                 <table class="admin-live-table">
@@ -232,7 +232,7 @@ document.addEventListener("DOMContentLoaded", function () {
         </section>
 
         <aside class="admin-sidebar">
-            <section class="admin-panel">
+            <section class="admin-panel" data-tour-id="admin-exception-queue">
                 <h2>Exception Queue</h2>
                 <p class="admin-panel-subtitle">The fastest way to review the people who need follow-up right now.</p>
                 {% for key, title in [('absent', 'Absent Today'), ('late', 'Late Today'), ('undertime', 'Undertime Today'), ('over_break', 'Over Break'), ('missing_timeout', 'Missing Time Out')] %}

@@ -169,6 +169,99 @@
             margin-top: 22px;
         }
 
+        .tour-launch {
+            cursor: pointer;
+        }
+
+        .tour-backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(3, 7, 18, 0.72);
+            backdrop-filter: blur(6px);
+            z-index: 1200;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.18s ease;
+        }
+
+        .tour-backdrop.open {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .tour-card {
+            position: fixed;
+            width: min(360px, calc(100vw - 28px));
+            padding: 20px;
+            border-radius: 24px;
+            background: linear-gradient(180deg, rgba(17, 24, 39, 0.98), rgba(15, 23, 42, 0.98));
+            border: 1px solid rgba(148, 163, 184, 0.22);
+            box-shadow: 0 24px 60px rgba(0, 0, 0, 0.42);
+            z-index: 1201;
+            opacity: 0;
+            pointer-events: none;
+            transform: translateY(10px);
+            transition: opacity 0.18s ease, transform 0.18s ease;
+        }
+
+        .tour-card.open {
+            opacity: 1;
+            pointer-events: auto;
+            transform: translateY(0);
+        }
+
+        .tour-kicker {
+            color: #93c5fd;
+            font-size: 12px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .tour-title {
+            margin-top: 10px;
+            color: #ffffff;
+            font-size: 22px;
+            font-weight: 900;
+            line-height: 1.1;
+        }
+
+        .tour-body {
+            margin-top: 10px;
+            color: #cbd5e1;
+            font-size: 14px;
+            line-height: 1.55;
+        }
+
+        .tour-progress {
+            margin-top: 14px;
+            color: #93c5fd;
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .tour-actions {
+            margin-top: 18px;
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .tour-actions-group {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .tour-highlight {
+            position: relative;
+            z-index: 1202;
+            box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.95), 0 18px 32px rgba(15, 23, 42, 0.34);
+            border-radius: 20px;
+            transition: box-shadow 0.18s ease;
+        }
+
         .hero-card {
             position: relative;
             overflow: hidden;
@@ -721,7 +814,7 @@
 
     {% block extra_head %}{% endblock %}
 </head>
-<body>
+<body data-tour-role="{{ session.get('role', 'guest') }}" data-tour-endpoint="{{ request.endpoint or '' }}">
 
 {% if session.get('user_id') %}
 <div class="navbar">
@@ -737,26 +830,27 @@
 
     <div class="nav-right">
         {% if session.get('role') == 'admin' %}
-            <a class="pill-link {% if request.endpoint == 'admin_dashboard' %}active{% endif %}" href="{{ url_for('admin_dashboard') }}">Dashboard</a>
+            <a class="pill-link {% if request.endpoint == 'admin_dashboard' %}active{% endif %}" data-tour-id="nav-dashboard" href="{{ url_for('admin_dashboard') }}">Dashboard</a>
             <a class="pill-link {% if request.endpoint == 'admin_error_reports' %}active{% endif %}" href="{{ url_for('admin_error_reports') }}">Error Reports</a>
             <a class="pill-link {% if request.endpoint == 'admin_incident_report' %}active{% endif %}" href="{{ url_for('admin_incident_report') }}">Create Incident</a>
-            <a class="pill-link {% if request.endpoint == 'admin_corrections' %}active{% endif %}" href="{{ url_for('admin_corrections') }}">Corrections</a>
-            <a class="pill-link {% if request.endpoint == 'admin_history' %}active{% endif %}" href="{{ url_for('admin_history') }}">History</a>
+            <a class="pill-link {% if request.endpoint == 'admin_corrections' %}active{% endif %}" data-tour-id="nav-corrections" href="{{ url_for('admin_corrections') }}">Corrections</a>
+            <a class="pill-link {% if request.endpoint == 'admin_history' %}active{% endif %}" data-tour-id="nav-history" href="{{ url_for('admin_history') }}">History</a>
             <a class="pill-link {% if request.endpoint == 'admin_data_tools' %}active{% endif %}" href="{{ url_for('admin_data_tools') }}">Data Tools</a>
-            <a class="pill-link {% if request.endpoint == 'manage_employees' or request.endpoint == 'edit_employee' %}active{% endif %}" href="{{ url_for('manage_employees') }}">Employees</a>
-            <a class="pill-link {% if request.endpoint == 'admin_profile' %}active{% endif %}" href="{{ url_for('admin_profile') }}">Account</a>
+            <a class="pill-link {% if request.endpoint == 'manage_employees' or request.endpoint == 'edit_employee' %}active{% endif %}" data-tour-id="nav-employees" href="{{ url_for('manage_employees') }}">Employees</a>
+            <a class="pill-link {% if request.endpoint == 'admin_profile' %}active{% endif %}" data-tour-id="nav-account" href="{{ url_for('admin_profile') }}">Account</a>
         {% else %}
-            <a class="pill-link {% if request.endpoint == 'dashboard' %}active{% endif %}" href="{{ url_for('dashboard') }}">Dashboard</a>
-            <a class="pill-link {% if request.endpoint == 'employee_actions' %}active{% endif %}" href="{{ url_for('employee_actions') }}">Quick Actions</a>
+            <a class="pill-link {% if request.endpoint == 'dashboard' %}active{% endif %}" data-tour-id="nav-dashboard" href="{{ url_for('dashboard') }}">Dashboard</a>
+            <a class="pill-link {% if request.endpoint == 'employee_actions' %}active{% endif %}" data-tour-id="nav-quick-actions" href="{{ url_for('employee_actions') }}">Quick Actions</a>
             <a class="pill-link {% if request.endpoint == 'employee_activity' %}active{% endif %}" href="{{ url_for('employee_activity') }}">Recent Activity</a>
-            <a class="pill-link {% if request.endpoint == 'employee_history' %}active{% endif %}" href="{{ url_for('employee_history') }}">History</a>
-            <a class="pill-link {% if request.endpoint == 'employee_corrections' %}active{% endif %}" href="{{ url_for('employee_corrections') }}">Corrections</a>
-            <a class="pill-link {% if request.endpoint == 'employee_profile' %}active{% endif %}" href="{{ url_for('employee_profile') }}">Profile</a>
+            <a class="pill-link {% if request.endpoint == 'employee_history' %}active{% endif %}" data-tour-id="nav-history" href="{{ url_for('employee_history') }}">History</a>
+            <a class="pill-link {% if request.endpoint == 'employee_corrections' %}active{% endif %}" data-tour-id="nav-corrections" href="{{ url_for('employee_corrections') }}">Corrections</a>
+            <a class="pill-link {% if request.endpoint == 'employee_profile' %}active{% endif %}" data-tour-id="nav-profile" href="{{ url_for('employee_profile') }}">Profile</a>
         {% endif %}
 
         <span class="pill-link">👤 {{ session.get('full_name') }}</span>
         <span class="pill-link">🔔 {{ unread_count }}</span>
-        <a class="btn btn-danger" href="{{ url_for('logout') }}">Logout</a>
+        <button class="pill-link tour-launch" data-tour-launch="manual" type="button">App Tour</button>
+        <a class="btn btn-danger" data-tour-id="nav-logout" href="{{ url_for('logout') }}">Logout</a>
     </div>
 </div>
 {% endif %}
@@ -777,82 +871,248 @@
     </div>
 </div>
 
+<div class="tour-backdrop" id="tourBackdrop" hidden></div>
+<div class="tour-card" id="tourCard" hidden>
+    <div class="tour-kicker">App Walkthrough</div>
+    <div class="tour-title" id="tourTitle"></div>
+    <div class="tour-body" id="tourBody"></div>
+    <div class="tour-progress" id="tourProgress"></div>
+    <div class="tour-actions">
+        <button class="btn btn-dark" type="button" id="tourSkip">Skip Tour</button>
+        <div class="tour-actions-group">
+            <button class="btn btn-gray" type="button" id="tourBack">Back</button>
+            <button class="btn btn-primary" type="button" id="tourNext">Next</button>
+        </div>
+    </div>
+</div>
+
 <script>
 document.addEventListener("DOMContentLoaded", function () {
     const navRight = document.querySelector(".nav-right");
     if (!navRight) return;
 
     const pillSpans = navRight.querySelectorAll("span.pill-link");
-    if (pillSpans.length < 2) return;
-
-    const notificationPill = pillSpans[1];
-    const dropdownWrapper = document.createElement("div");
-    dropdownWrapper.className = "notification-menu";
-    dropdownWrapper.innerHTML = `
-        <button class="pill-link notification-toggle ${window.location.pathname === "{{ url_for('notifications_page') }}" ? "active" : ""}" type="button" id="notificationToggle" aria-expanded="false">
-            <span>Notifications</span>
-            <span class="notification-badge">{{ unread_count }}</span>
-        </button>
-        <div class="notification-dropdown" id="notificationDropdown">
-            <div class="notification-header">
-                <div>
-                    <div style="font-weight:900;color:white;">Notifications</div>
-                    <div class="small muted">{{ unread_count }} unread</div>
+    if (pillSpans.length >= 2) {
+        const notificationPill = pillSpans[1];
+        const dropdownWrapper = document.createElement("div");
+        dropdownWrapper.className = "notification-menu";
+        dropdownWrapper.innerHTML = `
+            <button class="pill-link notification-toggle ${window.location.pathname === "{{ url_for('notifications_page') }}" ? "active" : ""}" data-tour-id="nav-notifications" type="button" id="notificationToggle" aria-expanded="false">
+                <span>Notifications</span>
+                <span class="notification-badge">{{ unread_count }}</span>
+            </button>
+            <div class="notification-dropdown" id="notificationDropdown">
+                <div class="notification-header">
+                    <div>
+                        <div style="font-weight:900;color:white;">Notifications</div>
+                        <div class="small muted">{{ unread_count }} unread</div>
+                    </div>
+                    <form method="POST" action="{{ url_for('read_all_notifications') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button class="btn btn-dark" type="submit">Mark All Read</button>
+                    </form>
                 </div>
-                <form method="POST" action="{{ url_for('read_all_notifications') }}">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                    <button class="btn btn-dark" type="submit">Mark All Read</button>
-                </form>
+                <div class="notification-list">
+                    {% if latest_notifications %}
+                        {% for notif in latest_notifications %}
+                            <div class="notification-card {% if notif.is_read == 0 %}unread{% endif %}">
+                                <div style="font-weight:900;color:white;">{{ notif.title }}</div>
+                                <div class="small muted" style="margin-top:5px;">{{ notif.message }}</div>
+                                <div class="small muted" style="margin-top:8px;">{{ format_datetime_12h(notif.created_at) }}</div>
+                            </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="small muted">No notifications yet.</div>
+                    {% endif %}
+                </div>
+                <div class="notification-actions">
+                    <a class="btn btn-gray" href="{{ url_for('notifications_page') }}">View All</a>
+                    <button class="btn btn-secondary" type="button" id="notificationClose">Close</button>
+                </div>
             </div>
-            <div class="notification-list">
-                {% if latest_notifications %}
-                    {% for notif in latest_notifications %}
-                        <div class="notification-card {% if notif.is_read == 0 %}unread{% endif %}">
-                            <div style="font-weight:900;color:white;">{{ notif.title }}</div>
-                            <div class="small muted" style="margin-top:5px;">{{ notif.message }}</div>
-                            <div class="small muted" style="margin-top:8px;">{{ format_datetime_12h(notif.created_at) }}</div>
-                        </div>
-                    {% endfor %}
-                {% else %}
-                    <div class="small muted">No notifications yet.</div>
-                {% endif %}
-            </div>
-            <div class="notification-actions">
-                <a class="btn btn-gray" href="{{ url_for('notifications_page') }}">View All</a>
-                <button class="btn btn-secondary" type="button" id="notificationClose">Close</button>
-            </div>
-        </div>
-    `;
-    notificationPill.replaceWith(dropdownWrapper);
+        `;
+        notificationPill.replaceWith(dropdownWrapper);
 
-    const toggle = document.getElementById("notificationToggle");
-    const dropdown = document.getElementById("notificationDropdown");
-    const closeBtn = document.getElementById("notificationClose");
+        const toggle = document.getElementById("notificationToggle");
+        const dropdown = document.getElementById("notificationDropdown");
+        const closeBtn = document.getElementById("notificationClose");
 
-    function closeDropdown() {
-        dropdown.classList.remove("open");
-        toggle.setAttribute("aria-expanded", "false");
-    }
+        function closeDropdown() {
+            dropdown.classList.remove("open");
+            toggle.setAttribute("aria-expanded", "false");
+        }
 
-    toggle.addEventListener("click", function (event) {
-        event.stopPropagation();
-        const isOpen = dropdown.classList.toggle("open");
-        toggle.setAttribute("aria-expanded", isOpen ? "true" : "false");
-    });
+        toggle.addEventListener("click", function (event) {
+            event.stopPropagation();
+            const isOpen = dropdown.classList.toggle("open");
+            toggle.setAttribute("aria-expanded", isOpen ? "true" : "false");
+        });
 
-    if (closeBtn) {
-        closeBtn.addEventListener("click", function () {
+        if (closeBtn) {
+            closeBtn.addEventListener("click", function () {
+                closeDropdown();
+            });
+        }
+
+        dropdown.addEventListener("click", function (event) {
+            event.stopPropagation();
+        });
+
+        document.addEventListener("click", function () {
             closeDropdown();
         });
     }
+});
 
-    dropdown.addEventListener("click", function (event) {
-        event.stopPropagation();
+document.addEventListener("DOMContentLoaded", function () {
+    const role = document.body.dataset.tourRole || "guest";
+    const endpoint = document.body.dataset.tourEndpoint || "";
+    const backdrop = document.getElementById("tourBackdrop");
+    const card = document.getElementById("tourCard");
+    const title = document.getElementById("tourTitle");
+    const body = document.getElementById("tourBody");
+    const progress = document.getElementById("tourProgress");
+    const nextBtn = document.getElementById("tourNext");
+    const backBtn = document.getElementById("tourBack");
+    const skipBtn = document.getElementById("tourSkip");
+    const launchBtn = document.querySelector("[data-tour-launch='manual']");
+    const tourDefinitions = {
+        admin_dashboard: [
+            { selector: "[data-tour-id='nav-dashboard']", title: "Start from the dashboard", body: "This is your home base for daily monitoring. Come back here any time you need the big picture." },
+            { selector: "[data-tour-id='admin-stats']", title: "Read the headline numbers first", body: "These top cards are the quickest way to spot absences, undertime, overbreaks, and missing time-outs." },
+            { selector: "[data-tour-id='admin-exceptions']", title: "Work from the exception cards", body: "These cards help you focus on what needs follow-up today and let you export each exception group fast." },
+            { selector: "[data-tour-id='admin-live-status']", title: "Use the live roster for day-to-day review", body: "Search, filter, and monitor each employee's current shift status here without jumping around the app." },
+            { selector: "[data-tour-id='admin-history-link']", title: "History is your detailed audit view", body: "Open full history when you need exports, past records, undertime, leave, and deeper attendance review." },
+            { selector: "[data-tour-id='admin-exception-queue']", title: "Keep the queue in sight", body: "This panel keeps urgent people visible so they do not get buried while you review other pages." },
+            { selector: "[data-tour-id='nav-corrections']", title: "Corrections is where approvals happen", body: "Use Corrections for missed punches, undertime approvals, and leave requests." }
+        ],
+        dashboard: [
+            { selector: "[data-tour-id='nav-dashboard']", title: "Your dashboard is home base", body: "This page summarizes your shift, break use, work hours, and recent updates in one place." },
+            { selector: "[data-tour-id='employee-summary']", title: "Check your live shift status here", body: "This summary shows whether you are timed in, on break, timed out, and how your totals look today." },
+            { selector: "[data-tour-id='employee-today-panel']", title: "Review today's timeline", body: "Use this section to confirm your time in, time out, break sessions, and work summary for the current shift." },
+            { selector: "[data-tour-id='employee-quick-actions-link']", title: "Quick Actions handles attendance", body: "Open Quick Actions when you need to time in, start or end a break, upload proof, or time out." },
+            { selector: "[data-tour-id='nav-history']", title: "History keeps your past records", body: "Use History to review earlier shifts, work hours, break details, and uploaded proofs." },
+            { selector: "[data-tour-id='nav-corrections']", title: "Corrections is for requests", body: "Submit missed punches, undertime, or leave requests here whenever something needs approval." },
+            { selector: "[data-tour-id='nav-notifications']", title: "Notifications keep you updated", body: "Open Notifications to see approvals, attendance alerts, and other important account updates." }
+        ]
+    };
+    const steps = tourDefinitions[endpoint] || [];
+    let activeElement = null;
+    let currentStepIndex = 0;
+
+    if (!steps.length || !backdrop || !card) {
+        if (launchBtn) {
+            launchBtn.style.display = "none";
+        }
+        return;
+    }
+
+    function clearHighlight() {
+        if (activeElement) {
+            activeElement.classList.remove("tour-highlight");
+            activeElement = null;
+        }
+    }
+
+    function closeTour(markSeen) {
+        clearHighlight();
+        backdrop.classList.remove("open");
+        card.classList.remove("open");
+        backdrop.hidden = true;
+        card.hidden = true;
+        document.body.style.removeProperty("overflow");
+        if (markSeen) {
+            localStorage.setItem(`attendance-tour-seen:${role}:${endpoint}`, "1");
+        }
+    }
+
+    function positionCard(target) {
+        const rect = target.getBoundingClientRect();
+        const cardWidth = Math.min(360, window.innerWidth - 28);
+        let top = rect.bottom + 18;
+        let left = Math.min(rect.left, window.innerWidth - cardWidth - 14);
+        if (top + card.offsetHeight > window.innerHeight - 14) {
+            top = Math.max(14, rect.top - card.offsetHeight - 18);
+        }
+        if (left < 14) {
+            left = 14;
+        }
+        card.style.top = `${top}px`;
+        card.style.left = `${left}px`;
+    }
+
+    function renderStep() {
+        const step = steps[currentStepIndex];
+        const target = document.querySelector(step.selector);
+        if (!target) {
+            return;
+        }
+        clearHighlight();
+        activeElement = target;
+        activeElement.classList.add("tour-highlight");
+        activeElement.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+        title.textContent = step.title;
+        body.textContent = step.body;
+        progress.textContent = `Step ${currentStepIndex + 1} of ${steps.length}`;
+        backBtn.disabled = currentStepIndex === 0;
+        nextBtn.textContent = currentStepIndex === steps.length - 1 ? "Finish" : "Next";
+        requestAnimationFrame(function () {
+            positionCard(target);
+        });
+    }
+
+    function openTour() {
+        backdrop.hidden = false;
+        card.hidden = false;
+        document.body.style.overflow = "hidden";
+        backdrop.classList.add("open");
+        card.classList.add("open");
+        currentStepIndex = 0;
+        renderStep();
+    }
+
+    if (launchBtn) {
+        launchBtn.addEventListener("click", function () {
+            openTour();
+        });
+    }
+
+    nextBtn.addEventListener("click", function () {
+        if (currentStepIndex >= steps.length - 1) {
+            closeTour(true);
+            return;
+        }
+        currentStepIndex += 1;
+        renderStep();
     });
 
-    document.addEventListener("click", function () {
-        closeDropdown();
+    backBtn.addEventListener("click", function () {
+        if (currentStepIndex === 0) {
+            return;
+        }
+        currentStepIndex -= 1;
+        renderStep();
     });
+
+    skipBtn.addEventListener("click", function () {
+        closeTour(true);
+    });
+
+    backdrop.addEventListener("click", function () {
+        closeTour(true);
+    });
+
+    window.addEventListener("resize", function () {
+        if (!card.hidden && activeElement) {
+            positionCard(activeElement);
+        }
+    });
+
+    if (!localStorage.getItem(`attendance-tour-seen:${role}:${endpoint}`)) {
+        setTimeout(function () {
+            openTour();
+        }, 450);
+    }
 });
 </script>
 </body>

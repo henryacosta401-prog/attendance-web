@@ -234,7 +234,7 @@
 {% block content %}
 <div class="employee-shell">
     <div class="employee-hero">
-        <section class="employee-summary-card">
+        <section class="employee-summary-card" data-tour-id="employee-summary">
             <div style="display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap;">
                 <div>
                     <h1 style="font-size:36px;line-height:1.03;font-weight:900;color:#fff;">Good day, {{ user.full_name }}</h1>
@@ -316,14 +316,14 @@
         </aside>
     </div>
 
-    <section class="employee-panel">
+    <section class="employee-panel" data-tour-id="employee-today-panel">
         <div class="employee-panel-head">
             <div>
                 <div class="employee-panel-title">Today at a Glance</div>
                 <div class="employee-panel-subtitle">Your full attendance timeline, proof upload, and schedule reference.</div>
             </div>
             <div style="display:flex;gap:10px;flex-wrap:wrap;">
-                <a class="btn btn-gray" href="{{ url_for('employee_actions') }}">Open Quick Actions</a>
+                <a class="btn btn-gray" data-tour-id="employee-quick-actions-link" href="{{ url_for('employee_actions') }}">Open Quick Actions</a>
                 <a class="btn btn-gray" href="{{ url_for('employee_activity') }}">Open Recent Activity</a>
             </div>
         </div>
