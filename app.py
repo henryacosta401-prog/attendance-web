@@ -1,5 +1,7 @@
 import os
+import os
 import secrets
+import shutil
 import sqlite3
 from io import BytesIO
 from datetime import datetime, timedelta
@@ -40,6 +42,10 @@ PERSISTENT_DISK_PATH = os.environ.get("RENDER_DISK_PATH", "").strip()
 DEFAULT_SQLITE_DATABASE = os.path.join(BASE_DIR, "attendance.db")
 SQLITE_DATABASE = os.environ.get("SQLITE_DATABASE_PATH", "").strip() or (
     os.path.join(PERSISTENT_DISK_PATH, "attendance.db") if PERSISTENT_DISK_PATH else DEFAULT_SQLITE_DATABASE
+)
+DEFAULT_BACKUP_FOLDER = os.path.join(BASE_DIR, "backups")
+BACKUP_FOLDER = os.environ.get("BACKUP_FOLDER", "").strip() or (
+    os.path.join(PERSISTENT_DISK_PATH, "backups") if PERSISTENT_DISK_PATH else DEFAULT_BACKUP_FOLDER
 )
 DEFAULT_UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
 UPLOAD_FOLDER = os.environ.get("UPLOAD_FOLDER", "").strip() or (
@@ -650,6 +656,7 @@ def init_postgres_db():
 
 
 os.makedirs(os.path.dirname(SQLITE_DATABASE), exist_ok=True)
+os.makedirs(BACKUP_FOLDER, exist_ok=True)
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 with app.app_context():
     init_db()
@@ -932,6 +939,45 @@ def is_suspicious_work_duration(user_row, attendance_row):
     return False
 
 
+def collect_attendance_issues(user_row, attendance_row):
+    issues = []
+    if not user_row or not attendance_row:
+        return issues
+
+    time_in_dt = parse_db_datetime(attendance_row.get("time_in"))
+    time_out_dt = parse_db_datetime(attendance_row.get("time_out"))
+    break_rows = get_break_rows(attendance_row.get("id"))
+
+    if attendance_row.get("time_in") and not time_in_dt:
+        issues.append("Invalid time in format")
+    if attendance_row.get("time_out") and not time_out_dt:
+        issues.append("Invalid time out format")
+    if time_in_dt and time_out_dt and time_out_dt < time_in_dt:
+        issues.append("Time out earlier than time in")
+    if is_suspicious_work_duration(user_row, attendance_row):
+        issues.append("Suspicious work duration")
+
+    for index, break_row in enumerate(break_rows, start=1):
+        break_start_dt = parse_db_datetime(break_row.get("break_start"))
+        break_end_dt = parse_db_datetime(break_row.get("break_end"))
+        label = f"Break {index}"
+        if break_row.get("break_start") and not break_start_dt:
+            issues.append(f"{label} has invalid start")
+        if break_row.get("break_end") and not break_end_dt:
+            issues.append(f"{label} has invalid end")
+        if break_start_dt and break_end_dt and break_end_dt < break_start_dt:
+            issues.append(f"{label} ends before it starts")
+        if time_in_dt and break_start_dt and break_start_dt < time_in_dt:
+            issues.append(f"{label} starts before time in")
+        if time_out_dt and break_end_dt and break_end_dt > time_out_dt:
+            issues.append(f"{label} ends after time out")
+
+    if len(break_rows) > 1:
+        issues.append(f"{len(break_rows)} break rows attached")
+
+    return issues
+
+
 def parse_break_limit_minutes(value):
     try:
         minutes = int(str(value).strip())
@@ -1197,6 +1243,37 @@ def summarize_break_sessions(break_sessions):
     return " | ".join(parts)
 
 
+def get_backup_files(limit=15):
+    if not os.path.isdir(BACKUP_FOLDER):
+        return []
+    entries = []
+    for name in os.listdir(BACKUP_FOLDER):
+        full_path = os.path.join(BACKUP_FOLDER, name)
+        if not os.path.isfile(full_path):
+            continue
+        stat = os.stat(full_path)
+        entries.append({
+            "name": name,
+            "path": full_path,
+            "size_bytes": stat.st_size,
+            "size_kb": round(stat.st_size / 1024, 1),
+            "modified_at": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+        })
+    entries.sort(key=lambda item: item["modified_at"], reverse=True)
+    return entries[:limit]
+
+
+def create_sqlite_backup():
+    if using_postgres():
+        raise ValueError("Automatic backup copy is only available for SQLite right now.")
+    if not os.path.exists(SQLITE_DATABASE):
+        raise ValueError("SQLite database file was not found.")
+    backup_name = f"attendance-backup-{datetime.now().strftime('%Y-%m-%d-%H%M%S')}.db"
+    backup_path = os.path.join(BACKUP_FOLDER, backup_name)
+    shutil.copy2(SQLITE_DATABASE, backup_path)
+    return backup_path
+
+
 def get_employee_break_limit(user_row):
     if not user_row:
         return BREAK_LIMIT_MINUTES
@@ -1228,6 +1305,18 @@ def minutes_to_hm(minutes):
 
 def minutes_to_decimal_hours(minutes):
     return round((minutes or 0) / 60, 2)
+
+
+def parse_datetime_local_input(value):
+    raw_value = (value or "").strip()
+    if not raw_value:
+        return None
+    for fmt in ("%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(raw_value, fmt).strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            continue
+    raise ValueError("Use a valid date and time when fixing attendance data.")
 
 
 def format_datetime_12h(datetime_str):
@@ -2154,6 +2243,93 @@ def get_exception_collections(employee_rows):
     }
 
 
+def get_suspicious_attendance_records(search="", limit=50):
+    rows = fetchall("""
+        SELECT a.*, u.full_name, u.username, u.department, u.position, u.shift_start, u.shift_end, u.break_limit_minutes
+        FROM attendance a
+        JOIN users u ON u.id = a.user_id
+        WHERE u.role = 'employee'
+        ORDER BY a.work_date DESC, a.id DESC
+        LIMIT 300
+    """)
+
+    candidates = []
+    for row in rows:
+        item = dict(row)
+        if search:
+            hay = f"{item['full_name']} {item['username']} {item['work_date']}".lower()
+            if search.lower() not in hay:
+                continue
+        issues = collect_attendance_issues(item, item)
+        if not issues:
+            continue
+        break_rows = get_break_rows(item["id"])
+        item["issue_summary"] = "; ".join(issues)
+        item["issues"] = issues
+        item["break_count"] = len(break_rows)
+        item["raw_work_minutes"] = total_work_minutes(item)
+        item["break_summary"] = summarize_break_sessions(build_break_sessions(item["id"])) if break_rows else "No break sessions recorded."
+        item["time_in_input"] = item["time_in"].replace(" ", "T")[:16] if item.get("time_in") else ""
+        item["time_out_input"] = item["time_out"].replace(" ", "T")[:16] if item.get("time_out") else ""
+        candidates.append(item)
+        if len(candidates) >= limit:
+            break
+    return candidates
+
+
+def update_attendance_record_by_admin(attendance_id, time_in_value="", time_out_value="", clear_breaks=False):
+    attendance = get_attendance_by_id(attendance_id)
+    if not attendance:
+        raise ValueError("Attendance record not found.")
+
+    user = get_user_by_id(attendance["user_id"])
+    final_time_in = parse_datetime_local_input(time_in_value) if time_in_value else attendance["time_in"]
+    final_time_out = parse_datetime_local_input(time_out_value) if time_out_value else attendance["time_out"]
+
+    if final_time_in and final_time_out and final_time_out < final_time_in:
+        raise ValueError("Time out cannot be earlier than time in.")
+
+    late_flag, late_minutes = calculate_late_info(final_time_in, parse_shift_start(user["shift_start"] if user else DEFAULT_SHIFT_START))
+    open_break = get_open_break_for_attendance(attendance_id)
+    if final_time_out:
+        final_status = "Timed Out"
+    elif open_break:
+        final_status = "On Break"
+    elif final_time_in:
+        final_status = "Timed In"
+    else:
+        final_status = "Offline"
+
+    execute_db("""
+        UPDATE attendance
+        SET time_in = ?, time_out = ?, status = ?, late_flag = ?, late_minutes = ?, updated_at = ?
+        WHERE id = ?
+    """, (
+        final_time_in,
+        final_time_out,
+        final_status,
+        late_flag,
+        late_minutes,
+        now_str(),
+        attendance_id
+    ), commit=True)
+
+    if clear_breaks:
+        execute_db("DELETE FROM breaks WHERE attendance_id = ?", (attendance_id,), commit=True)
+
+    if final_time_out:
+        execute_db("""
+            UPDATE breaks
+            SET break_end = CASE
+                WHEN break_end IS NULL OR break_end > ? THEN ?
+                ELSE break_end
+            END
+            WHERE attendance_id = ?
+        """, (final_time_out, final_time_out, attendance_id), commit=True)
+
+    return get_attendance_by_id(attendance_id)
+
+
 def notify_admins_for_exceptions(exception_groups):
     for row in exception_groups["absent"]:
         create_admin_alert_once(
@@ -2843,6 +3019,55 @@ def admin_history():
         over_break_only=over_break_only,
         date_from=date_from,
         date_to=date_to,
+        minutes_to_hm=minutes_to_hm
+    )
+
+
+@app.route("/admin/data-tools", methods=["GET", "POST"])
+@login_required(role="admin")
+def admin_data_tools():
+    search = request.args.get("search", "").strip()
+
+    if request.method == "POST":
+        action = request.form.get("action", "").strip()
+        if action == "create_backup":
+            try:
+                backup_path = create_sqlite_backup()
+                log_activity(session["user_id"], "CREATE BACKUP", f"Created SQLite backup at {backup_path}")
+                flash(f"Backup created: {os.path.basename(backup_path)}", "success")
+            except ValueError as exc:
+                flash(str(exc), "danger")
+            return redirect(url_for("admin_data_tools", search=search))
+
+        attendance_id = request.form.get("attendance_id", "").strip()
+        if not attendance_id:
+            flash("Attendance record is required.", "danger")
+            return redirect(url_for("admin_data_tools", search=search))
+
+        try:
+            updated_row = update_attendance_record_by_admin(
+                attendance_id=int(attendance_id),
+                time_in_value=request.form.get("time_in", "").strip(),
+                time_out_value=request.form.get("time_out", "").strip(),
+                clear_breaks=request.form.get("clear_breaks", "").strip() == "1",
+            )
+            employee = get_user_by_id(updated_row["user_id"]) if updated_row else None
+            employee_name = employee["full_name"] if employee else f"Attendance #{attendance_id}"
+            log_activity(session["user_id"], "FIX ATTENDANCE", f"Updated suspicious row #{attendance_id} for {employee_name}")
+            flash("Attendance record updated.", "success")
+        except ValueError as exc:
+            flash(str(exc), "danger")
+
+        return redirect(url_for("admin_data_tools", search=search))
+
+    candidates = get_suspicious_attendance_records(search=search, limit=60)
+    backups = get_backup_files(limit=12)
+    return render_template(
+        "admin_data_tools.html",
+        candidates=candidates,
+        backups=backups,
+        search=search,
+        format_datetime_12h=format_datetime_12h,
         minutes_to_hm=minutes_to_hm
     )
 

@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}Admin Data Tools{% endblock %}
+
+{% block content %}
+<div class="hero">
+    <div>
+        <h1>Data Tools</h1>
+        <p class="muted" style="margin-top:8px;">Review suspicious attendance rows, make a safe SQLite backup, and apply small admin fixes without touching the database manually.</p>
+    </div>
+</div>
+
+<div class="grid grid-2" style="align-items:start;">
+    <div class="card">
+        <h3 style="margin-top:0;">Backup SQLite</h3>
+        <p class="muted">Create a timestamped backup copy in the server or local <code>backups</code> folder before larger cleanup work.</p>
+        <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="action" value="create_backup">
+            <button class="btn btn-primary" type="submit">Create Backup Now</button>
+        </form>
+
+        <div class="divider"></div>
+        <h4 style="margin-top:0;">Recent Backups</h4>
+        {% if backups %}
+            <div style="display:grid; gap:10px;">
+                {% for backup in backups %}
+                    <div style="padding:12px 14px; border-radius:14px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);">
+                        <div style="font-weight:800; color:#fff;">{{ backup.name }}</div>
+                        <div class="small muted" style="margin-top:6px;">{{ backup.modified_at }} | {{ backup.size_kb }} KB</div>
+                    </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <p class="muted">No backups created yet.</p>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <h3 style="margin-top:0;">Find Suspicious Rows</h3>
+        <form method="GET">
+            <label>Search Employee or Date</label>
+            <input class="input" type="text" name="search" value="{{ search }}" placeholder="Name, username, or work date">
+            <div class="top-actions" style="margin-top:14px;">
+                <button class="btn btn-primary" type="submit">Refresh</button>
+                <a class="btn btn-gray" href="{{ url_for('admin_data_tools') }}">Reset</a>
+            </div>
+        </form>
+        <p class="small muted" style="margin-top:14px;">Rows are flagged for suspicious work duration, impossible time order, or break records outside the attendance window.</p>
+    </div>
+</div>
+
+<div class="card" style="margin-top:18px;">
+    <h3 style="margin-top:0;">Suspicious Attendance Rows</h3>
+    {% if candidates %}
+        <div style="display:grid; gap:16px;">
+            {% for item in candidates %}
+                <div style="padding:16px; border-radius:18px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);">
+                    <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap;">
+                        <div>
+                            <div style="font-size:20px; font-weight:900; color:#fff;">{{ item.full_name }}</div>
+                            <div class="small muted" style="margin-top:6px;">@{{ item.username }} | {{ item.work_date }} | {{ item.department or '-' }} | {{ item.position or '-' }}</div>
+                        </div>
+                        <div class="status status-red">{{ item.issue_summary }}</div>
+                    </div>
+
+                    <div class="grid grid-4" style="margin-top:14px;">
+                        <div>
+                            <div class="small muted">Current Time In</div>
+                            <div>{{ format_datetime_12h(item.time_in) if item.time_in else '-' }}</div>
+                        </div>
+                        <div>
+                            <div class="small muted">Current Time Out</div>
+                            <div>{{ format_datetime_12h(item.time_out) if item.time_out else '-' }}</div>
+                        </div>
+                        <div>
+                            <div class="small muted">Breaks</div>
+                            <div>{{ item.break_count }}</div>
+                        </div>
+                        <div>
+                            <div class="small muted">Work</div>
+                            <div>{{ minutes_to_hm(item.raw_work_minutes if item.raw_work_minutes is defined else 0) }}</div>
+                        </div>
+                    </div>
+
+                    <div class="small muted" style="margin-top:10px;">{{ item.break_summary }}</div>
+
+                    <form method="POST" style="margin-top:14px;">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <input type="hidden" name="attendance_id" value="{{ item.id }}">
+                        <div class="grid grid-3">
+                            <div>
+                                <label>Fix Time In</label>
+                                <input class="input" type="datetime-local" name="time_in" value="{{ item.time_in_input }}">
+                            </div>
+                            <div>
+                                <label>Fix Time Out</label>
+                                <input class="input" type="datetime-local" name="time_out" value="{{ item.time_out_input }}">
+                            </div>
+                            <div>
+                                <label>Clear All Breaks</label>
+                                <label class="admin-filter-check" style="margin-top:8px;">
+                                    <input type="checkbox" name="clear_breaks" value="1">
+                                    <span>Remove all break rows</span>
+                                </label>
+                            </div>
+                        </div>
+                        <div class="top-actions" style="margin-top:14px;">
+                            <button class="btn btn-primary" type="submit">Save Fix</button>
+                        </div>
+                    </form>
+                </div>
+            {% endfor %}
+        </div>
+    {% else %}
+        <p class="muted">No suspicious attendance rows found for the current filter.</p>
+    {% endif %}
+</div>
+{% endblock %}

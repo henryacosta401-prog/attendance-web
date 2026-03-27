@@ -742,6 +742,7 @@
             <a class="pill-link {% if request.endpoint == 'admin_incident_report' %}active{% endif %}" href="{{ url_for('admin_incident_report') }}">Create Incident</a>
             <a class="pill-link {% if request.endpoint == 'admin_corrections' %}active{% endif %}" href="{{ url_for('admin_corrections') }}">Corrections</a>
             <a class="pill-link {% if request.endpoint == 'admin_history' %}active{% endif %}" href="{{ url_for('admin_history') }}">History</a>
+            <a class="pill-link {% if request.endpoint == 'admin_data_tools' %}active{% endif %}" href="{{ url_for('admin_data_tools') }}">Data Tools</a>
             <a class="pill-link {% if request.endpoint == 'manage_employees' or request.endpoint == 'edit_employee' %}active{% endif %}" href="{{ url_for('manage_employees') }}">Employees</a>
             <a class="pill-link {% if request.endpoint == 'admin_profile' %}active{% endif %}" href="{{ url_for('admin_profile') }}">Account</a>
         {% else %}
