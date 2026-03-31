@@ -202,6 +202,47 @@
             gap: 8px;
         }
 
+        .camera-card {
+            position: relative;
+            overflow: hidden;
+            border-radius: 18px;
+            height: 118px;
+            background: rgba(2, 6, 23, 0.72);
+            border: 1px solid rgba(255,255,255,0.14);
+        }
+
+        .camera-card video {
+            width: 100%;
+            height: 100%;
+            display: block;
+            object-fit: cover;
+            background: #020617;
+        }
+
+        .camera-card::after {
+            content: "";
+            position: absolute;
+            inset: 16% 12%;
+            border: 2px solid rgba(125, 211, 252, 0.82);
+            border-radius: 14px;
+            box-shadow: 0 0 0 999px rgba(2, 6, 23, 0.2);
+            pointer-events: none;
+        }
+
+        .camera-overlay {
+            position: absolute;
+            inset: auto 8px 8px 8px;
+            padding: 8px 10px;
+            border-radius: 12px;
+            background: rgba(15, 23, 42, 0.72);
+            border: 1px solid rgba(255,255,255,0.1);
+            font-size: 11px;
+            line-height: 1.3;
+            color: rgba(241, 245, 249, 0.86);
+            text-align: center;
+            backdrop-filter: blur(10px);
+        }
+
         .status-banner {
             min-height: 54px;
             border-radius: 18px;
@@ -329,6 +370,10 @@
 
         <section class="status-card">
             <div class="status-banner" id="statusBanner">Waiting for barcode scan...</div>
+            <div class="camera-card">
+                <video id="cameraVideo" autoplay playsinline muted></video>
+                <div class="camera-overlay" id="cameraOverlay">Starting tablet camera...</div>
+            </div>
             <div class="status-meta">
                 <div class="meta-item">
                     <div class="meta-label">Current Action</div>
@@ -367,6 +412,8 @@
         const actionButtons = Array.from(document.querySelectorAll("[data-action]"));
         const scannerInput = document.getElementById("scannerInput");
         const statusBanner = document.getElementById("statusBanner");
+        const cameraVideo = document.getElementById("cameraVideo");
+        const cameraOverlay = document.getElementById("cameraOverlay");
         const employeeName = document.getElementById("employeeName");
         const employeeStatus = document.getElementById("employeeStatus");
         const employeePhoto = document.getElementById("employeePhoto");
@@ -377,9 +424,35 @@
         const metaEmployee = document.getElementById("metaEmployee");
         const liveDateTime = document.getElementById("liveDateTime");
         const scanForm = document.getElementById("scanForm");
+        const supportsBarcodeDetector = "BarcodeDetector" in window;
+        let barcodeDetector = null;
+        let cameraStream = null;
+        let scanLoopHandle = null;
+        let lastCameraScan = "";
+        let lastCameraScanAt = 0;
+
+        if (supportsBarcodeDetector) {
+            try {
+                barcodeDetector = new BarcodeDetector({ formats: ["code_128"] });
+            } catch (error) {
+                barcodeDetector = null;
+            }
+        }
 
         function keepScannerFocused() {
             window.requestAnimationFrame(() => scannerInput.focus());
+        }
+
+        function stopCamera() {
+            if (scanLoopHandle) {
+                cancelAnimationFrame(scanLoopHandle);
+                scanLoopHandle = null;
+            }
+            if (cameraStream) {
+                cameraStream.getTracks().forEach((track) => track.stop());
+                cameraStream = null;
+            }
+            cameraVideo.srcObject = null;
         }
 
         function updateClock() {
@@ -413,6 +486,58 @@
             } catch (error) {
                 console.error(error);
             }
+        }
+
+        async function startCamera() {
+            if (!navigator.mediaDevices?.getUserMedia) {
+                cameraOverlay.textContent = "Camera is not available in this browser. Use the barcode scanner input.";
+                return;
+            }
+
+            stopCamera();
+            try {
+                cameraStream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: { ideal: "environment" } },
+                    audio: false
+                });
+                cameraVideo.srcObject = cameraStream;
+                await cameraVideo.play();
+
+                if (!barcodeDetector) {
+                    cameraOverlay.textContent = "Camera is live. This browser has no built-in barcode detection, so use the barcode scanner input.";
+                    return;
+                }
+
+                cameraOverlay.textContent = "Camera ready. Hold the employee barcode inside the guide box.";
+                runCameraScanLoop();
+            } catch (error) {
+                console.error(error);
+                cameraOverlay.textContent = "Camera access was blocked. Allow camera permission or use the barcode scanner input.";
+            }
+        }
+
+        async function runCameraScanLoop() {
+            if (!barcodeDetector || !cameraStream || cameraVideo.readyState < 2) {
+                scanLoopHandle = requestAnimationFrame(runCameraScanLoop);
+                return;
+            }
+
+            try {
+                const results = await barcodeDetector.detect(cameraVideo);
+                if (results.length > 0) {
+                    const rawValue = (results[0].rawValue || "").trim();
+                    const now = Date.now();
+                    if (rawValue && (rawValue !== lastCameraScan || now - lastCameraScanAt > 2200)) {
+                        lastCameraScan = rawValue;
+                        lastCameraScanAt = now;
+                        submitScan(rawValue);
+                    }
+                }
+            } catch (error) {
+                console.error(error);
+            }
+
+            scanLoopHandle = requestAnimationFrame(runCameraScanLoop);
         }
 
         function setSelectedAction(action) {
@@ -458,6 +583,9 @@
 
             statusBanner.className = `status-banner ${ok ? "is-success" : "is-error"}`;
             statusBanner.textContent = payload.message || (ok ? "Attendance recorded." : "Unable to record attendance.");
+            cameraOverlay.textContent = ok
+                ? "Scan recorded. Ready for the next barcode."
+                : "Scan failed. Check the message above, then try again.";
             playTone(ok ? "success" : "error");
 
             clearTimeout(state.resetTimer);
@@ -528,14 +656,19 @@
         document.addEventListener("visibilitychange", () => {
             if (!document.hidden) {
                 keepScannerFocused();
+                startCamera();
+            } else {
+                stopCamera();
             }
         });
+        window.addEventListener("beforeunload", stopCamera);
 
         updateClock();
         setInterval(updateClock, 1000);
         setSelectedAction("time_in");
         resetEmployeeDisplay();
         keepScannerFocused();
+        startCamera();
     });
     </script>
 </body>
