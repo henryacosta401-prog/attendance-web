@@ -47,10 +47,42 @@
 
 <div class="grid grid-2" style="margin-top:12px;">
     <div>
+        <label>Hourly Rate</label>
+        <input class="input" type="number" name="hourly_rate" value="{{ employee.hourly_rate if employee.hourly_rate is not none else 0 }}" min="0" step="0.01">
+    </div>
+    <div>
         <label>Break Limit (Minutes)</label>
         <input class="input" type="number" name="break_limit_minutes" value="{{ employee.break_limit_minutes if employee.break_limit_minutes else 15 }}" min="1">
     </div>
-    <div></div>
+</div>
+
+<div class="grid grid-2" style="margin-top:12px;">
+    <div>
+        <label>Barcode ID</label>
+        <input class="input" type="text" name="barcode_id" value="{{ employee.barcode_id if employee.barcode_id else '' }}">
+    </div>
+</div>
+
+<div class="grid grid-2" style="margin-top:12px;">
+    <div>
+        <label>Sick Leave Allotment</label>
+        <input class="input" type="number" name="sick_leave_days" value="{{ employee.sick_leave_days if employee.sick_leave_days is not none else 7 }}" min="0" step="1">
+    </div>
+    <div>
+        <label>Paid Leave Allotment</label>
+        <input class="input" type="number" name="paid_leave_days" value="{{ employee.paid_leave_days if employee.paid_leave_days is not none else 7 }}" min="0" step="1">
+    </div>
+</div>
+
+<div class="grid grid-2" style="margin-top:12px;">
+    <div>
+        <label>Sick Leave Already Used</label>
+        <input class="input" type="number" name="sick_leave_used_manual" value="{{ employee.sick_leave_used_manual if employee.sick_leave_used_manual is not none else 0 }}" min="0" step="1">
+    </div>
+    <div>
+        <label>Paid Leave Already Used</label>
+        <input class="input" type="number" name="paid_leave_used_manual" value="{{ employee.paid_leave_used_manual if employee.paid_leave_used_manual is not none else 0 }}" min="0" step="1">
+    </div>
 </div>
 
 <label style="display:block; margin-top:12px;">Work Schedule</label>

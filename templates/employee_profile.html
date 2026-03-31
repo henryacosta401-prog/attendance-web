@@ -5,10 +5,11 @@
 <div class="hero">
     <div>
         <h1>My Profile</h1>
-        <p class="muted" style="margin-top:8px;">Update your name, password, and profile image.</p>
+        <p class="muted" style="margin-top:8px;">Update your name, password, profile image, and view your barcode ID for attendance scanning.</p>
     </div>
 </div>
 
+<div class="grid grid-2" style="align-items:start;">
 <div class="card" style="max-width:800px;">
     <form method="POST" enctype="multipart/form-data">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -36,5 +37,19 @@
             <a class="btn btn-gray" href="{{ url_for('dashboard') }}">Back</a>
         </div>
     </form>
+</div>
+
+<div class="card" style="max-width:800px;">
+    <div class="section-title">My Attendance Barcode</div>
+    {% if user.barcode_id %}
+        <div class="small muted" style="margin-bottom:12px;">Use this barcode for scanner-based attendance once the kiosk is ready.</div>
+        <div style="padding:18px; border-radius:20px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.08); text-align:center;">
+            <img src="{{ generate_code128_svg_data_uri(user.barcode_id) }}" alt="Barcode for {{ user.barcode_id }}" style="max-width:100%; height:auto; background:#fff; border-radius:16px; padding:14px;">
+            <div style="margin-top:12px; font-weight:900; letter-spacing:0.12em;">{{ user.barcode_id }}</div>
+        </div>
+    {% else %}
+        <p class="muted">Your barcode ID has not been assigned yet. Please contact admin.</p>
+    {% endif %}
+</div>
 </div>
 {% endblock %}

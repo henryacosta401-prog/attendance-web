@@ -29,6 +29,24 @@
             <label style="display:block; margin-top:12px;">Position</label>
             <input class="input" type="text" name="position" placeholder="e.g. VA / Team Member">
 
+            <label style="display:block; margin-top:12px;">Barcode ID</label>
+            <input class="input" type="text" name="barcode_id" placeholder="e.g. EMP-0001">
+
+            <label style="display:block; margin-top:12px;">Hourly Rate</label>
+            <input class="input" type="number" name="hourly_rate" placeholder="e.g. 18.50" min="0" step="0.01">
+
+            <label style="display:block; margin-top:12px;">Sick Leave Allotment</label>
+            <input class="input" type="number" name="sick_leave_days" value="7" min="0" step="1">
+
+            <label style="display:block; margin-top:12px;">Paid Leave Allotment</label>
+            <input class="input" type="number" name="paid_leave_days" value="7" min="0" step="1">
+
+            <label style="display:block; margin-top:12px;">Sick Leave Already Used</label>
+            <input class="input" type="number" name="sick_leave_used_manual" value="0" min="0" step="1">
+
+            <label style="display:block; margin-top:12px;">Paid Leave Already Used</label>
+            <input class="input" type="number" name="paid_leave_used_manual" value="0" min="0" step="1">
+
             <label style="display:block; margin-top:12px;">Work Schedule</label>
             <div class="schedule-picker">
                 {% for code, label in weekday_options %}
@@ -78,6 +96,9 @@
                             <th>Position</th>
                             <th>Schedule</th>
                             <th>Shift</th>
+                            <th>Barcode</th>
+                            <th>Hourly Rate</th>
+                            <th>Leave Balance</th>
                             <th>Break Limit</th>
                             <th>Status</th>
                             <th>Created</th>
@@ -104,6 +125,12 @@
                             <td>{{ emp.position }}</td>
                             <td>{{ emp.schedule_days if emp.schedule_days else 'Mon,Tue,Wed,Thu,Fri' }}</td>
                             <td>{{ emp.shift_start if emp.shift_start else '09:00' }} - {{ emp.shift_end if emp.shift_end else '18:00' }}</td>
+                            <td>{{ emp.barcode_id if emp.barcode_id else '-' }}</td>
+                            <td>{{ format_currency(emp.hourly_rate) }}</td>
+                            <td>
+                                SL {{ (emp.sick_leave_days if emp.sick_leave_days is not none else 7) - (emp.sick_leave_used_manual if emp.sick_leave_used_manual is not none else 0) }} |
+                                PL {{ (emp.paid_leave_days if emp.paid_leave_days is not none else 7) - (emp.paid_leave_used_manual if emp.paid_leave_used_manual is not none else 0) }}
+                            </td>
                             <td>{{ emp.break_limit_minutes }} min</td>
                             <td>
                                 {% if emp.is_active == 1 %}

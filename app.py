@@ -7,6 +7,7 @@ from io import BytesIO
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from functools import wraps
+from urllib.parse import quote
 
 from flask import (
     Flask, render_template, request, redirect, url_for,
@@ -74,15 +75,21 @@ WEEKDAY_OPTIONS = [
 ]
 LATE_GRACE_MINUTES = 1
 BREAK_LIMIT_MINUTES = 15
+INCIDENT_ACTION_STATUSES = ("Coaching", "Suspension", "NTE")
+DISCIPLINARY_ACTION_TYPES = ("Coaching", "NTE", "Suspension")
 ATTENDANCE_REQUEST_TYPES = {
     "Missed Time In",
     "Missed Time Out",
     "Wrong Break",
     "Wrong Proof",
     "Undertime",
-    "Leave Request",
+    "Sick Leave",
+    "Paid Leave",
     "Other",
 }
+LEAVE_REQUEST_TYPES = {"Sick Leave", "Paid Leave"}
+DEFAULT_SICK_LEAVE_DAYS = 7
+DEFAULT_PAID_LEAVE_DAYS = 7
 
 DEFAULT_SECRET_KEY = "dev-secret-key"
 
@@ -283,6 +290,12 @@ def init_sqlite_db():
             profile_image TEXT,
             department TEXT DEFAULT 'Stellar Seats',
             position TEXT DEFAULT 'Employee',
+            barcode_id TEXT,
+            hourly_rate REAL NOT NULL DEFAULT 0,
+            sick_leave_days INTEGER NOT NULL DEFAULT 7,
+            paid_leave_days INTEGER NOT NULL DEFAULT 7,
+            sick_leave_used_manual INTEGER NOT NULL DEFAULT 0,
+            paid_leave_used_manual INTEGER NOT NULL DEFAULT 0,
             whatsapp_number TEXT,
             schedule_days TEXT DEFAULT 'Mon,Tue,Wed,Thu,Fri',
             shift_start TEXT DEFAULT '09:00',
@@ -300,7 +313,9 @@ def init_sqlite_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
             employee_name TEXT,
+            report_department TEXT,
             error_type TEXT NOT NULL,
+            incident_action TEXT DEFAULT 'Coaching',
             incident_date TEXT,
             report_date TEXT NOT NULL,
             message TEXT,
@@ -359,11 +374,27 @@ def init_sqlite_db():
     """)
 
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS disciplinary_actions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            action_type TEXT NOT NULL,
+            action_date TEXT NOT NULL,
+            duration_days INTEGER NOT NULL DEFAULT 1,
+            end_date TEXT,
+            details TEXT,
+            created_by INTEGER,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    """)
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS correction_requests (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
             request_type TEXT NOT NULL,
             work_date TEXT NOT NULL,
+            end_work_date TEXT,
             message TEXT,
             requested_time_in TEXT,
             requested_break_start TEXT,
@@ -396,6 +427,18 @@ def init_sqlite_db():
         cursor.execute("ALTER TABLE users ADD COLUMN department TEXT DEFAULT 'Stellar Seats'")
     if "position" not in existing_cols_users:
         cursor.execute("ALTER TABLE users ADD COLUMN position TEXT DEFAULT 'Employee'")
+    if "barcode_id" not in existing_cols_users:
+        cursor.execute("ALTER TABLE users ADD COLUMN barcode_id TEXT")
+    if "hourly_rate" not in existing_cols_users:
+        cursor.execute("ALTER TABLE users ADD COLUMN hourly_rate REAL NOT NULL DEFAULT 0")
+    if "sick_leave_days" not in existing_cols_users:
+        cursor.execute(f"ALTER TABLE users ADD COLUMN sick_leave_days INTEGER NOT NULL DEFAULT {DEFAULT_SICK_LEAVE_DAYS}")
+    if "paid_leave_days" not in existing_cols_users:
+        cursor.execute(f"ALTER TABLE users ADD COLUMN paid_leave_days INTEGER NOT NULL DEFAULT {DEFAULT_PAID_LEAVE_DAYS}")
+    if "sick_leave_used_manual" not in existing_cols_users:
+        cursor.execute("ALTER TABLE users ADD COLUMN sick_leave_used_manual INTEGER NOT NULL DEFAULT 0")
+    if "paid_leave_used_manual" not in existing_cols_users:
+        cursor.execute("ALTER TABLE users ADD COLUMN paid_leave_used_manual INTEGER NOT NULL DEFAULT 0")
     if "whatsapp_number" not in existing_cols_users:
         cursor.execute("ALTER TABLE users ADD COLUMN whatsapp_number TEXT")
     if "schedule_days" not in existing_cols_users:
@@ -431,6 +474,10 @@ def init_sqlite_db():
             cursor.execute("ALTER TABLE incident_reports ADD COLUMN message TEXT")
         if "employee_name" not in existing_cols_incident:
             cursor.execute("ALTER TABLE incident_reports ADD COLUMN employee_name TEXT")
+        if "report_department" not in existing_cols_incident:
+            cursor.execute("ALTER TABLE incident_reports ADD COLUMN report_department TEXT")
+        if "incident_action" not in existing_cols_incident:
+            cursor.execute("ALTER TABLE incident_reports ADD COLUMN incident_action TEXT DEFAULT 'Coaching'")
         if "incident_date" not in existing_cols_incident:
             cursor.execute("ALTER TABLE incident_reports ADD COLUMN incident_date TEXT")
         if "status" not in existing_cols_incident:
@@ -446,8 +493,23 @@ def init_sqlite_db():
     if "created_at" not in existing_cols_incident:
         cursor.execute("ALTER TABLE incident_reports ADD COLUMN created_at TEXT")
 
+    existing_cols_disciplinary = [row[1] for row in cursor.execute("PRAGMA table_info(disciplinary_actions)").fetchall()]
+    if existing_cols_disciplinary:
+        if "duration_days" not in existing_cols_disciplinary:
+            cursor.execute("ALTER TABLE disciplinary_actions ADD COLUMN duration_days INTEGER NOT NULL DEFAULT 1")
+        if "end_date" not in existing_cols_disciplinary:
+            cursor.execute("ALTER TABLE disciplinary_actions ADD COLUMN end_date TEXT")
+        if "details" not in existing_cols_disciplinary:
+            cursor.execute("ALTER TABLE disciplinary_actions ADD COLUMN details TEXT")
+        if "created_by" not in existing_cols_disciplinary:
+            cursor.execute("ALTER TABLE disciplinary_actions ADD COLUMN created_by INTEGER")
+        if "created_at" not in existing_cols_disciplinary:
+            cursor.execute("ALTER TABLE disciplinary_actions ADD COLUMN created_at TEXT")
+
     existing_cols_corrections = [row[1] for row in cursor.execute("PRAGMA table_info(correction_requests)").fetchall()]
     if existing_cols_corrections:
+        if "end_work_date" not in existing_cols_corrections:
+            cursor.execute("ALTER TABLE correction_requests ADD COLUMN end_work_date TEXT")
         if "requested_time_in" not in existing_cols_corrections:
             cursor.execute("ALTER TABLE correction_requests ADD COLUMN requested_time_in TEXT")
         if "requested_break_start" not in existing_cols_corrections:
@@ -502,7 +564,9 @@ def init_postgres_db():
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER NOT NULL,
                 employee_name TEXT,
+                report_department TEXT,
                 error_type TEXT NOT NULL,
+                incident_action TEXT DEFAULT 'Coaching',
                 incident_date TEXT,
                 report_date TEXT NOT NULL,
                 message TEXT,
@@ -515,12 +579,33 @@ def init_postgres_db():
             )
         """)
 
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS disciplinary_actions (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                action_type TEXT NOT NULL,
+                action_date TEXT NOT NULL,
+                duration_days INTEGER NOT NULL DEFAULT 1,
+                end_date TEXT,
+                details TEXT,
+                created_by INTEGER,
+                created_at TEXT NOT NULL
+            )
+        """)
+
         cur.execute("ALTER TABLE incident_reports ADD COLUMN IF NOT EXISTS employee_name TEXT")
+        cur.execute("ALTER TABLE incident_reports ADD COLUMN IF NOT EXISTS report_department TEXT")
+        cur.execute("ALTER TABLE incident_reports ADD COLUMN IF NOT EXISTS incident_action TEXT DEFAULT 'Coaching'")
         cur.execute("ALTER TABLE incident_reports ADD COLUMN IF NOT EXISTS incident_date TEXT")
         cur.execute("ALTER TABLE incident_reports ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'Open'")
         cur.execute("ALTER TABLE incident_reports ADD COLUMN IF NOT EXISTS admin_note TEXT")
         cur.execute("ALTER TABLE incident_reports ADD COLUMN IF NOT EXISTS reviewed_by INTEGER")
         cur.execute("ALTER TABLE incident_reports ADD COLUMN IF NOT EXISTS reviewed_at TEXT")
+        cur.execute("ALTER TABLE disciplinary_actions ADD COLUMN IF NOT EXISTS duration_days INTEGER NOT NULL DEFAULT 1")
+        cur.execute("ALTER TABLE disciplinary_actions ADD COLUMN IF NOT EXISTS end_date TEXT")
+        cur.execute("ALTER TABLE disciplinary_actions ADD COLUMN IF NOT EXISTS details TEXT")
+        cur.execute("ALTER TABLE disciplinary_actions ADD COLUMN IF NOT EXISTS created_by INTEGER")
+        cur.execute("ALTER TABLE disciplinary_actions ADD COLUMN IF NOT EXISTS created_at TEXT")
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
@@ -532,6 +617,12 @@ def init_postgres_db():
                 profile_image TEXT,
                 department TEXT DEFAULT 'Stellar Seats',
                 position TEXT DEFAULT 'Employee',
+                barcode_id TEXT,
+                hourly_rate NUMERIC(12, 2) NOT NULL DEFAULT 0,
+                sick_leave_days INTEGER NOT NULL DEFAULT 7,
+                paid_leave_days INTEGER NOT NULL DEFAULT 7,
+                sick_leave_used_manual INTEGER NOT NULL DEFAULT 0,
+                paid_leave_used_manual INTEGER NOT NULL DEFAULT 0,
                 whatsapp_number TEXT,
                 schedule_days TEXT DEFAULT 'Mon,Tue,Wed,Thu,Fri',
                 shift_start TEXT DEFAULT '09:00',
@@ -545,6 +636,12 @@ def init_postgres_db():
         """)
 
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS whatsapp_number TEXT")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS barcode_id TEXT")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS hourly_rate NUMERIC(12, 2) NOT NULL DEFAULT 0")
+        cur.execute(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS sick_leave_days INTEGER NOT NULL DEFAULT {DEFAULT_SICK_LEAVE_DAYS}")
+        cur.execute(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS paid_leave_days INTEGER NOT NULL DEFAULT {DEFAULT_PAID_LEAVE_DAYS}")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS sick_leave_used_manual INTEGER NOT NULL DEFAULT 0")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS paid_leave_used_manual INTEGER NOT NULL DEFAULT 0")
         cur.execute(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS schedule_days TEXT DEFAULT '{DEFAULT_SCHEDULE_DAYS}'")
         cur.execute(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS shift_end TEXT DEFAULT '{DEFAULT_SHIFT_END}'")
         cur.execute(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS break_window_start TEXT DEFAULT '{DEFAULT_BREAK_WINDOW_START}'")
@@ -607,6 +704,7 @@ def init_postgres_db():
                 user_id INTEGER NOT NULL,
                 request_type TEXT NOT NULL,
                 work_date TEXT NOT NULL,
+                end_work_date TEXT,
                 message TEXT,
                 requested_time_in TEXT,
                 requested_break_start TEXT,
@@ -620,6 +718,7 @@ def init_postgres_db():
                 created_at TEXT NOT NULL
             )
         """)
+        cur.execute("ALTER TABLE correction_requests ADD COLUMN IF NOT EXISTS end_work_date TEXT")
         cur.execute("ALTER TABLE correction_requests ADD COLUMN IF NOT EXISTS requested_time_in TEXT")
         cur.execute("ALTER TABLE correction_requests ADD COLUMN IF NOT EXISTS requested_break_start TEXT")
         cur.execute("ALTER TABLE correction_requests ADD COLUMN IF NOT EXISTS requested_break_end TEXT")
@@ -672,14 +771,16 @@ def create_notification(user_id, title, message):
     """, (user_id, title, message, now_str()), commit=True)
 
 
-def create_incident(user_id, error_type, report_date, message, admin_id):
+def create_incident(user_id, error_type, report_date, message, admin_id, incident_action, report_department):
     user = get_user_by_id(user_id)
 
     execute_db("""
         INSERT INTO incident_reports (
             user_id,
             employee_name,
+            report_department,
             error_type,
+            incident_action,
             incident_date,
             report_date,
             message,
@@ -688,17 +789,56 @@ def create_incident(user_id, error_type, report_date, message, admin_id):
             created_by,
             created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, 'Open', NULL, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Open', NULL, ?, ?)
     """, (
         user_id,
         user["full_name"] if user else "",
+        report_department,
         error_type,
+        incident_action,
         report_date,
         report_date,
         message,
         admin_id,
         now_str()
     ), commit=True)
+
+
+def calculate_suspension_end_date(action_date, duration_days):
+    try:
+        start_date = datetime.strptime(action_date, "%Y-%m-%d").date()
+    except Exception:
+        return ""
+    total_days = max(int(duration_days or 1), 1)
+    return (start_date + timedelta(days=total_days - 1)).strftime("%Y-%m-%d")
+
+
+def create_disciplinary_action(user_id, action_type, action_date, details, created_by, duration_days=1):
+    duration_days = max(int(duration_days or 1), 1)
+    end_date = calculate_suspension_end_date(action_date, duration_days) if action_type == "Suspension" else action_date
+    execute_db("""
+        INSERT INTO disciplinary_actions (
+            user_id, action_type, action_date, duration_days, end_date, details, created_by, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        user_id,
+        action_type,
+        action_date,
+        duration_days,
+        end_date,
+        details,
+        created_by,
+        now_str()
+    ), commit=True)
+
+
+def get_disciplinary_action_by_id(action_id):
+    return fetchone("""
+        SELECT *
+        FROM disciplinary_actions
+        WHERE id = ?
+    """, (action_id,))
 
 
 def log_activity(user_id, action, details=""):
@@ -710,6 +850,18 @@ def log_activity(user_id, action, details=""):
 
 def get_user_by_id(user_id):
     return fetchone("SELECT * FROM users WHERE id = ?", (user_id,))
+
+
+def get_user_by_barcode(barcode_id):
+    cleaned = (barcode_id or "").strip()
+    if not cleaned:
+        return None
+    return fetchone("""
+        SELECT *
+        FROM users
+        WHERE role = 'employee' AND TRIM(COALESCE(barcode_id, '')) = ?
+        ORDER BY id DESC LIMIT 1
+    """, (cleaned,))
 
 
 def get_attendance_by_id(attendance_id):
@@ -752,6 +904,140 @@ def get_open_break(user_id, attendance_row=None):
     if not attendance:
         return None
     return get_open_break_for_attendance(attendance["id"])
+
+
+def perform_attendance_action(user_id, action_type, actor_id=None, source_label="System"):
+    user = get_user_by_id(user_id)
+    if not user or user["role"] != "employee":
+        return False, "Employee not found.", None
+
+    if user["is_active"] != 1:
+        return False, "Employee account is inactive.", user
+
+    override_status = get_employee_override_status_for_date(user_id, today_str())
+    if override_status and override_status["type"] == "Suspension":
+        return False, f"Employee is suspended until {override_status['end_date']}.", user
+
+    attendance = get_current_attendance(user_id)
+    open_break = get_open_break(user_id, attendance)
+    action_key = (action_type or "").strip().lower()
+
+    if action_key == "time_in":
+        if attendance and attendance["time_in"] and not attendance["time_out"]:
+            return False, "Employee is already timed in.", user
+
+        execute_db("""
+            INSERT INTO attendance (
+                user_id, work_date, time_in, time_out, status, proof_file, notes,
+                late_flag, late_minutes, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            user_id,
+            today_str(),
+            now_str(),
+            None,
+            "Timed In",
+            None,
+            f"{source_label} action",
+            *calculate_late_info(now_str(), parse_shift_start(user["shift_start"] if user else DEFAULT_SHIFT_START)),
+            now_str(),
+            now_str()
+        ), commit=True)
+
+        latest_attendance = get_current_attendance(user_id)
+        shift_start = parse_shift_start(user["shift_start"] if user else DEFAULT_SHIFT_START)
+        if latest_attendance and latest_attendance["late_flag"]:
+            create_notification(
+                user_id,
+                "Late Time-In",
+                f"You timed in late by {latest_attendance['late_minutes']} minute(s). Shift start: {shift_start} ET."
+            )
+        else:
+            create_notification(user_id, "Timed In", f"You timed in at {now_str()} ET.")
+        log_activity(actor_id or user_id, "KIOSK TIME IN", f"{source_label} time in for {user['full_name']}")
+        return True, "Time in successful.", user
+
+    if action_key == "start_break":
+        if not attendance or not attendance["time_in"] or attendance["time_out"]:
+            return False, "Employee must be timed in first.", user
+        if open_break:
+            return False, "Employee is already on break.", user
+
+        break_limit_minutes = get_employee_break_limit(user)
+        used_break_minutes = total_break_minutes(attendance["id"])
+        if used_break_minutes >= break_limit_minutes:
+            return False, f"Daily break limit already used ({break_limit_minutes} minutes).", user
+
+        execute_db("""
+            INSERT INTO breaks (user_id, attendance_id, work_date, break_start, created_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (user_id, attendance["id"], attendance["work_date"], now_str(), now_str()), commit=True)
+        execute_db("""
+            UPDATE attendance
+            SET status = ?, updated_at = ?
+            WHERE id = ?
+        """, ("On Break", now_str(), attendance["id"]), commit=True)
+        remaining_break = max(break_limit_minutes - used_break_minutes, 0)
+        create_notification(user_id, "Break Started", f"You started break at {now_str()} ET. Remaining break allowance: {remaining_break} minute(s).")
+        log_activity(actor_id or user_id, "KIOSK BREAK START", f"{source_label} break start for {user['full_name']}")
+        return True, "Break started.", user
+
+    if action_key == "end_break":
+        if not open_break:
+            return False, "No active break found.", user
+
+        execute_db("""
+            UPDATE breaks
+            SET break_end = ?
+            WHERE id = ?
+        """, (now_str(), open_break["id"]), commit=True)
+
+        if attendance:
+            execute_db("""
+                UPDATE attendance
+                SET status = ?, updated_at = ?
+                WHERE id = ?
+            """, ("Timed In", now_str(), attendance["id"]), commit=True)
+
+        total_break = total_break_minutes(attendance["id"]) if attendance else 0
+        break_limit_minutes = get_employee_break_limit(user)
+        create_notification(user_id, "Break Ended", f"You ended break at {now_str()} ET.")
+        if attendance and is_overbreak(total_break, break_limit_minutes):
+            create_notification(
+                user_id,
+                "Break Limit Exceeded",
+                f"Your total break time for today is {minutes_to_hm(total_break)}, which is over your {break_limit_minutes} minute limit."
+            )
+        log_activity(actor_id or user_id, "KIOSK BREAK END", f"{source_label} break end for {user['full_name']}")
+        return True, "Break ended.", user
+
+    if action_key == "time_out":
+        if not attendance or not attendance["time_in"]:
+            return False, "Employee is not timed in.", user
+        if attendance["time_out"]:
+            return False, "Employee is already timed out.", user
+
+        if open_break:
+            execute_db("""
+                UPDATE breaks
+                SET break_end = ?
+                WHERE id = ?
+            """, (now_str(), open_break["id"]), commit=True)
+
+        execute_db("""
+            UPDATE attendance
+            SET time_out = ?, status = ?, updated_at = ?
+            WHERE id = ?
+        """, (now_str(), "Timed Out", now_str(), attendance["id"]), commit=True)
+
+        updated_attendance = get_attendance_by_id(attendance["id"])
+        ok, msg = append_attendance_to_google_sheet(user, updated_attendance)
+        create_notification(user_id, "Timed Out", f"You timed out at {now_str()} ET.")
+        log_activity(actor_id or user_id, "KIOSK TIME OUT", f"{source_label} time out for {user['full_name']}. Sheets sync: {msg if ok else 'Skipped/Failed'}")
+        return True, "Time out successful.", user
+
+    return False, "Invalid attendance action.", user
 
 
 def get_user_live_status(user_id):
@@ -852,6 +1138,41 @@ def is_scheduled_today(user_row):
     return get_today_schedule_code() in get_schedule_day_codes(user_row["schedule_days"] if user_row else DEFAULT_SCHEDULE_DAYS)
 
 
+def get_approved_leave_for_date(user_id, work_date):
+    if not user_id or not work_date:
+        return None
+    return fetchone("""
+        SELECT *
+        FROM correction_requests
+        WHERE user_id = ?
+          AND work_date <= ?
+          AND COALESCE(end_work_date, work_date) >= ?
+          AND status = 'Approved'
+          AND request_type IN ('Sick Leave', 'Paid Leave')
+        ORDER BY id DESC LIMIT 1
+    """, (user_id, work_date, work_date))
+
+
+def get_employee_override_status_for_date(user_id, work_date):
+    suspension = get_suspension_for_date(user_id, work_date)
+    if suspension:
+        return {
+            "type": "Suspension",
+            "label": "Suspended",
+            "details": suspension.get("details") or "",
+            "end_date": suspension.get("end_date") or suspension.get("action_date") or work_date,
+        }
+    leave = get_approved_leave_for_date(user_id, work_date)
+    if leave:
+        return {
+            "type": leave["request_type"],
+            "label": leave["request_type"],
+            "details": leave.get("message") or leave.get("admin_note") or "",
+            "end_date": leave.get("end_work_date") or leave["work_date"],
+        }
+    return None
+
+
 def get_shift_bounds_for_work_date(user_row, work_date):
     shift_start = parse_shift_start(user_row["shift_start"] if user_row else DEFAULT_SHIFT_START)
     shift_end = parse_shift_end(user_row["shift_end"] if user_row else DEFAULT_SHIFT_END)
@@ -872,6 +1193,10 @@ def is_absent_today(user_row, attendance_row):
     if not user_row or user_row["is_active"] != 1 or attendance_row:
         return False
     if not is_scheduled_today(user_row):
+        return False
+    if get_approved_leave_for_date(user_row["id"], today_str()):
+        return False
+    if get_suspension_for_date(user_row["id"], today_str()):
         return False
 
     shift_dt, _ = get_shift_bounds_for_work_date(user_row, today_str())
@@ -1172,8 +1497,8 @@ def build_correction_change_summary(before_values, after_values):
 
 
 def describe_request_review_result(request_type, work_date, requested_time_out=""):
-    if request_type == "Leave Request":
-        return f"Leave request approved for {work_date}."
+    if request_type in LEAVE_REQUEST_TYPES:
+        return f"{request_type} approved for {work_date}."
     if request_type == "Undertime":
         return f"Undertime request approved for {work_date}" + (f" at {requested_time_out}." if requested_time_out else ".")
     return ""
@@ -1317,7 +1642,8 @@ def perform_go_live_reset():
                     correction_requests,
                     notifications,
                     activity_logs,
-                    incident_reports
+                    incident_reports,
+                    disciplinary_actions
                 RESTART IDENTITY
             """)
         db.commit()
@@ -1330,12 +1656,13 @@ def perform_go_live_reset():
             "notifications",
             "activity_logs",
             "incident_reports",
+            "disciplinary_actions",
         ]:
             cur.execute(f"DELETE FROM {table_name}")
         try:
             cur.execute("""
                 DELETE FROM sqlite_sequence
-                WHERE name IN ('breaks', 'attendance', 'correction_requests', 'notifications', 'activity_logs', 'incident_reports')
+                WHERE name IN ('breaks', 'attendance', 'correction_requests', 'notifications', 'activity_logs', 'incident_reports', 'disciplinary_actions')
             """)
         except sqlite3.OperationalError:
             pass
@@ -1457,6 +1784,64 @@ def get_avatar_initials(name):
     return initials or "U"
 
 
+CODE128_PATTERNS = [
+    "212222", "222122", "222221", "121223", "121322", "131222", "122213", "122312", "132212", "221213",
+    "221312", "231212", "112232", "122132", "122231", "113222", "123122", "123221", "223211", "221132",
+    "221231", "213212", "223112", "312131", "311222", "321122", "321221", "312212", "322112", "322211",
+    "212123", "212321", "232121", "111323", "131123", "131321", "112313", "132113", "132311", "211313",
+    "231113", "231311", "112133", "112331", "132131", "113123", "113321", "133121", "313121", "211331",
+    "231131", "213113", "213311", "213131", "311123", "311321", "331121", "312113", "312311", "332111",
+    "314111", "221411", "431111", "111224", "111422", "121124", "121421", "141122", "141221", "112214",
+    "112412", "122114", "122411", "142112", "142211", "241211", "221114", "413111", "241112", "134111",
+    "111242", "121142", "121241", "114212", "124112", "124211", "411212", "421112", "421211", "212141",
+    "214121", "412121", "111143", "111341", "131141", "114113", "114311", "411113", "411311", "113141",
+    "114131", "311141", "411131", "211412", "211214", "211232", "2331112"
+]
+
+
+def generate_code128_svg_data_uri(value, module_width=2, height=88):
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        return ""
+    if any(ord(ch) < 32 or ord(ch) > 126 for ch in raw_value):
+        return ""
+
+    code_values = [104] + [ord(ch) - 32 for ch in raw_value]
+    checksum_total = 104
+    for index, code in enumerate(code_values[1:], start=1):
+        checksum_total += code * index
+    code_values.append(checksum_total % 103)
+    code_values.append(106)
+
+    quiet_zone = 10 * module_width
+    x = quiet_zone
+    rects = []
+    for code in code_values:
+        pattern = CODE128_PATTERNS[code]
+        for idx, width_char in enumerate(pattern):
+            segment_width = int(width_char) * module_width
+            if idx % 2 == 0:
+                rects.append(f'<rect x="{x}" y="0" width="{segment_width}" height="{height}" fill="#0f172a" />')
+            x += segment_width
+    total_width = x + quiet_zone
+    text_y = height + 18
+    safe_label = (
+        raw_value.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+    svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{total_width}" height="{height + 26}" '
+        f'viewBox="0 0 {total_width} {height + 26}" role="img" aria-label="Barcode {safe_label}">'
+        f'<rect width="{total_width}" height="{height + 26}" fill="#ffffff" rx="8" ry="8" />'
+        + "".join(rects) +
+        f'<text x="{total_width / 2}" y="{text_y}" text-anchor="middle" font-family="Inter, Arial, sans-serif" '
+        f'font-size="14" font-weight="700" fill="#0f172a">{safe_label}</text>'
+        '</svg>'
+    )
+    return f"data:image/svg+xml;charset=utf-8,{quote(svg)}"
+
+
 def get_department_options():
     return fetchall("""
         SELECT DISTINCT department
@@ -1475,12 +1860,447 @@ def get_employee_options():
     """)
 
 
+def get_leave_usage_rows(user_id=None, year=None, department=""):
+    target_year = int(year or now_dt().year)
+    sql = """
+        SELECT c.user_id, c.request_type, c.work_date, c.end_work_date, u.full_name, u.username, u.department,
+               u.sick_leave_days, u.paid_leave_days
+        FROM correction_requests c
+        JOIN users u ON u.id = c.user_id
+        WHERE c.status = 'Approved'
+          AND c.request_type IN ('Sick Leave', 'Paid Leave')
+    """
+    params = []
+    if user_id:
+        sql += " AND c.user_id = ?"
+        params.append(user_id)
+    if department:
+        sql += " AND COALESCE(u.department, '') = ?"
+        params.append(department)
+    sql += " ORDER BY c.work_date DESC, c.id DESC"
+    rows = []
+    for row in fetchall(sql, params):
+        item = dict(row)
+        for leave_date in expand_request_dates(item["work_date"], item.get("end_work_date")):
+            parsed_date = parse_iso_date(leave_date)
+            if parsed_date and parsed_date.year == target_year:
+                expanded = dict(item)
+                expanded["leave_date"] = leave_date
+                expanded["work_date"] = leave_date
+                rows.append(expanded)
+    return rows
+
+
+def normalize_request_date_range(work_date, end_work_date=""):
+    start_date = parse_iso_date(work_date)
+    end_date = parse_iso_date(end_work_date, start_date)
+    if not start_date:
+        raise ValueError("Please choose a valid leave date.")
+    if not end_date:
+        end_date = start_date
+    if end_date < start_date:
+        start_date, end_date = end_date, start_date
+    return start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")
+
+
+def expand_request_dates(work_date, end_work_date=""):
+    start_str, end_str = normalize_request_date_range(work_date, end_work_date)
+    start_date = parse_iso_date(start_str)
+    end_date = parse_iso_date(end_str, start_date)
+    total_days = (end_date - start_date).days
+    return [(start_date + timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(total_days + 1)]
+
+
+def get_request_day_count(row_or_work_date, end_work_date=""):
+    if isinstance(row_or_work_date, dict):
+        return len(expand_request_dates(row_or_work_date.get("work_date"), row_or_work_date.get("end_work_date")))
+    return len(expand_request_dates(row_or_work_date, end_work_date))
+
+
+def format_request_date_range(work_date, end_work_date=""):
+    start_str, end_str = normalize_request_date_range(work_date, end_work_date)
+    return start_str if start_str == end_str else f"{start_str} to {end_str}"
+
+
+def has_overlapping_leave_request(user_id, request_type, work_date, end_work_date, exclude_id=None):
+    start_str, end_str = normalize_request_date_range(work_date, end_work_date)
+    sql = """
+        SELECT id
+        FROM correction_requests
+        WHERE user_id = ?
+          AND request_type = ?
+          AND status IN ('Pending', 'Approved')
+          AND work_date <= ?
+          AND COALESCE(end_work_date, work_date) >= ?
+    """
+    params = [user_id, request_type, end_str, start_str]
+    if exclude_id:
+        sql += " AND id != ?"
+        params.append(exclude_id)
+    sql += " ORDER BY id DESC LIMIT 1"
+    return fetchone(sql, params)
+
+
+def get_overlap_days(start_a, end_a, start_b, end_b):
+    left = max(start_a, start_b)
+    right = min(end_a, end_b)
+    if right < left:
+        return []
+    total_days = (right - left).days
+    return [(left + timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(total_days + 1)]
+
+
+def find_conflicting_disciplinary_action(user_id, action_type, action_date, duration_days=1, exclude_id=None):
+    target_start = parse_iso_date(action_date)
+    target_end = parse_iso_date(
+        calculate_suspension_end_date(action_date, duration_days) if action_type == "Suspension" else action_date,
+        target_start
+    )
+    if not target_start or not target_end:
+        return None
+
+    sql = """
+        SELECT *
+        FROM disciplinary_actions
+        WHERE user_id = ?
+    """
+    params = [user_id]
+    if exclude_id:
+        sql += " AND id != ?"
+        params.append(exclude_id)
+    sql += " ORDER BY action_date DESC, id DESC"
+
+    for row in fetchall(sql, params):
+        item = dict(row)
+        row_start = parse_iso_date(item["action_date"])
+        row_end = parse_iso_date(item.get("end_date") or item["action_date"], row_start)
+        if not row_start or not row_end:
+            continue
+        overlapping_days = get_overlap_days(target_start, target_end, row_start, row_end)
+        if item["action_type"] == "Suspension" and action_type == "Suspension" and overlapping_days:
+            item["conflict_reason"] = f"Overlaps existing suspension on {format_request_date_range(overlapping_days[0], overlapping_days[-1])}."
+            return item
+        if item["action_date"] == action_date:
+            item["conflict_reason"] = f"{item['action_type']} already exists on {action_date}."
+            return item
+    return None
+
+
+def get_disciplinary_actions(action_type="", user_id="", department="", date_from="", date_to=""):
+    sql = """
+        SELECT d.*, u.full_name, u.username, u.department, u.break_limit_minutes, creator.full_name AS created_by_name
+        FROM disciplinary_actions d
+        JOIN users u ON u.id = d.user_id
+        LEFT JOIN users creator ON creator.id = d.created_by
+        WHERE 1=1
+    """
+    params = []
+    if action_type:
+        sql += " AND d.action_type = ?"
+        params.append(action_type)
+    if user_id:
+        sql += " AND d.user_id = ?"
+        params.append(user_id)
+    if department:
+        sql += " AND COALESCE(u.department, '') = ?"
+        params.append(department)
+    if date_from:
+        sql += " AND COALESCE(d.end_date, d.action_date) >= ?"
+        params.append(date_from)
+    if date_to:
+        sql += " AND d.action_date <= ?"
+        params.append(date_to)
+    sql += " ORDER BY d.action_date DESC, d.id DESC"
+
+    rows = [dict(row) for row in fetchall(sql, params)]
+    today = today_str()
+    for row in rows:
+        if row["action_type"] == "Suspension":
+            action_end = row["end_date"] or row["action_date"]
+            if today < row["action_date"]:
+                row["status_label"] = "Upcoming"
+            elif row["action_date"] <= today <= action_end:
+                row["status_label"] = "Active"
+            else:
+                row["status_label"] = "Completed"
+        else:
+            row["status_label"] = "Logged"
+    return rows
+
+
+def get_suspension_for_date(user_id, work_date):
+    if not user_id or not work_date:
+        return None
+    return fetchone("""
+        SELECT *
+        FROM disciplinary_actions
+        WHERE user_id = ?
+          AND action_type = 'Suspension'
+          AND action_date <= ?
+          AND COALESCE(end_date, action_date) >= ?
+        ORDER BY id DESC LIMIT 1
+    """, (user_id, work_date, work_date))
+
+
+def expand_suspension_dates(row):
+    if not row or row.get("action_type") != "Suspension":
+        return []
+    try:
+        start_date = datetime.strptime(row["action_date"], "%Y-%m-%d").date()
+        end_date = datetime.strptime((row.get("end_date") or row["action_date"]), "%Y-%m-%d").date()
+    except Exception:
+        return []
+    if end_date < start_date:
+        end_date = start_date
+    total_days = (end_date - start_date).days
+    return [(start_date + timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(total_days + 1)]
+
+
+def get_pending_leave_requests(user_id=None, department="", year=None):
+    sql = """
+        SELECT c.*, u.full_name, u.username, u.department
+        FROM correction_requests c
+        JOIN users u ON u.id = c.user_id
+        WHERE c.status = 'Pending'
+          AND c.request_type IN ('Sick Leave', 'Paid Leave')
+    """
+    params = []
+    if user_id:
+        sql += " AND c.user_id = ?"
+        params.append(user_id)
+    if department:
+        sql += " AND COALESCE(u.department, '') = ?"
+        params.append(department)
+    if year:
+        sql += " AND c.work_date <= ? AND COALESCE(c.end_work_date, c.work_date) >= ?"
+        params.extend([f"{int(year)}-12-31", f"{int(year)}-01-01"])
+    sql += " ORDER BY c.work_date ASC, c.id ASC"
+    rows = []
+    for row in fetchall(sql, params):
+        item = dict(row)
+        item["requested_days"] = get_request_day_count(item)
+        item["display_date_range"] = format_request_date_range(item["work_date"], item.get("end_work_date"))
+        try:
+            created_date = datetime.strptime((item.get("created_at") or now_str())[:19], "%Y-%m-%d %H:%M:%S").date()
+            item["age_days"] = max((now_dt().date() - created_date).days, 0)
+        except Exception:
+            item["age_days"] = 0
+        rows.append(item)
+    return rows
+
+
+def get_leave_balance_summary(user_row, year=None):
+    if not user_row:
+        return {
+            "year": now_dt().year,
+            "sick_total": DEFAULT_SICK_LEAVE_DAYS,
+            "sick_used": 0,
+            "sick_remaining": DEFAULT_SICK_LEAVE_DAYS,
+            "paid_total": DEFAULT_PAID_LEAVE_DAYS,
+            "paid_used": 0,
+            "paid_remaining": DEFAULT_PAID_LEAVE_DAYS,
+        }
+
+    target_year = int(year or now_dt().year)
+    approved_rows = get_leave_usage_rows(user_id=user_row["id"], year=target_year)
+    sick_used_in_app = len([row for row in approved_rows if row["request_type"] == "Sick Leave"])
+    paid_used_in_app = len([row for row in approved_rows if row["request_type"] == "Paid Leave"])
+    sick_used_manual = int(user_row["sick_leave_used_manual"] if user_row["sick_leave_used_manual"] is not None else 0)
+    paid_used_manual = int(user_row["paid_leave_used_manual"] if user_row["paid_leave_used_manual"] is not None else 0)
+    sick_total = int(user_row["sick_leave_days"] if user_row["sick_leave_days"] is not None else DEFAULT_SICK_LEAVE_DAYS)
+    paid_total = int(user_row["paid_leave_days"] if user_row["paid_leave_days"] is not None else DEFAULT_PAID_LEAVE_DAYS)
+    sick_used = sick_used_manual + sick_used_in_app
+    paid_used = paid_used_manual + paid_used_in_app
+
+    return {
+        "year": target_year,
+        "sick_total": sick_total,
+        "sick_used": sick_used,
+        "sick_remaining": max(sick_total - sick_used, 0),
+        "paid_total": paid_total,
+        "paid_used": paid_used,
+        "paid_remaining": max(paid_total - paid_used, 0),
+        "sick_used_manual": sick_used_manual,
+        "paid_used_manual": paid_used_manual,
+        "sick_used_in_app": sick_used_in_app,
+        "paid_used_in_app": paid_used_in_app,
+    }
+
+
+def build_leave_dashboard_rows(year=None, department=""):
+    target_year = int(year or now_dt().year)
+    employees_sql = """
+        SELECT *
+        FROM users
+        WHERE role = 'employee'
+    """
+    params = []
+    if department:
+        employees_sql += " AND COALESCE(department, '') = ?"
+        params.append(department)
+    employees_sql += " ORDER BY full_name ASC"
+    employees = fetchall(employees_sql, params)
+
+    approved_rows = get_leave_usage_rows(year=target_year, department=department)
+    pending_rows = get_pending_leave_requests(department=department, year=target_year)
+    approved_map = {}
+    pending_map = {}
+
+    for row in approved_rows:
+        stats = approved_map.setdefault(row["user_id"], {"Sick Leave": 0, "Paid Leave": 0})
+        stats[row["request_type"]] = stats.get(row["request_type"], 0) + 1
+
+    for row in pending_rows:
+        stats = pending_map.setdefault(row["user_id"], {"Sick Leave": 0, "Paid Leave": 0})
+        stats[row["request_type"]] = stats.get(row["request_type"], 0) + int(row.get("requested_days") or 0)
+
+    rows = []
+    for employee in employees:
+        approved = approved_map.get(employee["id"], {})
+        pending = pending_map.get(employee["id"], {})
+        sick_total = int(employee["sick_leave_days"] if employee["sick_leave_days"] is not None else DEFAULT_SICK_LEAVE_DAYS)
+        paid_total = int(employee["paid_leave_days"] if employee["paid_leave_days"] is not None else DEFAULT_PAID_LEAVE_DAYS)
+        sick_used_manual = int(employee["sick_leave_used_manual"] if employee["sick_leave_used_manual"] is not None else 0)
+        paid_used_manual = int(employee["paid_leave_used_manual"] if employee["paid_leave_used_manual"] is not None else 0)
+        sick_used_in_app = approved.get("Sick Leave", 0)
+        paid_used_in_app = approved.get("Paid Leave", 0)
+        sick_used = sick_used_manual + sick_used_in_app
+        paid_used = paid_used_manual + paid_used_in_app
+        rows.append({
+            "user_id": employee["id"],
+            "full_name": employee["full_name"],
+            "username": employee["username"],
+            "department": employee["department"] or "",
+            "position": employee["position"] or "",
+            "sick_total": sick_total,
+            "sick_used": sick_used,
+            "sick_remaining": max(sick_total - sick_used, 0),
+            "paid_total": paid_total,
+            "paid_used": paid_used,
+            "paid_remaining": max(paid_total - paid_used, 0),
+            "sick_used_manual": sick_used_manual,
+            "paid_used_manual": paid_used_manual,
+            "sick_used_in_app": sick_used_in_app,
+            "paid_used_in_app": paid_used_in_app,
+            "pending_sick": pending.get("Sick Leave", 0),
+            "pending_paid": pending.get("Paid Leave", 0),
+            "pending_total": pending.get("Sick Leave", 0) + pending.get("Paid Leave", 0),
+        })
+
+    return rows
+
+
 def parse_positive_int(value, default):
     try:
         parsed = int(str(value).strip())
         return parsed if parsed > 0 else default
     except Exception:
         return default
+
+
+def parse_non_negative_int(value, default):
+    try:
+        parsed = int(str(value).strip())
+        return parsed if parsed >= 0 else default
+    except Exception:
+        return default
+
+
+def parse_money_value(value, default=0.0):
+    try:
+        cleaned = str(value).strip().replace(",", "")
+        if cleaned == "":
+            return default
+        parsed = round(float(cleaned), 2)
+        return parsed if parsed >= 0 else default
+    except Exception:
+        return default
+
+
+def format_currency(value):
+    try:
+        return f"PHP {float(value or 0):,.2f}"
+    except Exception:
+        return "PHP 0.00"
+
+
+def notify_admins_for_leave_and_disciplinary_events():
+    leave_rows = build_leave_dashboard_rows(year=now_dt().year)
+    for row in leave_rows:
+        if row["sick_remaining"] <= 0:
+            create_admin_alert_once(
+                "Sick Leave Exhausted",
+                f"{row['full_name']} has no sick leave remaining for {now_dt().year}."
+            )
+        if row["paid_remaining"] <= 0:
+            create_admin_alert_once(
+                "Paid Leave Exhausted",
+                f"{row['full_name']} has no paid leave remaining for {now_dt().year}."
+            )
+
+    for row in get_pending_leave_requests():
+        if int(row.get("age_days") or 0) >= 3:
+            create_admin_alert_once(
+                "Pending Leave Aging",
+                f"{row['full_name']}'s {row['request_type']} request ({row['display_date_range']}) has been pending for {row['age_days']} day(s)."
+            )
+
+    for row in get_disciplinary_actions(action_type="Suspension", date_from=today_str(), date_to=today_str()):
+        create_admin_alert_once(
+            "Suspension Starts Today",
+            f"{row['full_name']}'s suspension starts today and runs through {row.get('end_date') or row['action_date']}."
+        )
+
+
+def summarize_employee_admin_changes(before_row, after_values):
+    if not before_row:
+        return "Created employee record."
+    labels = {
+        "department": "Department",
+        "position": "Position",
+        "barcode_id": "Barcode ID",
+        "hourly_rate": "Hourly Rate",
+        "sick_leave_days": "Sick Leave Allotment",
+        "paid_leave_days": "Paid Leave Allotment",
+        "sick_leave_used_manual": "Sick Leave Already Used",
+        "paid_leave_used_manual": "Paid Leave Already Used",
+        "shift_start": "Shift Start",
+        "shift_end": "Shift End",
+        "break_limit_minutes": "Break Limit",
+        "is_active": "Account Status",
+    }
+    changes = []
+    for key, label in labels.items():
+        before = before_row[key] if key in before_row.keys() else None
+        after = after_values.get(key)
+        if str(before) != str(after):
+            changes.append(f"{label}: {before} -> {after}")
+    return "; ".join(changes) if changes else "No tracked employee settings changed."
+
+
+def parse_iso_date(value, fallback=None):
+    try:
+        return datetime.strptime(str(value).strip(), "%Y-%m-%d").date()
+    except Exception:
+        return fallback
+
+
+def get_payroll_period_dates(period, date_from_value="", date_to_value=""):
+    today = now_dt().date()
+    if period == "last_month":
+        first_this_month = today.replace(day=1)
+        date_to = first_this_month - timedelta(days=1)
+        date_from = date_to.replace(day=1)
+        return date_from, date_to
+    if period == "last_14_days":
+        return today - timedelta(days=13), today
+    if period == "custom":
+        date_from = parse_iso_date(date_from_value, today.replace(day=1))
+        date_to = parse_iso_date(date_to_value, today)
+        if date_from > date_to:
+            date_from, date_to = date_to, date_from
+        return date_from, date_to
+    return today.replace(day=1), today
 
 
 def paginate_items(items, page, page_size):
@@ -1523,6 +2343,102 @@ def create_admin_alert_once(title, message):
         """, (admin["id"], title, message, today_start))
         if not existing:
             create_notification(admin["id"], title, message)
+
+
+def build_payroll_rows(date_from, date_to, department_filter="", employee_filter=""):
+    employees_sql = """
+        SELECT *
+        FROM users
+        WHERE role = 'employee'
+    """
+    params = []
+    if department_filter:
+        employees_sql += " AND department = ?"
+        params.append(department_filter)
+    if employee_filter:
+        employees_sql += " AND id = ?"
+        params.append(employee_filter)
+    employees_sql += " ORDER BY full_name ASC"
+
+    employees = fetchall(employees_sql, params)
+    employee_map = {}
+    for employee in employees:
+        employee_map[employee["id"]] = {
+            "user_id": employee["id"],
+            "full_name": employee["full_name"],
+            "username": employee["username"],
+            "department": employee["department"] or "",
+            "position": employee["position"] or "",
+            "hourly_rate": float(employee["hourly_rate"] or 0),
+            "days_worked": 0,
+            "total_minutes": 0,
+            "late_minutes": 0,
+            "break_minutes": 0,
+            "gross_pay": 0,
+            "suspension_days": 0,
+            "suspension_hours": 0,
+            "suspension_pay": 0,
+            "has_rate": 1 if float(employee["hourly_rate"] or 0) > 0 else 0,
+            "is_active": employee["is_active"],
+            "schedule_days": employee["schedule_days"] or DEFAULT_SCHEDULE_DAYS,
+            "shift_start": employee["shift_start"] or DEFAULT_SHIFT_START,
+            "shift_end": employee["shift_end"] or DEFAULT_SHIFT_END,
+        }
+
+    attendance_rows = fetchall("""
+        SELECT a.*, u.department
+        FROM attendance a
+        JOIN users u ON u.id = a.user_id
+        WHERE u.role = 'employee'
+          AND a.work_date BETWEEN ? AND ?
+          AND a.time_in IS NOT NULL
+          AND a.time_out IS NOT NULL
+        ORDER BY a.work_date ASC, a.id ASC
+    """, (date_from.strftime("%Y-%m-%d"), date_to.strftime("%Y-%m-%d")))
+
+    for attendance in attendance_rows:
+        summary = employee_map.get(attendance["user_id"])
+        if not summary:
+            continue
+        minutes_worked = max(total_work_minutes(attendance), 0)
+        summary["days_worked"] += 1
+        summary["total_minutes"] += minutes_worked
+        summary["late_minutes"] += int(attendance["late_minutes"] or 0)
+        summary["break_minutes"] += total_break_minutes(attendance["id"])
+
+    suspension_rows = fetchall("""
+        SELECT *
+        FROM disciplinary_actions
+        WHERE action_type = 'Suspension'
+          AND action_date <= ?
+          AND COALESCE(end_date, action_date) >= ?
+    """, (date_to.strftime("%Y-%m-%d"), date_from.strftime("%Y-%m-%d")))
+    for suspension in suspension_rows:
+        summary = employee_map.get(suspension["user_id"])
+        if not summary:
+            continue
+        for suspension_date in expand_suspension_dates(suspension):
+            if suspension_date < date_from.strftime("%Y-%m-%d") or suspension_date > date_to.strftime("%Y-%m-%d"):
+                continue
+            employee_stub = {
+                "schedule_days": summary["schedule_days"],
+                "shift_start": summary["shift_start"],
+                "shift_end": summary["shift_end"],
+            }
+            if not is_scheduled_on_date(employee_stub, suspension_date):
+                continue
+            shift_minutes = get_scheduled_shift_minutes(employee_stub, suspension_date)
+            summary["suspension_days"] += 1
+            summary["suspension_hours"] += round(shift_minutes / 60, 2)
+
+    for summary in employee_map.values():
+        summary["total_hours"] = round(summary["total_minutes"] / 60, 2)
+        summary["gross_pay"] = round(summary["total_hours"] * summary["hourly_rate"], 2)
+        summary["suspension_hours"] = round(summary["suspension_hours"], 2)
+        summary["suspension_pay"] = round(summary["suspension_hours"] * summary["hourly_rate"], 2)
+        summary["status_label"] = "Ready" if summary["has_rate"] else "Missing Rate"
+
+    return sorted(employee_map.values(), key=lambda item: (-item["gross_pay"], item["full_name"].lower()))
 
 
 # =========================
@@ -1613,8 +2529,10 @@ def inject_globals():
         is_image=is_image,
         uploaded_file_exists=uploaded_file_exists,
         get_avatar_initials=get_avatar_initials,
+        generate_code128_svg_data_uri=generate_code128_svg_data_uri,
         format_datetime_12h=format_datetime_12h,
-        format_time_12h=format_time_12h
+        format_time_12h=format_time_12h,
+        format_currency=format_currency
     )
 
 
@@ -1710,11 +2628,15 @@ def dashboard():
     """, (user["id"],))
 
     current_status = get_user_live_status(user["id"])
+    override_status = get_employee_override_status_for_date(user["id"], today_str())
+    if override_status:
+        current_status = override_status["label"]
     todays_break_minutes = total_break_minutes(today_attendance["id"], include_open=True) if today_attendance else 0
     todays_work_minutes = total_work_minutes(today_attendance) if today_attendance else 0
     todays_break_sessions = build_break_sessions(today_attendance["id"]) if today_attendance else []
     break_limit_minutes = get_employee_break_limit(user)
     over_break_minutes = get_overbreak_minutes(todays_break_minutes, break_limit_minutes)
+    leave_summary = get_leave_balance_summary(user)
 
     return render_template(
         "employee_dashboard.html",
@@ -1722,9 +2644,11 @@ def dashboard():
         today_attendance=today_attendance,
         notifications=notifications,
         current_status=current_status,
+        override_status=override_status,
         todays_break_minutes=todays_break_minutes,
         todays_work_minutes=todays_work_minutes,
         todays_break_sessions=todays_break_sessions,
+        leave_summary=leave_summary,
         break_limit_minutes=break_limit_minutes,
         over_break_minutes=over_break_minutes,
         minutes_to_hm=minutes_to_hm
@@ -1896,6 +2820,7 @@ def employee_corrections():
     if request.method == "POST":
         request_type = request.form.get("request_type", "").strip()
         work_date = request.form.get("work_date", "").strip()
+        end_work_date = request.form.get("end_work_date", "").strip()
         message = request.form.get("message", "").strip()
         requested_time_in = request.form.get("requested_time_in", "")
         requested_break_start = request.form.get("requested_break_start", "")
@@ -1923,11 +2848,23 @@ def employee_corrections():
             flash("Requested time out is required for undertime requests.", "danger")
             return redirect(url_for("employee_corrections"))
 
-        if request_type == "Leave Request":
+        if request_type in LEAVE_REQUEST_TYPES:
+            try:
+                work_date, end_work_date = normalize_request_date_range(work_date, end_work_date or work_date)
+            except ValueError as exc:
+                flash(str(exc), "danger")
+                return redirect(url_for("employee_corrections"))
             requested_time_in = ""
             requested_break_start = ""
             requested_break_end = ""
             requested_time_out = ""
+
+            existing_leave = has_overlapping_leave_request(user["id"], request_type, work_date, end_work_date)
+            if existing_leave:
+                flash(f"A {request_type.lower()} request already exists in that date range.", "warning")
+                return redirect(url_for("employee_corrections"))
+        else:
+            end_work_date = work_date
 
         attendance, break_row = get_attendance_context(user["id"], work_date)
         requested_time_in_dt, requested_break_start_dt, requested_break_end_dt, requested_time_out_dt = resolve_correction_datetimes(
@@ -1945,15 +2882,16 @@ def employee_corrections():
 
         execute_db("""
             INSERT INTO correction_requests (
-                user_id, request_type, work_date, message,
+                user_id, request_type, work_date, end_work_date, message,
                 requested_time_in, requested_break_start, requested_break_end, requested_time_out,
                 status, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Pending', ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending', ?)
         """, (
             user["id"],
             request_type,
             work_date,
+            end_work_date,
             message,
             requested_time_in_dt,
             requested_break_start_dt,
@@ -1962,12 +2900,13 @@ def employee_corrections():
             now_str()
         ), commit=True)
 
-        log_activity(user["id"], "CORRECTION REQUEST", f"Submitted {request_type} request for {work_date}")
+        log_activity(user["id"], "CORRECTION REQUEST", f"Submitted {request_type} request for {format_request_date_range(work_date, end_work_date)}")
         flash("Correction request submitted.", "success")
         return redirect(url_for("employee_corrections"))
 
     requests = get_correction_requests(user_id=user["id"])
-    return render_template("employee_corrections.html", requests=requests)
+    leave_summary = get_leave_balance_summary(user)
+    return render_template("employee_corrections.html", requests=requests, leave_summary=leave_summary)
 
 
 @app.route("/time-in", methods=["POST"])
@@ -1980,6 +2919,11 @@ def time_in():
         session.clear()
         flash("Your session expired. Please log in again.", "warning")
         return redirect(url_for("login"))
+
+    override_status = get_employee_override_status_for_date(user_id, today_str())
+    if override_status and override_status["type"] == "Suspension":
+        flash(f"You cannot time in while suspended. Suspension ends on {override_status['end_date']}.", "danger")
+        return redirect(url_for("dashboard"))
 
     existing = get_current_attendance(user_id)
     if existing and existing["time_in"] and not existing["time_out"]:
@@ -2035,6 +2979,11 @@ def time_in():
 @login_required(role="employee")
 def start_break():
     user_id = session["user_id"]
+    override_status = get_employee_override_status_for_date(user_id, today_str())
+    if override_status and override_status["type"] == "Suspension":
+        flash(f"You cannot start a break while suspended. Suspension ends on {override_status['end_date']}.", "danger")
+        return redirect(url_for("dashboard"))
+    user = get_user_by_id(user_id)
     attendance = get_current_attendance(user_id)
 
     if not attendance or not attendance["time_in"] or attendance["time_out"]:
@@ -2044,6 +2993,12 @@ def start_break():
     open_break = get_open_break(user_id, attendance)
     if open_break:
         flash("You are already on break.", "warning")
+        return redirect(url_for("dashboard"))
+
+    break_limit_minutes = get_employee_break_limit(user)
+    used_break_minutes = total_break_minutes(attendance["id"])
+    if used_break_minutes >= break_limit_minutes:
+        flash(f"Your daily break limit of {break_limit_minutes} minutes has already been used.", "warning")
         return redirect(url_for("dashboard"))
 
     execute_db("""
@@ -2057,7 +3012,8 @@ def start_break():
         WHERE id = ?
     """, ("On Break", now_str(), attendance["id"]), commit=True)
 
-    create_notification(user_id, "Break Started", f"You started break at {now_str()} ET.")
+    remaining_break = max(break_limit_minutes - used_break_minutes, 0)
+    create_notification(user_id, "Break Started", f"You started break at {now_str()} ET. Remaining break allowance: {remaining_break} minute(s).")
     log_activity(user_id, "BREAK START", "Employee started break")
     flash("Break started.", "info")
     return redirect(url_for("dashboard"))
@@ -2067,6 +3023,10 @@ def start_break():
 @login_required(role="employee")
 def end_break():
     user_id = session["user_id"]
+    override_status = get_employee_override_status_for_date(user_id, today_str())
+    if override_status and override_status["type"] == "Suspension":
+        flash(f"You cannot end a break while suspended. Suspension ends on {override_status['end_date']}.", "danger")
+        return redirect(url_for("dashboard"))
     attendance = get_current_attendance(user_id)
     open_break = get_open_break(user_id, attendance)
 
@@ -2107,6 +3067,10 @@ def end_break():
 @login_required(role="employee")
 def time_out():
     user_id = session["user_id"]
+    override_status = get_employee_override_status_for_date(user_id, today_str())
+    if override_status and override_status["type"] == "Suspension":
+        flash(f"You cannot time out while suspended. Suspension ends on {override_status['end_date']}.", "danger")
+        return redirect(url_for("dashboard"))
     attendance = get_current_attendance(user_id)
 
     if not attendance or not attendance["time_in"]:
@@ -2192,6 +3156,7 @@ def get_admin_employee_rows(status_filter="", search="", department_filter="", o
         live_status = get_user_live_status(user["id"])
         attendance = get_current_attendance(user["id"])
         scheduled_today = is_scheduled_today(user)
+        suspension_today = get_suspension_for_date(user["id"], today_str())
         absent_today = is_absent_today(user, attendance)
         missing_timeout_today = is_missing_timeout_today(user, attendance)
         undertime_today = 1 if is_undertime_record(
@@ -2202,6 +3167,8 @@ def get_admin_employee_rows(status_filter="", search="", department_filter="", o
 
         if user["is_active"] != 1:
             status_display = "Inactive"
+        elif suspension_today:
+            status_display = "Suspended"
         elif absent_today:
             status_display = "Absent"
         elif missing_timeout_today:
@@ -2221,6 +3188,7 @@ def get_admin_employee_rows(status_filter="", search="", department_filter="", o
             "schedule_summary": get_schedule_summary(user["schedule_days"] or DEFAULT_SCHEDULE_DAYS),
             "scheduled_today": 1 if scheduled_today else 0,
             "absent_flag": 1 if absent_today else 0,
+            "suspension_flag": 1 if suspension_today else 0,
             "shift_start": user["shift_start"] or DEFAULT_SHIFT_START,
             "shift_end": user["shift_end"] or DEFAULT_SHIFT_END,
             "break_window_start": user["break_window_start"] or DEFAULT_BREAK_WINDOW_START,
@@ -2282,7 +3250,7 @@ def get_incident_reports(report_employee="", report_department="", report_type="
         report_params.append(report_employee)
 
     if report_department:
-        report_sql += " AND COALESCE(u.department, '') = ?"
+        report_sql += " AND COALESCE(r.report_department, u.department, '') = ?"
         report_params.append(report_department)
 
     if report_type:
@@ -2448,7 +3416,7 @@ def get_correction_requests(user_id=None, status="", date_from="", date_to=""):
         params.append(status)
 
     if date_from:
-        sql += " AND c.work_date >= ?"
+        sql += " AND COALESCE(c.end_work_date, c.work_date) >= ?"
         params.append(date_from)
 
     if date_to:
@@ -2461,6 +3429,8 @@ def get_correction_requests(user_id=None, status="", date_from="", date_to=""):
 
     for row in rows:
         item = dict(row)
+        item["display_date_range"] = format_request_date_range(item["work_date"], item.get("end_work_date"))
+        item["requested_days"] = get_request_day_count(item)
         attendance = fetchone("""
             SELECT *
             FROM attendance
@@ -2499,7 +3469,7 @@ def get_approved_special_requests(user_id=None, search="", department="", date_f
         SELECT c.*, u.full_name, u.username, u.break_limit_minutes
         FROM correction_requests c
         JOIN users u ON u.id = c.user_id
-        WHERE c.status = 'Approved' AND c.request_type IN ('Undertime', 'Leave Request')
+        WHERE c.status = 'Approved' AND c.request_type IN ('Undertime', 'Sick Leave', 'Paid Leave')
     """
     params = []
 
@@ -2517,7 +3487,7 @@ def get_approved_special_requests(user_id=None, search="", department="", date_f
         params.append(department)
 
     if date_from:
-        sql += " AND c.work_date >= ?"
+        sql += " AND COALESCE(c.end_work_date, c.work_date) >= ?"
         params.append(date_from)
 
     if date_to:
@@ -2577,16 +3547,19 @@ def build_employee_history_records(user_row, limit=60):
         """, (user_row["id"], limit))
     ]
     special_requests = [dict(row) for row in get_approved_special_requests(user_id=user_row["id"])]
+    suspension_rows = [dict(row) for row in get_disciplinary_actions(action_type="Suspension", user_id=user_row["id"])]
     request_map = {}
     for row in special_requests:
-        matched_attendance, _ = get_matching_attendance_context_for_request(
-            row["user_id"],
-            row["work_date"],
-            request_type=row["request_type"],
-            requested_time_out=row.get("requested_time_out")
-        )
-        target_work_date = matched_attendance["work_date"] if matched_attendance else row["work_date"]
-        request_map[(row["user_id"], target_work_date)] = row
+        request_dates = expand_request_dates(row["work_date"], row.get("end_work_date")) if row["request_type"] in LEAVE_REQUEST_TYPES else [row["work_date"]]
+        for request_work_date in request_dates:
+            matched_attendance, _ = get_matching_attendance_context_for_request(
+                row["user_id"],
+                request_work_date,
+                request_type=row["request_type"],
+                requested_time_out=row.get("requested_time_out")
+            )
+            target_work_date = matched_attendance["work_date"] if matched_attendance else request_work_date
+            request_map[(row["user_id"], target_work_date)] = row
 
     combined = []
     seen_keys = set()
@@ -2603,33 +3576,58 @@ def build_employee_history_records(user_row, limit=60):
         seen_keys.add(key)
 
     for row in special_requests:
-        matched_attendance, _ = get_matching_attendance_context_for_request(
-            row["user_id"],
-            row["work_date"],
-            request_type=row["request_type"],
-            requested_time_out=row.get("requested_time_out")
-        )
-        target_work_date = matched_attendance["work_date"] if matched_attendance else row["work_date"]
-        key = (row["user_id"], target_work_date)
-        if key in seen_keys or row["request_type"] not in {"Leave Request", "Undertime"}:
-            continue
-        is_leave_request = row["request_type"] == "Leave Request"
-        synthetic_row = {
-            "id": None,
-            "user_id": row["user_id"],
-            "work_date": target_work_date,
-            "time_in": None,
-            "time_out": None if is_leave_request else row.get("requested_time_out"),
-            "status": "Approved Leave" if is_leave_request else "Approved Undertime",
-            "proof_file": None,
-            "late_flag": 0,
-            "late_minutes": 0,
-            "request_type": row["request_type"],
-            "admin_note": row["admin_note"],
-            "message": row["message"],
-            "source_type": "request",
-        }
-        combined.append(enrich_history_record(synthetic_row, get_employee_break_limit(user_row), employee_row=user_row))
+        request_dates = expand_request_dates(row["work_date"], row.get("end_work_date")) if row["request_type"] in LEAVE_REQUEST_TYPES else [row["work_date"]]
+        for request_work_date in request_dates:
+            matched_attendance, _ = get_matching_attendance_context_for_request(
+                row["user_id"],
+                request_work_date,
+                request_type=row["request_type"],
+                requested_time_out=row.get("requested_time_out")
+            )
+            target_work_date = matched_attendance["work_date"] if matched_attendance else request_work_date
+            key = (row["user_id"], target_work_date)
+            if key in seen_keys or row["request_type"] not in (LEAVE_REQUEST_TYPES | {"Undertime"}):
+                continue
+            is_leave_request = row["request_type"] in LEAVE_REQUEST_TYPES
+            synthetic_row = {
+                "id": None,
+                "user_id": row["user_id"],
+                "work_date": target_work_date,
+                "time_in": None,
+                "time_out": None if is_leave_request else row.get("requested_time_out"),
+                "status": row["request_type"] if is_leave_request else "Approved Undertime",
+                "proof_file": None,
+                "late_flag": 0,
+                "late_minutes": 0,
+                "request_type": row["request_type"],
+                "admin_note": row["admin_note"],
+                "message": row["message"],
+                "source_type": "request",
+            }
+            combined.append(enrich_history_record(synthetic_row, get_employee_break_limit(user_row), employee_row=user_row))
+
+    suspension_dates = set()
+    for row in suspension_rows:
+        for work_date in expand_suspension_dates(row):
+            if (row["user_id"], work_date) in seen_keys:
+                continue
+            suspension_dates.add((row["user_id"], work_date))
+            synthetic_row = {
+                "id": None,
+                "user_id": row["user_id"],
+                "work_date": work_date,
+                "time_in": None,
+                "time_out": None,
+                "status": "Suspension",
+                "proof_file": None,
+                "late_flag": 0,
+                "late_minutes": 0,
+                "request_type": "Suspension",
+                "admin_note": row.get("details") or "",
+                "message": row.get("details") or "",
+                "source_type": "request",
+            }
+            combined.append(enrich_history_record(synthetic_row, get_employee_break_limit(user_row), employee_row=user_row))
 
     combined.sort(key=lambda item: (item["row"]["work_date"] or "", item["row"].get("id") or 0), reverse=True)
     return combined[:limit]
@@ -2674,16 +3672,22 @@ def build_admin_history_records(search="", department="", type_filter="", late_o
         date_from=date_from,
         date_to=date_to
     )]
+    suspension_rows = [dict(row) for row in get_disciplinary_actions(
+        action_type="Suspension",
+        department=department
+    )]
     request_map = {}
     for row in special_requests:
-        matched_attendance, _ = get_matching_attendance_context_for_request(
-            row["user_id"],
-            row["work_date"],
-            request_type=row["request_type"],
-            requested_time_out=row.get("requested_time_out")
-        )
-        target_work_date = matched_attendance["work_date"] if matched_attendance else row["work_date"]
-        request_map[(row["user_id"], target_work_date)] = row
+        request_dates = expand_request_dates(row["work_date"], row.get("end_work_date")) if row["request_type"] in LEAVE_REQUEST_TYPES else [row["work_date"]]
+        for request_work_date in request_dates:
+            matched_attendance, _ = get_matching_attendance_context_for_request(
+                row["user_id"],
+                request_work_date,
+                request_type=row["request_type"],
+                requested_time_out=row.get("requested_time_out")
+            )
+            target_work_date = matched_attendance["work_date"] if matched_attendance else request_work_date
+            request_map[(row["user_id"], target_work_date)] = row
     attendance_key_map = {(row["user_id"], row["work_date"]): row for row in attendance_rows}
 
     enriched = []
@@ -2710,39 +3714,79 @@ def build_admin_history_records(search="", department="", type_filter="", late_o
         seen_keys.add(key)
 
     for row in special_requests:
-        matched_attendance, _ = get_matching_attendance_context_for_request(
-            row["user_id"],
-            row["work_date"],
-            request_type=row["request_type"],
-            requested_time_out=row.get("requested_time_out")
-        )
-        target_work_date = matched_attendance["work_date"] if matched_attendance else row["work_date"]
-        key = (row["user_id"], target_work_date)
-        if key in seen_keys or row["request_type"] not in {"Leave Request", "Undertime"}:
-            continue
-        is_leave_request = row["request_type"] == "Leave Request"
-        synthetic_row = {
-            "id": None,
-            "user_id": row["user_id"],
-            "full_name": row["full_name"],
-            "username": row["username"],
-            "break_limit_minutes": row["break_limit_minutes"],
-            "work_date": target_work_date,
-            "time_in": None,
-            "time_out": None if is_leave_request else row.get("requested_time_out"),
-            "status": "Approved Leave" if is_leave_request else "Approved Undertime",
-            "proof_file": None,
-            "late_flag": 0,
-            "late_minutes": 0,
-            "request_type": row["request_type"],
-            "admin_note": row["admin_note"],
-            "message": row["message"],
-            "source_type": "request",
-        }
-        item = enrich_history_record(synthetic_row, parse_break_limit_minutes(row["break_limit_minutes"]))
-        if type_filter and item["record_type"] != type_filter:
-            continue
-        enriched.append(item)
+        request_dates = expand_request_dates(row["work_date"], row.get("end_work_date")) if row["request_type"] in LEAVE_REQUEST_TYPES else [row["work_date"]]
+        for request_work_date in request_dates:
+            matched_attendance, _ = get_matching_attendance_context_for_request(
+                row["user_id"],
+                request_work_date,
+                request_type=row["request_type"],
+                requested_time_out=row.get("requested_time_out")
+            )
+            target_work_date = matched_attendance["work_date"] if matched_attendance else request_work_date
+            key = (row["user_id"], target_work_date)
+            if key in seen_keys or row["request_type"] not in (LEAVE_REQUEST_TYPES | {"Undertime"}):
+                continue
+            is_leave_request = row["request_type"] in LEAVE_REQUEST_TYPES
+            synthetic_row = {
+                "id": None,
+                "user_id": row["user_id"],
+                "full_name": row["full_name"],
+                "username": row["username"],
+                "break_limit_minutes": row["break_limit_minutes"],
+                "work_date": target_work_date,
+                "time_in": None,
+                "time_out": None if is_leave_request else row.get("requested_time_out"),
+                "status": row["request_type"] if is_leave_request else "Approved Undertime",
+                "proof_file": None,
+                "late_flag": 0,
+                "late_minutes": 0,
+                "request_type": row["request_type"],
+                "admin_note": row["admin_note"],
+                "message": row["message"],
+                "source_type": "request",
+            }
+            item = enrich_history_record(synthetic_row, parse_break_limit_minutes(row["break_limit_minutes"]))
+            if type_filter and item["record_type"] != type_filter:
+                continue
+            enriched.append(item)
+
+    suspension_date_keys = set()
+    for row in suspension_rows:
+        if search:
+            hay = f"{row.get('full_name', '')} {row.get('username', '')}".lower()
+            if search.lower() not in hay:
+                continue
+        for work_date in expand_suspension_dates(row):
+            key = (row["user_id"], work_date)
+            if key in seen_keys:
+                continue
+            if date_from and work_date < date_from:
+                continue
+            if date_to and work_date > date_to:
+                continue
+            suspension_date_keys.add(key)
+            synthetic_row = {
+                "id": None,
+                "user_id": row["user_id"],
+                "full_name": row["full_name"],
+                "username": row["username"],
+                "break_limit_minutes": row.get("break_limit_minutes", BREAK_LIMIT_MINUTES),
+                "work_date": work_date,
+                "time_in": None,
+                "time_out": None,
+                "status": "Suspension",
+                "proof_file": None,
+                "late_flag": 0,
+                "late_minutes": 0,
+                "request_type": "Suspension",
+                "admin_note": row.get("details") or "",
+                "message": row.get("details") or "",
+                "source_type": "request",
+            }
+            item = enrich_history_record(synthetic_row, parse_break_limit_minutes(row.get("break_limit_minutes", BREAK_LIMIT_MINUTES)))
+            if type_filter and item["record_type"] != type_filter:
+                continue
+            enriched.append(item)
 
     candidate_dates = []
     if date_from or date_to:
@@ -2789,7 +3833,9 @@ def build_admin_history_records(search="", department="", type_filter="", late_o
                 special_request = request_map.get(key)
                 if key in attendance_key_map:
                     continue
-                if special_request and special_request["request_type"] == "Leave Request":
+                if key in suspension_date_keys:
+                    continue
+                if special_request and special_request["request_type"] in LEAVE_REQUEST_TYPES:
                     continue
                 if not is_scheduled_on_date(employee, work_date):
                     continue
@@ -3001,6 +4047,7 @@ def admin_dashboard():
     active_users = [user for user in all_users if user["is_active"] == 1]
     exception_groups = get_exception_collections(all_employee_rows)
     notify_admins_for_exceptions(exception_groups)
+    notify_admins_for_leave_and_disciplinary_events()
     admin_notifications = fetchall("""
         SELECT *
         FROM notifications
@@ -3065,6 +4112,175 @@ def admin_live_status():
             "end_index": pagination["end_index"],
         }
     })
+
+
+@app.route("/admin/scanner-test", methods=["GET", "POST"])
+@login_required(role="admin")
+def admin_scanner_test():
+    scan_result = None
+
+    if request.method == "POST":
+        action_type = request.form.get("action_type", "").strip()
+        barcode_id = request.form.get("barcode_id", "").strip()
+        allowed_actions = {
+            "time_in": "Time In",
+            "start_break": "Start Break",
+            "end_break": "End Break",
+            "time_out": "Time Out",
+        }
+
+        if action_type not in allowed_actions:
+            flash("Choose a valid attendance action.", "danger")
+            return redirect(url_for("admin_scanner_test"))
+
+        if not barcode_id:
+            flash("Scan or enter a barcode ID first.", "danger")
+            return redirect(url_for("admin_scanner_test"))
+
+        employee = get_user_by_barcode(barcode_id)
+        if not employee:
+            scan_result = {
+                "ok": False,
+                "action_label": allowed_actions[action_type],
+                "barcode_id": barcode_id,
+                "message": "No employee matched that barcode.",
+            }
+        else:
+            ok, message, employee_row = perform_attendance_action(
+                employee["id"],
+                action_type,
+                actor_id=session["user_id"],
+                source_label="Phone Scanner Test"
+            )
+            latest_attendance = get_current_attendance(employee["id"])
+            scan_result = {
+                "ok": ok,
+                "action_label": allowed_actions[action_type],
+                "barcode_id": barcode_id,
+                "message": message,
+                "employee": employee_row or employee,
+                "status_display": get_user_live_status(employee["id"]),
+                "attendance": latest_attendance,
+                "break_minutes_today": total_break_minutes(latest_attendance["id"]) if latest_attendance else 0,
+                "break_limit_minutes": get_employee_break_limit(employee),
+            }
+            flash(message, "success" if ok else "warning")
+
+    return render_template("admin_scanner_test.html", scan_result=scan_result)
+
+
+@app.route("/admin/payroll")
+@login_required(role="admin")
+def admin_payroll():
+    period = request.args.get("period", "this_month").strip() or "this_month"
+    department_filter = request.args.get("department", "").strip()
+    employee_filter = request.args.get("employee_id", "").strip()
+    date_from, date_to = get_payroll_period_dates(
+        period,
+        request.args.get("date_from", "").strip(),
+        request.args.get("date_to", "").strip()
+    )
+    departments = get_department_options()
+    employees = get_employee_options()
+    payroll_rows = build_payroll_rows(
+        date_from,
+        date_to,
+        department_filter=department_filter,
+        employee_filter=employee_filter
+    )
+
+    stats = {
+        "employees": len(payroll_rows),
+        "paid_employees": len([row for row in payroll_rows if row["gross_pay"] > 0]),
+        "missing_rates": len([row for row in payroll_rows if row["has_rate"] == 0]),
+        "total_hours": round(sum(row["total_hours"] for row in payroll_rows), 2),
+        "total_gross": round(sum(row["gross_pay"] for row in payroll_rows), 2),
+        "suspension_days": sum(row["suspension_days"] for row in payroll_rows),
+        "suspension_pay": round(sum(row["suspension_pay"] for row in payroll_rows), 2),
+    }
+
+    return render_template(
+        "admin_payroll.html",
+        payroll_rows=payroll_rows,
+        departments=departments,
+        employees=employees,
+        department_filter=department_filter,
+        employee_filter=employee_filter,
+        period=period,
+        date_from=date_from.strftime("%Y-%m-%d"),
+        date_to=date_to.strftime("%Y-%m-%d"),
+        stats=stats
+    )
+
+
+@app.route("/admin/leave")
+@login_required(role="admin")
+def admin_leave_dashboard():
+    year = parse_positive_int(request.args.get("year", str(now_dt().year)), now_dt().year)
+    department = request.args.get("department", "").strip()
+    departments = get_department_options()
+    leave_rows = build_leave_dashboard_rows(year=year, department=department)
+    pending_requests = get_pending_leave_requests(department=department, year=year)
+
+    stats = {
+        "employees": len(leave_rows),
+        "sick_used": sum(row["sick_used"] for row in leave_rows),
+        "paid_used": sum(row["paid_used"] for row in leave_rows),
+        "sick_remaining": sum(row["sick_remaining"] for row in leave_rows),
+        "paid_remaining": sum(row["paid_remaining"] for row in leave_rows),
+        "pending_total": sum(row["pending_total"] for row in leave_rows),
+        "sick_exhausted": len([row for row in leave_rows if row["sick_remaining"] <= 0]),
+        "paid_exhausted": len([row for row in leave_rows if row["paid_remaining"] <= 0]),
+        "overdue_pending": len([row for row in pending_requests if int(row.get("age_days") or 0) >= 3]),
+    }
+
+    return render_template(
+        "admin_leave_dashboard.html",
+        leave_rows=leave_rows,
+        pending_requests=pending_requests,
+        departments=departments,
+        department=department,
+        year=year,
+        stats=stats
+    )
+
+
+@app.route("/admin/leave/export.xlsx")
+@login_required(role="admin")
+def export_admin_leave_dashboard_excel():
+    year = parse_positive_int(request.args.get("year", str(now_dt().year)), now_dt().year)
+    department = request.args.get("department", "").strip()
+    leave_rows = build_leave_dashboard_rows(year=year, department=department)
+
+    try:
+        from openpyxl import Workbook
+    except Exception:
+        flash("Excel export requires openpyxl. Install dependencies and try again.", "danger")
+        return redirect(url_for("admin_leave_dashboard", year=year, department=department))
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Leave Dashboard"
+    sheet.append([
+        "Employee", "Username", "Department", "Sick Allotment", "Sick Used", "Sick Remaining",
+        "Paid Allotment", "Paid Used", "Paid Remaining", "Pending Sick", "Pending Paid",
+        "Manual Sick Used", "Manual Paid Used", "Approved Sick Used", "Approved Paid Used"
+    ])
+    for row in leave_rows:
+        sheet.append([
+            row["full_name"], row["username"], row["department"], row["sick_total"], row["sick_used"], row["sick_remaining"],
+            row["paid_total"], row["paid_used"], row["paid_remaining"], row["pending_sick"], row["pending_paid"],
+            row["sick_used_manual"], row["paid_used_manual"], row["sick_used_in_app"], row["paid_used_in_app"]
+        ])
+
+    output = BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    return Response(
+        output.getvalue(),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="leave-dashboard-{year}.xlsx"'}
+    )
 
 
 @app.route("/admin/history")
@@ -3293,7 +4509,7 @@ def update_correction_request(request_id):
         flash(str(exc), "danger")
         return redirect(url_for("admin_corrections"))
 
-    if correction["request_type"] == "Leave Request":
+    if correction["request_type"] in LEAVE_REQUEST_TYPES:
         requested_time_in = ""
         requested_break_start = ""
         requested_break_end = ""
@@ -3303,7 +4519,7 @@ def update_correction_request(request_id):
         return redirect(url_for("admin_corrections"))
 
     if status == "Approved":
-        if correction["request_type"] in {"Leave Request", "Undertime"}:
+        if correction["request_type"] in (LEAVE_REQUEST_TYPES | {"Undertime"}):
             requested_time_out_dt = combine_work_date_and_time(correction["work_date"], requested_time_out) if requested_time_out else None
             attendance, _ = get_matching_attendance_context_for_request(
                 correction["user_id"],
@@ -3324,7 +4540,7 @@ def update_correction_request(request_id):
             else:
                 applied_changes = describe_request_review_result(
                     correction["request_type"],
-                    correction["work_date"],
+                    format_request_date_range(correction["work_date"], correction.get("end_work_date")),
                     requested_time_out
                 )
         else:
@@ -3391,6 +4607,8 @@ def update_correction_request(request_id):
     ), commit=True)
 
     notification_message = f"Your {correction['request_type']} request for {correction['work_date']} is now {status}."
+    if correction["request_type"] in LEAVE_REQUEST_TYPES:
+        notification_message = f"Your {correction['request_type']} request for {format_request_date_range(correction['work_date'], correction.get('end_work_date'))} is now {status}."
     if status == "Approved" and applied_changes:
         notification_message = f"{notification_message} Applied: {applied_changes}"
 
@@ -3578,7 +4796,7 @@ def export_admin_error_reports_excel():
     for report in reports:
         sheet.append([
             report["full_name"] if report["full_name"] else report["employee_name"] if report["employee_name"] else "Unknown",
-            report["department"] or "",
+            report["report_department"] or report["department"] or "",
             report["error_type"] or "",
             report["report_date"] if report["report_date"] else report["incident_date"] if report["incident_date"] else "",
             report["message"] or "",
@@ -3610,6 +4828,98 @@ def admin_incident_report():
         ORDER BY full_name ASC
     """)
     return render_template("admin_incident_report.html", employees=employees)
+
+
+@app.route("/admin/disciplinary")
+@login_required(role="admin")
+def admin_disciplinary_dashboard():
+    action_type = request.args.get("action_type", "").strip()
+    user_id = request.args.get("user_id", "").strip()
+    department = request.args.get("department", "").strip()
+    date_from = request.args.get("date_from", "").strip()
+    date_to = request.args.get("date_to", "").strip()
+
+    employees = get_employee_options()
+    departments = get_department_options()
+    actions = get_disciplinary_actions(
+        action_type=action_type,
+        user_id=user_id,
+        department=department,
+        date_from=date_from,
+        date_to=date_to
+    )
+
+    summary = {
+        "coaching": len([row for row in actions if row["action_type"] == "Coaching"]),
+        "nte": len([row for row in actions if row["action_type"] == "NTE"]),
+        "suspension": len([row for row in actions if row["action_type"] == "Suspension"]),
+        "active_suspensions": len([row for row in actions if row["action_type"] == "Suspension" and row["status_label"] == "Active"]),
+        "upcoming_suspensions": len([row for row in actions if row["action_type"] == "Suspension" and row["status_label"] == "Upcoming"]),
+        "starts_today": len([row for row in actions if row["action_type"] == "Suspension" and row["action_date"] == today_str()]),
+    }
+
+    return render_template(
+        "admin_disciplinary_dashboard.html",
+        employees=employees,
+        departments=departments,
+        disciplinary_types=DISCIPLINARY_ACTION_TYPES,
+        actions=actions,
+        action_type=action_type,
+        user_id=user_id,
+        department=department,
+        date_from=date_from,
+        date_to=date_to,
+        summary=summary
+    )
+
+
+@app.route("/admin/disciplinary/export.xlsx")
+@login_required(role="admin")
+def export_admin_disciplinary_excel():
+    action_type = request.args.get("action_type", "").strip()
+    user_id = request.args.get("user_id", "").strip()
+    department = request.args.get("department", "").strip()
+    date_from = request.args.get("date_from", "").strip()
+    date_to = request.args.get("date_to", "").strip()
+    actions = get_disciplinary_actions(
+        action_type=action_type,
+        user_id=user_id,
+        department=department,
+        date_from=date_from,
+        date_to=date_to
+    )
+
+    try:
+        from openpyxl import Workbook
+    except Exception:
+        flash("Excel export requires openpyxl. Install dependencies and try again.", "danger")
+        return redirect(url_for(
+            "admin_disciplinary_dashboard",
+            action_type=action_type,
+            user_id=user_id,
+            department=department,
+            date_from=date_from,
+            date_to=date_to
+        ))
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Disciplinary"
+    sheet.append(["Employee", "Username", "Department", "Type", "Start Date", "Duration Days", "End Date", "Status", "Details"])
+    for row in actions:
+        sheet.append([
+            row["full_name"], row["username"], row["department"], row["action_type"], row["action_date"],
+            row["duration_days"], row["end_date"] or row["action_date"], row["status_label"], row["details"] or ""
+        ])
+
+    output = BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    return Response(
+        output.getvalue(),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="disciplinary-records-{today_str()}.xlsx"'}
+    )
 
 
 @app.route("/admin/error-reports/<int:report_id>/update", methods=["POST"])
@@ -3653,6 +4963,60 @@ def update_incident_report(report_id):
     return redirect(url_for("admin_error_reports"))
 
 
+@app.route("/admin/error-reports/<int:report_id>/edit", methods=["POST"])
+@login_required(role="admin")
+def edit_incident_report(report_id):
+    report = fetchone("""
+        SELECT *
+        FROM incident_reports
+        WHERE id = ?
+    """, (report_id,))
+    if not report:
+        flash("Report not found.", "danger")
+        return redirect(url_for("admin_error_reports"))
+
+    error_type = request.form.get("error_type", "").strip()
+    report_date = request.form.get("report_date", "").strip()
+    report_department = request.form.get("report_department", "").strip()
+    message = request.form.get("message", "").strip()
+
+    if not error_type or not report_date:
+        flash("Error type and report date are required.", "danger")
+        return redirect(url_for("admin_error_reports"))
+
+    execute_db("""
+        UPDATE incident_reports
+        SET error_type = ?, report_date = ?, incident_date = ?, report_department = ?, message = ?
+        WHERE id = ?
+    """, (error_type, report_date, report_date, report_department, message, report_id), commit=True)
+
+    employee = get_user_by_id(report["user_id"])
+    employee_name = employee["full_name"] if employee else report.get("employee_name") or f"User {report['user_id']}"
+    log_activity(session["user_id"], "EDIT INCIDENT", f"Edited incident #{report_id} for {employee_name}")
+    flash("Incident report updated.", "success")
+    return redirect(url_for("admin_error_reports"))
+
+
+@app.route("/admin/error-reports/<int:report_id>/delete", methods=["POST"])
+@login_required(role="admin")
+def delete_incident_report(report_id):
+    report = fetchone("""
+        SELECT *
+        FROM incident_reports
+        WHERE id = ?
+    """, (report_id,))
+    if not report:
+        flash("Report not found.", "danger")
+        return redirect(url_for("admin_error_reports"))
+
+    employee = get_user_by_id(report["user_id"])
+    employee_name = employee["full_name"] if employee else report.get("employee_name") or f"User {report['user_id']}"
+    execute_db("DELETE FROM incident_reports WHERE id = ?", (report_id,), commit=True)
+    log_activity(session["user_id"], "DELETE INCIDENT", f"Deleted incident #{report_id} for {employee_name}")
+    flash("Incident report deleted.", "info")
+    return redirect(url_for("admin_error_reports"))
+
+
 @app.route("/admin/employees", methods=["GET", "POST"])
 @login_required(role="admin")
 def manage_employees():
@@ -3662,6 +5026,12 @@ def manage_employees():
         password = request.form.get("password", "").strip()
         department = request.form.get("department", "").strip() or "Stellar Seats"
         position = request.form.get("position", "").strip() or "Employee"
+        barcode_id = request.form.get("barcode_id", "").strip()
+        hourly_rate = parse_money_value(request.form.get("hourly_rate", "0"))
+        sick_leave_days = parse_non_negative_int(request.form.get("sick_leave_days", DEFAULT_SICK_LEAVE_DAYS), DEFAULT_SICK_LEAVE_DAYS)
+        paid_leave_days = parse_non_negative_int(request.form.get("paid_leave_days", DEFAULT_PAID_LEAVE_DAYS), DEFAULT_PAID_LEAVE_DAYS)
+        sick_leave_used_manual = parse_non_negative_int(request.form.get("sick_leave_used_manual", "0"), 0)
+        paid_leave_used_manual = parse_non_negative_int(request.form.get("paid_leave_used_manual", "0"), 0)
         schedule_days = normalize_schedule_days(request.form.getlist("schedule_days"))
         shift_start = parse_shift_start(request.form.get("shift_start", DEFAULT_SHIFT_START))
         shift_end = parse_shift_end(request.form.get("shift_end", DEFAULT_SHIFT_END))
@@ -3676,6 +5046,12 @@ def manage_employees():
             flash("Username already exists.", "warning")
             return redirect(url_for("manage_employees"))
 
+        if barcode_id:
+            existing_barcode = fetchone("SELECT id FROM users WHERE TRIM(COALESCE(barcode_id, '')) = ?", (barcode_id,))
+            if existing_barcode:
+                flash("Barcode ID already exists.", "warning")
+                return redirect(url_for("manage_employees"))
+
         profile_image = None
         file = request.files.get("profile_image")
         if file and file.filename:
@@ -3687,9 +5063,9 @@ def manage_employees():
         execute_db("""
             INSERT INTO users (
                 full_name, username, password_hash, role, profile_image,
-                department, position, schedule_days, shift_start, shift_end, break_window_start, break_window_end, break_limit_minutes, is_active, created_at
+                department, position, barcode_id, hourly_rate, sick_leave_days, paid_leave_days, sick_leave_used_manual, paid_leave_used_manual, schedule_days, shift_start, shift_end, break_window_start, break_window_end, break_limit_minutes, is_active, created_at
             )
-            VALUES (?, ?, ?, 'employee', ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+            VALUES (?, ?, ?, 'employee', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
         """, (
             full_name,
             username,
@@ -3697,6 +5073,12 @@ def manage_employees():
             profile_image,
             department,
             position,
+            barcode_id,
+            hourly_rate,
+            sick_leave_days,
+            paid_leave_days,
+            sick_leave_used_manual,
+            paid_leave_used_manual,
             schedule_days,
             shift_start,
             shift_end,
@@ -3709,7 +5091,24 @@ def manage_employees():
         new_user = fetchone("SELECT id FROM users WHERE username = ?", (username,))
         if new_user:
             create_notification(new_user["id"], "Account Created", "Your account has been created by admin.")
-            log_activity(session["user_id"], "ADD EMPLOYEE", f"Added employee: {full_name} | Shift: {shift_start}-{shift_end} | Schedule: {schedule_days} | Break Limit: {break_limit_minutes}m")
+            log_activity(
+                session["user_id"],
+                "ADD EMPLOYEE",
+                f"Added employee: {full_name} | " + summarize_employee_admin_changes(None, {
+                    "department": department,
+                    "position": position,
+                    "barcode_id": barcode_id or "(not set)",
+                    "hourly_rate": hourly_rate,
+                    "sick_leave_days": sick_leave_days,
+                    "paid_leave_days": paid_leave_days,
+                    "sick_leave_used_manual": sick_leave_used_manual,
+                    "paid_leave_used_manual": paid_leave_used_manual,
+                    "shift_start": shift_start,
+                    "shift_end": shift_end,
+                    "break_limit_minutes": break_limit_minutes,
+                    "is_active": 1,
+                })
+            )
 
         flash("Employee added successfully.", "success")
         return redirect(url_for("manage_employees"))
@@ -3757,10 +5156,17 @@ def edit_employee(user_id):
         return redirect(url_for("manage_employees"))
 
     if request.method == "POST":
+        original_user = user
         full_name = request.form.get("full_name", "").strip()
         username = request.form.get("username", "").strip()
         department = request.form.get("department", "").strip() or "Stellar Seats"
         position = request.form.get("position", "").strip() or "Employee"
+        barcode_id = request.form.get("barcode_id", "").strip()
+        hourly_rate = parse_money_value(request.form.get("hourly_rate", user["hourly_rate"] or 0))
+        sick_leave_days = parse_non_negative_int(request.form.get("sick_leave_days", user["sick_leave_days"] if user["sick_leave_days"] is not None else DEFAULT_SICK_LEAVE_DAYS), DEFAULT_SICK_LEAVE_DAYS)
+        paid_leave_days = parse_non_negative_int(request.form.get("paid_leave_days", user["paid_leave_days"] if user["paid_leave_days"] is not None else DEFAULT_PAID_LEAVE_DAYS), DEFAULT_PAID_LEAVE_DAYS)
+        sick_leave_used_manual = parse_non_negative_int(request.form.get("sick_leave_used_manual", user["sick_leave_used_manual"] if user["sick_leave_used_manual"] is not None else 0), 0)
+        paid_leave_used_manual = parse_non_negative_int(request.form.get("paid_leave_used_manual", user["paid_leave_used_manual"] if user["paid_leave_used_manual"] is not None else 0), 0)
         schedule_days = normalize_schedule_days(request.form.getlist("schedule_days"))
         shift_start = parse_shift_start(request.form.get("shift_start", user["shift_start"] or DEFAULT_SHIFT_START))
         shift_end = parse_shift_end(request.form.get("shift_end", user["shift_end"] or DEFAULT_SHIFT_END))
@@ -3781,6 +5187,15 @@ def edit_employee(user_id):
             flash("Username already used by another employee.", "warning")
             return redirect(url_for("edit_employee", user_id=user_id))
 
+        if barcode_id:
+            existing_barcode = fetchone("""
+                SELECT id FROM users
+                WHERE TRIM(COALESCE(barcode_id, '')) = ? AND id != ?
+            """, (barcode_id, user_id))
+            if existing_barcode:
+                flash("Barcode ID already used by another employee.", "warning")
+                return redirect(url_for("edit_employee", user_id=user_id))
+
         profile_image = user["profile_image"]
         file = request.files.get("profile_image")
         if file and file.filename:
@@ -3794,24 +5209,41 @@ def edit_employee(user_id):
             execute_db("""
                 UPDATE users
                 SET full_name = ?, username = ?, password_hash = ?, profile_image = ?,
-                    department = ?, position = ?, schedule_days = ?, shift_start = ?, shift_end = ?, break_window_start = ?, break_window_end = ?, break_limit_minutes = ?, is_active = ?
+                    department = ?, position = ?, barcode_id = ?, hourly_rate = ?, sick_leave_days = ?, paid_leave_days = ?, sick_leave_used_manual = ?, paid_leave_used_manual = ?, schedule_days = ?, shift_start = ?, shift_end = ?, break_window_start = ?, break_window_end = ?, break_limit_minutes = ?, is_active = ?
                 WHERE id = ?
             """, (
                 full_name, username, generate_password_hash(password), profile_image,
-                department, position, schedule_days, shift_start, shift_end, user["break_window_start"] or DEFAULT_BREAK_WINDOW_START, user["break_window_end"] or DEFAULT_BREAK_WINDOW_END, break_limit_minutes, is_active, user_id
+                department, position, barcode_id, hourly_rate, sick_leave_days, paid_leave_days, sick_leave_used_manual, paid_leave_used_manual, schedule_days, shift_start, shift_end, user["break_window_start"] or DEFAULT_BREAK_WINDOW_START, user["break_window_end"] or DEFAULT_BREAK_WINDOW_END, break_limit_minutes, is_active, user_id
             ), commit=True)
         else:
             execute_db("""
                 UPDATE users
                 SET full_name = ?, username = ?, profile_image = ?,
-                    department = ?, position = ?, schedule_days = ?, shift_start = ?, shift_end = ?, break_window_start = ?, break_window_end = ?, break_limit_minutes = ?, is_active = ?
+                    department = ?, position = ?, barcode_id = ?, hourly_rate = ?, sick_leave_days = ?, paid_leave_days = ?, sick_leave_used_manual = ?, paid_leave_used_manual = ?, schedule_days = ?, shift_start = ?, shift_end = ?, break_window_start = ?, break_window_end = ?, break_limit_minutes = ?, is_active = ?
                 WHERE id = ?
             """, (
                 full_name, username, profile_image,
-                department, position, schedule_days, shift_start, shift_end, user["break_window_start"] or DEFAULT_BREAK_WINDOW_START, user["break_window_end"] or DEFAULT_BREAK_WINDOW_END, break_limit_minutes, is_active, user_id
+                department, position, barcode_id, hourly_rate, sick_leave_days, paid_leave_days, sick_leave_used_manual, paid_leave_used_manual, schedule_days, shift_start, shift_end, user["break_window_start"] or DEFAULT_BREAK_WINDOW_START, user["break_window_end"] or DEFAULT_BREAK_WINDOW_END, break_limit_minutes, is_active, user_id
             ), commit=True)
 
-        log_activity(session["user_id"], "EDIT EMPLOYEE", f"Edited employee: {full_name} | Shift: {shift_start}-{shift_end} | Schedule: {schedule_days} | Break Limit: {break_limit_minutes}m")
+        log_activity(
+            session["user_id"],
+            "EDIT EMPLOYEE",
+            f"Edited employee: {full_name} | " + summarize_employee_admin_changes(original_user, {
+                "department": department,
+                "position": position,
+                "barcode_id": barcode_id or "(not set)",
+                "hourly_rate": hourly_rate,
+                "sick_leave_days": sick_leave_days,
+                "paid_leave_days": paid_leave_days,
+                "sick_leave_used_manual": sick_leave_used_manual,
+                "paid_leave_used_manual": paid_leave_used_manual,
+                "shift_start": shift_start,
+                "shift_end": shift_end,
+                "break_limit_minutes": break_limit_minutes,
+                "is_active": is_active,
+            })
+        )
         flash("Employee updated successfully.", "success")
         return redirect(url_for("manage_employees"))
 
@@ -3835,6 +5267,7 @@ def delete_employee(user_id):
     execute_db("DELETE FROM attendance WHERE user_id = ?", (user_id,), commit=True)
     execute_db("DELETE FROM activity_logs WHERE user_id = ?", (user_id,), commit=True)
     execute_db("DELETE FROM incident_reports WHERE user_id = ?", (user_id,), commit=True)
+    execute_db("DELETE FROM disciplinary_actions WHERE user_id = ?", (user_id,), commit=True)
     execute_db("DELETE FROM users WHERE id = ?", (user_id,), commit=True)
 
     log_activity(session["user_id"], "DELETE EMPLOYEE", f"Deleted employee: {user['full_name']}")
@@ -3878,7 +5311,9 @@ def create_incident_route():
         error_type=error_type,
         report_date=report_date,
         message=message,
-        admin_id=session["user_id"]
+        admin_id=session["user_id"],
+        incident_action="",
+        report_department=employee["department"] if employee else ""
     )
 
     employee_name = employee["full_name"] if employee else f"User {user_id}"
@@ -3890,6 +5325,111 @@ def create_incident_route():
 
     flash("Incident report created.", "success")
     return redirect(url_for("admin_incident_report"))
+
+
+@app.route("/admin/disciplinary/create", methods=["POST"])
+@login_required(role="admin")
+def create_disciplinary_action_route():
+    user_id = request.form.get("user_id", "").strip()
+    action_type = request.form.get("action_type", "").strip()
+    action_date = request.form.get("action_date", "").strip()
+    duration_days = parse_non_negative_int(request.form.get("duration_days", "1"), 1)
+    details = request.form.get("details", "").strip()
+
+    if not user_id or not action_type or not action_date:
+        flash("Employee, action type, and action date are required.", "danger")
+        return redirect(url_for("admin_disciplinary_dashboard"))
+
+    if action_type not in DISCIPLINARY_ACTION_TYPES:
+        flash("Invalid disciplinary action type.", "danger")
+        return redirect(url_for("admin_disciplinary_dashboard"))
+
+    if action_type == "Suspension" and duration_days <= 0:
+        flash("Suspension days must be at least 1.", "danger")
+        return redirect(url_for("admin_disciplinary_dashboard"))
+
+    if action_type != "Suspension":
+        duration_days = 1
+
+    employee = get_user_by_id(user_id)
+    conflict = find_conflicting_disciplinary_action(user_id, action_type, action_date, duration_days)
+    if conflict:
+        flash(conflict["conflict_reason"], "warning")
+        return redirect(url_for("admin_disciplinary_dashboard"))
+    create_disciplinary_action(
+        user_id=user_id,
+        action_type=action_type,
+        action_date=action_date,
+        details=details,
+        created_by=session["user_id"],
+        duration_days=duration_days
+    )
+
+    employee_name = employee["full_name"] if employee else f"User {user_id}"
+    log_activity(
+        session["user_id"],
+        "CREATE DISCIPLINARY ACTION",
+        f"{action_type} created for {employee_name}" + (f" for {duration_days} day(s)" if action_type == "Suspension" else "")
+    )
+    flash(f"{action_type} record created.", "success")
+    return redirect(url_for("admin_disciplinary_dashboard"))
+
+
+@app.route("/admin/disciplinary/<int:action_id>/update", methods=["POST"])
+@login_required(role="admin")
+def update_disciplinary_action_route(action_id):
+    action = get_disciplinary_action_by_id(action_id)
+    if not action:
+        flash("Disciplinary record not found.", "danger")
+        return redirect(url_for("admin_disciplinary_dashboard"))
+
+    action_type = request.form.get("action_type", "").strip()
+    action_date = request.form.get("action_date", "").strip()
+    duration_days = parse_non_negative_int(request.form.get("duration_days", "1"), 1)
+    details = request.form.get("details", "").strip()
+
+    if not action_type or not action_date:
+        flash("Action type and action date are required.", "danger")
+        return redirect(url_for("admin_disciplinary_dashboard"))
+    if action_type not in DISCIPLINARY_ACTION_TYPES:
+        flash("Invalid disciplinary action type.", "danger")
+        return redirect(url_for("admin_disciplinary_dashboard"))
+
+    if action_type != "Suspension":
+        duration_days = 1
+    conflict = find_conflicting_disciplinary_action(action["user_id"], action_type, action_date, duration_days, exclude_id=action_id)
+    if conflict:
+        flash(conflict["conflict_reason"], "warning")
+        return redirect(url_for("admin_disciplinary_dashboard"))
+    end_date = calculate_suspension_end_date(action_date, duration_days) if action_type == "Suspension" else action_date
+
+    execute_db("""
+        UPDATE disciplinary_actions
+        SET action_type = ?, action_date = ?, duration_days = ?, end_date = ?, details = ?
+        WHERE id = ?
+    """, (action_type, action_date, duration_days, end_date, details, action_id), commit=True)
+
+    employee = get_user_by_id(action["user_id"])
+    employee_name = employee["full_name"] if employee else f"User {action['user_id']}"
+    log_activity(session["user_id"], "UPDATE DISCIPLINARY ACTION", f"Updated {action_type} for {employee_name}")
+    flash("Disciplinary record updated.", "success")
+    return redirect(url_for("admin_disciplinary_dashboard"))
+
+
+@app.route("/admin/disciplinary/<int:action_id>/delete", methods=["POST"])
+@login_required(role="admin")
+def delete_disciplinary_action_route(action_id):
+    action = get_disciplinary_action_by_id(action_id)
+    if not action:
+        flash("Disciplinary record not found.", "danger")
+        return redirect(url_for("admin_disciplinary_dashboard"))
+
+    employee = get_user_by_id(action["user_id"])
+    employee_name = employee["full_name"] if employee else f"User {action['user_id']}"
+    execute_db("DELETE FROM disciplinary_actions WHERE id = ?", (action_id,), commit=True)
+    log_activity(session["user_id"], "DELETE DISCIPLINARY ACTION", f"Deleted {action['action_type']} for {employee_name}")
+    flash("Disciplinary record deleted.", "info")
+    return redirect(url_for("admin_disciplinary_dashboard"))
 
 
 # =========================

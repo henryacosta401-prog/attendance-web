@@ -831,7 +831,11 @@
     <div class="nav-right">
         {% if session.get('role') == 'admin' %}
             <a class="pill-link {% if request.endpoint == 'admin_dashboard' %}active{% endif %}" data-tour-id="nav-dashboard" href="{{ url_for('admin_dashboard') }}">Dashboard</a>
+            <a class="pill-link {% if request.endpoint == 'admin_payroll' %}active{% endif %}" href="{{ url_for('admin_payroll') }}">Payroll</a>
+            <a class="pill-link {% if request.endpoint == 'admin_leave_dashboard' %}active{% endif %}" href="{{ url_for('admin_leave_dashboard') }}">Leave</a>
             <a class="pill-link {% if request.endpoint == 'admin_error_reports' %}active{% endif %}" href="{{ url_for('admin_error_reports') }}">Error Reports</a>
+            <a class="pill-link {% if request.endpoint == 'admin_disciplinary_dashboard' %}active{% endif %}" href="{{ url_for('admin_disciplinary_dashboard') }}">Disciplinary</a>
+            <a class="pill-link {% if request.endpoint == 'admin_scanner_test' %}active{% endif %}" href="{{ url_for('admin_scanner_test') }}">Scanner Test</a>
             <a class="pill-link {% if request.endpoint == 'admin_incident_report' %}active{% endif %}" href="{{ url_for('admin_incident_report') }}">Create Incident</a>
             <a class="pill-link {% if request.endpoint == 'admin_corrections' %}active{% endif %}" data-tour-id="nav-corrections" href="{{ url_for('admin_corrections') }}">Corrections</a>
             <a class="pill-link {% if request.endpoint == 'admin_history' %}active{% endif %}" data-tour-id="nav-history" href="{{ url_for('admin_history') }}">History</a>
@@ -984,7 +988,7 @@ document.addEventListener("DOMContentLoaded", function () {
             { selector: "[data-tour-id='admin-live-status']", title: "Use the live roster for day-to-day review", body: "Search, filter, and monitor each employee's current shift status here without jumping around the app." },
             { selector: "[data-tour-id='admin-history-link']", title: "History is your detailed audit view", body: "Open full history when you need exports, past records, undertime, leave, and deeper attendance review." },
             { selector: "[data-tour-id='admin-exception-queue']", title: "Keep the queue in sight", body: "This panel keeps urgent people visible so they do not get buried while you review other pages." },
-            { selector: "[data-tour-id='nav-corrections']", title: "Corrections is where approvals happen", body: "Use Corrections for missed punches, undertime approvals, and leave requests." }
+            { selector: "[data-tour-id='nav-corrections']", title: "Corrections is where approvals happen", body: "Use Corrections for missed punches, undertime approvals, sick leave, and paid leave requests." }
         ],
         dashboard: [
             { selector: "[data-tour-id='nav-dashboard']", title: "Your dashboard is home base", body: "This page summarizes your shift, break use, work hours, and recent updates in one place." },
@@ -992,7 +996,7 @@ document.addEventListener("DOMContentLoaded", function () {
             { selector: "[data-tour-id='employee-today-panel']", title: "Review today's timeline", body: "Use this section to confirm your time in, time out, break sessions, and work summary for the current shift." },
             { selector: "[data-tour-id='employee-quick-actions-link']", title: "Quick Actions handles attendance", body: "Open Quick Actions when you need to time in, start or end a break, upload proof, or time out." },
             { selector: "[data-tour-id='nav-history']", title: "History keeps your past records", body: "Use History to review earlier shifts, work hours, break details, and uploaded proofs." },
-            { selector: "[data-tour-id='nav-corrections']", title: "Corrections is for requests", body: "Submit missed punches, undertime, or leave requests here whenever something needs approval." },
+            { selector: "[data-tour-id='nav-corrections']", title: "Corrections is for requests", body: "Submit missed punches, undertime, sick leave, or paid leave requests here whenever something needs approval." },
             { selector: "[data-tour-id='nav-notifications']", title: "Notifications keep you updated", body: "Open Notifications to see approvals, attendance alerts, and other important account updates." }
         ]
     };
