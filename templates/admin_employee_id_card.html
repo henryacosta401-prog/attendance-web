@@ -1,0 +1,500 @@
+{% extends "base.html" %}
+{% block title %}Print Employee ID{% endblock %}
+
+{% block extra_head %}
+<style>
+.id-shell {
+    display: grid;
+    gap: 18px;
+}
+.id-actions {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.id-settings {
+    max-width: 430px;
+}
+.id-sheet {
+    display: grid;
+    gap: 18px;
+    justify-content: center;
+}
+.id-card {
+    width: 85.6mm;
+    height: 54mm;
+    border-radius: 14px;
+    overflow: hidden;
+    position: relative;
+    box-shadow: 0 18px 40px rgba(15, 23, 42, 0.28);
+}
+.id-front,
+.id-back {
+    position: relative;
+    background:
+        radial-gradient(circle at 88% 12%, rgba(255,255,255,0.16), transparent 16%),
+        radial-gradient(circle at 100% 100%, rgba(49, 144, 255, 0.18), transparent 24%),
+        linear-gradient(160deg, #1a65b5 0%, #12498d 42%, #0d3368 78%, #0a2346 100%);
+    color: #fff;
+    border: 1px solid rgba(255,255,255,0.08);
+}
+.id-front::before,
+.id-back::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background:
+        linear-gradient(115deg, transparent 0%, transparent 56%, rgba(93, 213, 255, 0.28) 73%, rgba(170, 255, 240, 0.24) 82%, transparent 92%),
+        radial-gradient(circle at 84% 22%, rgba(198, 255, 246, 0.34), transparent 12%);
+    pointer-events: none;
+}
+.id-front {
+    padding: 3.4mm 3.8mm 3.5mm;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    gap: 2.1mm;
+}
+.id-topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: start;
+    gap: 10px;
+    position: relative;
+    z-index: 1;
+}
+.id-brand {
+    display: flex;
+    align-items: center;
+    gap: 2.2mm;
+}
+.id-brand-logo {
+    width: 7.4mm;
+    height: 7.4mm;
+    object-fit: contain;
+    flex: 0 0 auto;
+}
+.id-brand-text {
+    font-size: 2.6mm;
+    line-height: 1.02;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+}
+.id-front-main {
+    display: grid;
+    grid-template-columns: 25mm 1fr;
+    gap: 3mm;
+    align-items: stretch;
+    position: relative;
+    z-index: 1;
+}
+.id-photo-card {
+    display: grid;
+    grid-template-rows: 1fr auto;
+    gap: 1.4mm;
+}
+.id-photo-frame {
+    min-height: 29mm;
+    border-radius: 3.2mm;
+    border: 0.8mm solid rgba(156, 233, 255, 0.9);
+    background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(232,243,255,0.95));
+    box-shadow:
+        0 0 0 0.45mm rgba(255,255,255,0.14),
+        inset 0 0 0 0.35mm rgba(18, 83, 149, 0.12);
+    padding: 1mm;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.id-photo-frame img {
+    width: 100%;
+    height: 100%;
+    min-height: 26.8mm;
+    object-fit: cover;
+    object-position: center;
+    background: #f8fafc;
+    border-radius: 2.2mm;
+}
+.id-avatar-fallback {
+    width: 100%;
+    height: 26.8mm;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #dbeafe, #bfdbfe);
+    color: #0f172a;
+    font-size: 10mm;
+    font-weight: 900;
+    border-radius: 2.2mm;
+}
+.id-photo-dept {
+    font-size: 1.9mm;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.9);
+}
+.id-front-right {
+    display: grid;
+    grid-template-rows: auto 1fr;
+    gap: 1.6mm;
+}
+.id-scan-panel {
+    display: grid;
+    align-items: center;
+    background: rgba(255,255,255,0.97);
+    border-radius: 3mm;
+    padding: 1.8mm 1.8mm 1.5mm;
+    box-shadow: inset 0 0 0 0.35mm rgba(15, 23, 42, 0.05);
+}
+.id-scan-label {
+    text-align: center;
+    font-size: 1.75mm;
+    font-weight: 900;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #0f172a;
+    margin-bottom: 0.8mm;
+}
+.id-front-barcode img {
+    width: 100%;
+    max-height: 11mm;
+    height: auto;
+}
+.id-front-barcode-text {
+    margin-top: 0.7mm;
+    text-align: center;
+    font-size: 1.6mm;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    color: #0f172a;
+}
+.id-copy {
+    display: grid;
+    align-content: end;
+    gap: 0.9mm;
+}
+.id-card-number {
+    font-size: 1.75mm;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.92);
+}
+.id-name {
+    font-size: 4.4mm;
+    line-height: 0.95;
+    text-transform: uppercase;
+    font-weight: 900;
+    letter-spacing: 0.02em;
+    text-shadow: 0 2px 10px rgba(0,0,0,0.18);
+    overflow-wrap: anywhere;
+}
+.id-role {
+    font-size: 2.1mm;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: rgba(255,255,255,0.88);
+    overflow-wrap: anywhere;
+}
+.id-back {
+    padding: 3.4mm 3.8mm 3.6mm;
+    display: grid;
+    grid-template-rows: auto 1fr;
+    gap: 2mm;
+}
+.id-back-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    position: relative;
+    z-index: 1;
+}
+.id-back-main {
+    display: grid;
+    grid-template-columns: 0.96fr 1.04fr;
+    gap: 2.2mm;
+    position: relative;
+    z-index: 1;
+    align-items: stretch;
+    min-height: 0;
+}
+.id-notice {
+    background: linear-gradient(180deg, rgba(34, 161, 237, 0.3), rgba(18, 106, 188, 0.34));
+    border-radius: 4mm;
+    padding: 2.1mm 2mm;
+    box-shadow: inset 0 0 0 0.35mm rgba(255,255,255,0.08);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-height: 0;
+}
+.id-notice-title {
+    text-align: center;
+    font-size: 1.95mm;
+    font-weight: 900;
+    margin-bottom: 1mm;
+}
+.id-notice-copy {
+    font-size: 1.52mm;
+    line-height: 1.28;
+    text-align: center;
+    color: rgba(255,255,255,0.92);
+}
+.id-side {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: 1.35mm;
+    min-width: 0;
+    min-height: 0;
+}
+.id-contact {
+    text-align: left;
+    min-width: 0;
+}
+.id-contact-label,
+.id-dates-label {
+    font-size: 1.72mm;
+    font-weight: 800;
+    color: rgba(255,255,255,0.9);
+    margin-bottom: 0.45mm;
+}
+.id-contact-name,
+.id-date-row {
+    font-size: 2.02mm;
+    font-weight: 800;
+    overflow-wrap: anywhere;
+    line-height: 1.15;
+}
+.id-contact-phone,
+.employment-note,
+.id-date-sub {
+    font-size: 1.72mm;
+    color: rgba(255,255,255,0.82);
+    overflow-wrap: anywhere;
+    line-height: 1.28;
+}
+.id-dates {
+    text-align: left;
+    min-width: 0;
+}
+.id-date-row + .id-date-row {
+    margin-top: 0.45mm;
+}
+.employment-note {
+    max-width: 23mm;
+    line-height: 1.32;
+    margin-top: 0.7mm;
+    opacity: 0.92;
+}
+.id-signature {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+    gap: 0.35mm;
+    min-height: 7.8mm;
+    margin-top: auto;
+    text-align: left;
+    min-width: 0;
+}
+.id-sign-image {
+    max-width: 24mm;
+    width: 100%;
+    height: 4.4mm;
+    margin: 0 0 0.1mm;
+    object-fit: contain;
+    object-position: left center;
+}
+.id-sign-fallback {
+    font-size: 1.55mm;
+    font-style: italic;
+    opacity: 0.78;
+}
+.id-sign-name {
+    font-size: 1.72mm;
+    font-weight: 900;
+    text-transform: uppercase;
+    line-height: 1.12;
+    overflow-wrap: anywhere;
+}
+.id-sign-title {
+    font-size: 1.58mm;
+    color: rgba(255,255,255,0.82);
+    line-height: 1.18;
+    overflow-wrap: anywhere;
+}
+@media print {
+    @page {
+        size: auto;
+        margin: 6mm;
+    }
+    html,
+    body {
+        background: #fff !important;
+        color: #000 !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+    .navbar,
+    .flash-wrap,
+    .id-actions,
+    .id-settings,
+    .hero-card,
+    .page-shell > .container > :not(.id-shell) {
+        display: none !important;
+    }
+    .page-shell,
+    .page-shell > .container,
+    .id-shell,
+    .id-sheet {
+        padding: 0 !important;
+        margin: 0 !important;
+        display: block !important;
+        max-width: none !important;
+        width: auto !important;
+    }
+    .id-card {
+        box-shadow: none;
+        break-inside: avoid;
+        page-break-inside: avoid;
+        margin: 0 auto 5mm;
+    }
+    .id-front,
+    .id-photo-frame,
+    .id-scan-panel,
+    .id-back,
+    .id-notice {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="hero-card" style="margin-bottom:18px;">
+    <div class="hero">
+        <div>
+            <h1>Print Employee ID</h1>
+            <p class="section-subtitle">Use this print-ready template for employee IDs with barcode scanning support.</p>
+        </div>
+        <div class="status status-blue">Landscape ID</div>
+    </div>
+</div>
+
+<div class="id-shell">
+    <div class="id-actions">
+        <button class="btn btn-primary" type="button" onclick="window.print()">Print This ID</button>
+        <a class="btn btn-gray" href="{{ url_for('edit_employee', user_id=employee.id) }}">Back To Employee</a>
+    </div>
+
+    <div class="card id-settings">
+        <div class="section-title">ID Signatory</div>
+        <form method="POST" action="{{ url_for('update_employee_id_signatory') }}" enctype="multipart/form-data">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="employee_id" value="{{ employee.id }}">
+
+            <label>Signatory Name</label>
+            <input class="input" type="text" name="id_signatory_name" value="{{ company_settings.id_signatory_name if company_settings and company_settings.id_signatory_name else 'Kirk Danny Fernandez' }}">
+
+            <label style="display:block; margin-top:12px;">Signatory Title</label>
+            <input class="input" type="text" name="id_signatory_title" value="{{ company_settings.id_signatory_title if company_settings and company_settings.id_signatory_title else 'Head Of Operations' }}">
+
+            <label style="display:block; margin-top:12px;">Signature Image</label>
+            <input class="file-input" type="file" name="id_signature_file" accept=".png,.jpg,.jpeg,.webp">
+            <div class="small muted" style="margin-top:8px;">Upload a clean signature image for the Head of Operations section.</div>
+
+            <button class="btn btn-success" type="submit" style="margin-top:14px;">Save Signatory</button>
+        </form>
+    </div>
+
+    <div class="id-sheet">
+        <section class="id-card id-front">
+            <div class="id-topbar">
+                <div class="id-brand">
+                    <img class="id-brand-logo" src="{{ url_for('static', filename='stellar-seats-logo.svg') }}" alt="Stellar Seats logo">
+                    <div class="id-brand-text">STELLAR<br>SEATS</div>
+                </div>
+            </div>
+
+            <div class="id-front-main">
+                <div class="id-photo-card">
+                    <div class="id-photo-frame">
+                        {% if employee.profile_image and uploaded_file_exists(employee.profile_image) %}
+                            <img src="{{ url_for('uploaded_file', filename=employee.profile_image) }}" alt="{{ employee.full_name }}">
+                        {% else %}
+                            <div class="id-avatar-fallback">{{ get_avatar_initials(employee.full_name) }}</div>
+                        {% endif %}
+                    </div>
+                    <div class="id-photo-dept">{{ employee.department or 'Stellar Seats' }}</div>
+                </div>
+
+                <div class="id-front-right">
+                    <div class="id-scan-panel">
+                        <div class="id-scan-label">Scan For Attendance</div>
+                        <div class="id-front-barcode">
+                            <img src="{{ generate_code128_svg_data_uri(barcode_value) }}" alt="Barcode for {{ barcode_value }}">
+                            <div class="id-front-barcode-text">{{ barcode_value }}</div>
+                        </div>
+                    </div>
+
+                    <div class="id-copy">
+                        <div class="id-card-number">Employee No. {{ card_number }}</div>
+                        <div class="id-name">{{ employee.full_name }}</div>
+                        <div class="id-role">{{ employee.position or 'Employee' }}</div>
+                    </div>
+                </div>
+            </div>
+
+        </section>
+
+        <section class="id-card id-back">
+            <div class="id-back-top">
+                <div class="id-brand">
+                    <img class="id-brand-logo" src="{{ url_for('static', filename='stellar-seats-logo.svg') }}" alt="Stellar Seats logo">
+                    <div class="id-brand-text">STELLAR SEATS</div>
+                </div>
+            </div>
+
+            <div class="id-back-main">
+                <div class="id-notice">
+                    <div class="id-notice-title">Stellar Seats Employee ID</div>
+                    <div class="id-notice-copy">
+                        This ID is issued for official use only.<br>
+                        It must be carried while on duty and presented upon request.<br>
+                        This remains the property of Stellar Seats and must be returned upon separation from the company.<br>
+                        Unauthorized use, transfer, or duplication is prohibited.
+                    </div>
+                </div>
+
+                <div class="id-side">
+                    <div class="id-contact">
+                        <div class="id-contact-label">Emergency Contact Person</div>
+                        <div class="id-contact-name">{{ employee.emergency_contact_name or 'Not provided' }}</div>
+                        <div class="id-contact-phone">{{ employee.emergency_contact_phone or 'No number on file' }}</div>
+                    </div>
+
+                    <div class="id-dates">
+                        <div class="id-dates-label">Card Dates</div>
+                        <div class="id-date-row">Issued: {{ issue_date }}</div>
+                        <div class="id-date-row">Valid Until: {{ expiration_date }}</div>
+                        <div class="employment-note">Use only while actively employed.</div>
+                    </div>
+
+                    <div class="id-signature">
+                        {% if company_settings and company_settings.id_signature_file and uploaded_file_exists(company_settings.id_signature_file) %}
+                            <img class="id-sign-image" src="{{ url_for('uploaded_file', filename=company_settings.id_signature_file) }}" alt="{{ company_settings.id_signatory_name or 'ID signatory' }} signature">
+                        {% else %}
+                            <div class="id-sign-fallback">Signature</div>
+                        {% endif %}
+                        <div class="id-sign-name">{{ company_settings.id_signatory_name if company_settings and company_settings.id_signatory_name else 'Kirk Danny Fernandez' }}</div>
+                        <div class="id-sign-title">{{ company_settings.id_signatory_title if company_settings and company_settings.id_signatory_title else 'Head Of Operations' }}</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </div>
+</div>
+{% endblock %}

@@ -65,6 +65,28 @@
 
 <div class="grid grid-2" style="margin-top:12px;">
     <div>
+        <label>Emergency Contact Name</label>
+        <input class="input" type="text" name="emergency_contact_name" value="{{ employee.emergency_contact_name if employee.emergency_contact_name else '' }}">
+    </div>
+    <div>
+        <label>Emergency Contact Number</label>
+        <input class="input" type="text" name="emergency_contact_phone" value="{{ employee.emergency_contact_phone if employee.emergency_contact_phone else '' }}">
+    </div>
+</div>
+
+<div class="grid grid-2" style="margin-top:12px;">
+    <div>
+        <label>ID Issue Date</label>
+        <input class="input" type="date" name="id_issue_date" value="{{ employee.id_issue_date if employee.id_issue_date else '' }}">
+    </div>
+    <div>
+        <label>ID Expiration Date</label>
+        <input class="input" type="date" name="id_expiration_date" value="{{ employee.id_expiration_date if employee.id_expiration_date else '' }}">
+    </div>
+</div>
+
+<div class="grid grid-2" style="margin-top:12px;">
+    <div>
         <label>Sick Leave Allotment</label>
         <input class="input" type="number" name="sick_leave_days" value="{{ employee.sick_leave_days if employee.sick_leave_days is not none else 7 }}" min="0" step="1">
     </div>
@@ -118,6 +140,7 @@
 
         <div class="top-actions" style="margin-top:16px;">
             <button class="btn btn-success" type="submit">Save Changes</button>
+            <a class="btn btn-primary" href="{{ url_for('print_employee_id', user_id=employee.id) }}" target="_blank" rel="noopener">Print ID</a>
             <a class="btn btn-gray" href="{{ url_for('manage_employees') }}">Back</a>
         </div>
     </form>

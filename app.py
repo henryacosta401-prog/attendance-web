@@ -290,6 +290,10 @@ def init_sqlite_db():
             profile_image TEXT,
             department TEXT DEFAULT 'Stellar Seats',
             position TEXT DEFAULT 'Employee',
+            emergency_contact_name TEXT,
+            emergency_contact_phone TEXT,
+            id_issue_date TEXT,
+            id_expiration_date TEXT,
             barcode_id TEXT,
             hourly_rate REAL NOT NULL DEFAULT 0,
             sick_leave_days INTEGER NOT NULL DEFAULT 7,
@@ -389,6 +393,15 @@ def init_sqlite_db():
     """)
 
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS company_settings (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            id_signatory_name TEXT,
+            id_signatory_title TEXT,
+            id_signature_file TEXT
+        )
+    """)
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS correction_requests (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
@@ -427,6 +440,14 @@ def init_sqlite_db():
         cursor.execute("ALTER TABLE users ADD COLUMN department TEXT DEFAULT 'Stellar Seats'")
     if "position" not in existing_cols_users:
         cursor.execute("ALTER TABLE users ADD COLUMN position TEXT DEFAULT 'Employee'")
+    if "emergency_contact_name" not in existing_cols_users:
+        cursor.execute("ALTER TABLE users ADD COLUMN emergency_contact_name TEXT")
+    if "emergency_contact_phone" not in existing_cols_users:
+        cursor.execute("ALTER TABLE users ADD COLUMN emergency_contact_phone TEXT")
+    if "id_issue_date" not in existing_cols_users:
+        cursor.execute("ALTER TABLE users ADD COLUMN id_issue_date TEXT")
+    if "id_expiration_date" not in existing_cols_users:
+        cursor.execute("ALTER TABLE users ADD COLUMN id_expiration_date TEXT")
     if "barcode_id" not in existing_cols_users:
         cursor.execute("ALTER TABLE users ADD COLUMN barcode_id TEXT")
     if "hourly_rate" not in existing_cols_users:
@@ -455,6 +476,28 @@ def init_sqlite_db():
         cursor.execute("ALTER TABLE users ADD COLUMN break_limit_minutes INTEGER NOT NULL DEFAULT 15")
     if "is_active" not in existing_cols_users:
         cursor.execute("ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
+
+    existing_cols_company_settings = [row[1] for row in cursor.execute("PRAGMA table_info(company_settings)").fetchall()]
+    if not existing_cols_company_settings:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS company_settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                id_signatory_name TEXT,
+                id_signatory_title TEXT,
+                id_signature_file TEXT
+            )
+        """)
+        existing_cols_company_settings = [row[1] for row in cursor.execute("PRAGMA table_info(company_settings)").fetchall()]
+    if "id_signatory_name" not in existing_cols_company_settings:
+        cursor.execute("ALTER TABLE company_settings ADD COLUMN id_signatory_name TEXT")
+    if "id_signatory_title" not in existing_cols_company_settings:
+        cursor.execute("ALTER TABLE company_settings ADD COLUMN id_signatory_title TEXT")
+    if "id_signature_file" not in existing_cols_company_settings:
+        cursor.execute("ALTER TABLE company_settings ADD COLUMN id_signature_file TEXT")
+    cursor.execute("""
+        INSERT OR IGNORE INTO company_settings (id, id_signatory_name, id_signatory_title, id_signature_file)
+        VALUES (1, 'Kirk Danny Fernandez', 'Head Of Operations', NULL)
+    """)
 
     # attendance migration
     existing_cols_att = [row[1] for row in cursor.execute("PRAGMA table_info(attendance)").fetchall()]
@@ -617,6 +660,10 @@ def init_postgres_db():
                 profile_image TEXT,
                 department TEXT DEFAULT 'Stellar Seats',
                 position TEXT DEFAULT 'Employee',
+                emergency_contact_name TEXT,
+                emergency_contact_phone TEXT,
+                id_issue_date TEXT,
+                id_expiration_date TEXT,
                 barcode_id TEXT,
                 hourly_rate NUMERIC(12, 2) NOT NULL DEFAULT 0,
                 sick_leave_days INTEGER NOT NULL DEFAULT 7,
@@ -636,6 +683,10 @@ def init_postgres_db():
         """)
 
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS whatsapp_number TEXT")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS emergency_contact_name TEXT")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS emergency_contact_phone TEXT")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS id_issue_date TEXT")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS id_expiration_date TEXT")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS barcode_id TEXT")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS hourly_rate NUMERIC(12, 2) NOT NULL DEFAULT 0")
         cur.execute(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS sick_leave_days INTEGER NOT NULL DEFAULT {DEFAULT_SICK_LEAVE_DAYS}")
@@ -728,6 +779,23 @@ def init_postgres_db():
         cur.execute("ALTER TABLE correction_requests ADD COLUMN IF NOT EXISTS admin_note TEXT")
         cur.execute("ALTER TABLE correction_requests ADD COLUMN IF NOT EXISTS reviewed_by INTEGER")
         cur.execute("ALTER TABLE correction_requests ADD COLUMN IF NOT EXISTS reviewed_at TEXT")
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS company_settings (
+                id INTEGER PRIMARY KEY,
+                id_signatory_name TEXT,
+                id_signatory_title TEXT,
+                id_signature_file TEXT
+            )
+        """)
+        cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS id_signatory_name TEXT")
+        cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS id_signatory_title TEXT")
+        cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS id_signature_file TEXT")
+        cur.execute("""
+            INSERT INTO company_settings (id, id_signatory_name, id_signatory_title, id_signature_file)
+            VALUES (1, 'Kirk Danny Fernandez', 'Head Of Operations', NULL)
+            ON CONFLICT (id) DO NOTHING
+        """)
 
     db.commit()
 
@@ -862,6 +930,18 @@ def get_user_by_barcode(barcode_id):
         WHERE role = 'employee' AND TRIM(COALESCE(barcode_id, '')) = ?
         ORDER BY id DESC LIMIT 1
     """, (cleaned,))
+
+
+def get_company_settings():
+    settings = fetchone("SELECT * FROM company_settings WHERE id = 1")
+    if settings:
+        return settings
+    return {
+        "id": 1,
+        "id_signatory_name": "Kirk Danny Fernandez",
+        "id_signatory_title": "Head Of Operations",
+        "id_signature_file": None,
+    }
 
 
 def get_attendance_by_id(attendance_id):
@@ -1759,6 +1839,12 @@ def uploaded_file_exists(filename):
     return os.path.exists(os.path.join(app.config["UPLOAD_FOLDER"], filename))
 
 
+def static_file_exists(filename):
+    if not filename:
+        return False
+    return os.path.exists(os.path.join(app.static_folder, filename))
+
+
 def can_access_uploaded_file(user_row, filename):
     if not user_row or not filename:
         return False
@@ -1782,6 +1868,16 @@ def get_avatar_initials(name):
         return "U"
     initials = "".join(part[0] for part in parts[:2]).upper()
     return initials or "U"
+
+
+def get_employee_card_number(user_row):
+    if not user_row:
+        return ""
+    barcode_value = user_row["barcode_id"] if "barcode_id" in user_row.keys() else ""
+    if barcode_value and str(barcode_value).strip():
+        return str(barcode_value).strip()
+    user_id = user_row["id"] if "id" in user_row.keys() else 0
+    return f"EMP-{int(user_id or 0):04d}"
 
 
 CODE128_PATTERNS = [
@@ -2258,6 +2354,10 @@ def summarize_employee_admin_changes(before_row, after_values):
     labels = {
         "department": "Department",
         "position": "Position",
+        "emergency_contact_name": "Emergency Contact Name",
+        "emergency_contact_phone": "Emergency Contact Number",
+        "id_issue_date": "ID Issue Date",
+        "id_expiration_date": "ID Expiration Date",
         "barcode_id": "Barcode ID",
         "hourly_rate": "Hourly Rate",
         "sick_leave_days": "Sick Leave Allotment",
@@ -2527,8 +2627,10 @@ def inject_globals():
         unread_count=unread_count,
         latest_notifications=latest_notifications,
         is_image=is_image,
+        static_file_exists=static_file_exists,
         uploaded_file_exists=uploaded_file_exists,
         get_avatar_initials=get_avatar_initials,
+        get_employee_card_number=get_employee_card_number,
         generate_code128_svg_data_uri=generate_code128_svg_data_uri,
         format_datetime_12h=format_datetime_12h,
         format_time_12h=format_time_12h,
@@ -4971,6 +5073,10 @@ def manage_employees():
         password = request.form.get("password", "").strip()
         department = request.form.get("department", "").strip() or "Stellar Seats"
         position = request.form.get("position", "").strip() or "Employee"
+        emergency_contact_name = request.form.get("emergency_contact_name", "").strip()
+        emergency_contact_phone = request.form.get("emergency_contact_phone", "").strip()
+        id_issue_date = request.form.get("id_issue_date", "").strip()
+        id_expiration_date = request.form.get("id_expiration_date", "").strip()
         barcode_id = request.form.get("barcode_id", "").strip()
         hourly_rate = parse_money_value(request.form.get("hourly_rate", "0"))
         sick_leave_days = parse_non_negative_int(request.form.get("sick_leave_days", DEFAULT_SICK_LEAVE_DAYS), DEFAULT_SICK_LEAVE_DAYS)
@@ -5008,9 +5114,9 @@ def manage_employees():
         execute_db("""
             INSERT INTO users (
                 full_name, username, password_hash, role, profile_image,
-                department, position, barcode_id, hourly_rate, sick_leave_days, paid_leave_days, sick_leave_used_manual, paid_leave_used_manual, schedule_days, shift_start, shift_end, break_window_start, break_window_end, break_limit_minutes, is_active, created_at
+                department, position, emergency_contact_name, emergency_contact_phone, id_issue_date, id_expiration_date, barcode_id, hourly_rate, sick_leave_days, paid_leave_days, sick_leave_used_manual, paid_leave_used_manual, schedule_days, shift_start, shift_end, break_window_start, break_window_end, break_limit_minutes, is_active, created_at
             )
-            VALUES (?, ?, ?, 'employee', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+            VALUES (?, ?, ?, 'employee', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
         """, (
             full_name,
             username,
@@ -5018,6 +5124,10 @@ def manage_employees():
             profile_image,
             department,
             position,
+            emergency_contact_name,
+            emergency_contact_phone,
+            id_issue_date,
+            id_expiration_date,
             barcode_id,
             hourly_rate,
             sick_leave_days,
@@ -5042,6 +5152,10 @@ def manage_employees():
                 f"Added employee: {full_name} | " + summarize_employee_admin_changes(None, {
                     "department": department,
                     "position": position,
+                    "emergency_contact_name": emergency_contact_name or "(not set)",
+                    "emergency_contact_phone": emergency_contact_phone or "(not set)",
+                    "id_issue_date": id_issue_date or "(auto)",
+                    "id_expiration_date": id_expiration_date or "(auto)",
                     "barcode_id": barcode_id or "(not set)",
                     "hourly_rate": hourly_rate,
                     "sick_leave_days": sick_leave_days,
@@ -5106,6 +5220,10 @@ def edit_employee(user_id):
         username = request.form.get("username", "").strip()
         department = request.form.get("department", "").strip() or "Stellar Seats"
         position = request.form.get("position", "").strip() or "Employee"
+        emergency_contact_name = request.form.get("emergency_contact_name", "").strip()
+        emergency_contact_phone = request.form.get("emergency_contact_phone", "").strip()
+        id_issue_date = request.form.get("id_issue_date", "").strip()
+        id_expiration_date = request.form.get("id_expiration_date", "").strip()
         barcode_id = request.form.get("barcode_id", "").strip()
         hourly_rate = parse_money_value(request.form.get("hourly_rate", user["hourly_rate"] or 0))
         sick_leave_days = parse_non_negative_int(request.form.get("sick_leave_days", user["sick_leave_days"] if user["sick_leave_days"] is not None else DEFAULT_SICK_LEAVE_DAYS), DEFAULT_SICK_LEAVE_DAYS)
@@ -5154,21 +5272,21 @@ def edit_employee(user_id):
             execute_db("""
                 UPDATE users
                 SET full_name = ?, username = ?, password_hash = ?, profile_image = ?,
-                    department = ?, position = ?, barcode_id = ?, hourly_rate = ?, sick_leave_days = ?, paid_leave_days = ?, sick_leave_used_manual = ?, paid_leave_used_manual = ?, schedule_days = ?, shift_start = ?, shift_end = ?, break_window_start = ?, break_window_end = ?, break_limit_minutes = ?, is_active = ?
+                    department = ?, position = ?, emergency_contact_name = ?, emergency_contact_phone = ?, id_issue_date = ?, id_expiration_date = ?, barcode_id = ?, hourly_rate = ?, sick_leave_days = ?, paid_leave_days = ?, sick_leave_used_manual = ?, paid_leave_used_manual = ?, schedule_days = ?, shift_start = ?, shift_end = ?, break_window_start = ?, break_window_end = ?, break_limit_minutes = ?, is_active = ?
                 WHERE id = ?
             """, (
                 full_name, username, generate_password_hash(password), profile_image,
-                department, position, barcode_id, hourly_rate, sick_leave_days, paid_leave_days, sick_leave_used_manual, paid_leave_used_manual, schedule_days, shift_start, shift_end, user["break_window_start"] or DEFAULT_BREAK_WINDOW_START, user["break_window_end"] or DEFAULT_BREAK_WINDOW_END, break_limit_minutes, is_active, user_id
+                department, position, emergency_contact_name, emergency_contact_phone, id_issue_date, id_expiration_date, barcode_id, hourly_rate, sick_leave_days, paid_leave_days, sick_leave_used_manual, paid_leave_used_manual, schedule_days, shift_start, shift_end, user["break_window_start"] or DEFAULT_BREAK_WINDOW_START, user["break_window_end"] or DEFAULT_BREAK_WINDOW_END, break_limit_minutes, is_active, user_id
             ), commit=True)
         else:
             execute_db("""
                 UPDATE users
                 SET full_name = ?, username = ?, profile_image = ?,
-                    department = ?, position = ?, barcode_id = ?, hourly_rate = ?, sick_leave_days = ?, paid_leave_days = ?, sick_leave_used_manual = ?, paid_leave_used_manual = ?, schedule_days = ?, shift_start = ?, shift_end = ?, break_window_start = ?, break_window_end = ?, break_limit_minutes = ?, is_active = ?
+                    department = ?, position = ?, emergency_contact_name = ?, emergency_contact_phone = ?, id_issue_date = ?, id_expiration_date = ?, barcode_id = ?, hourly_rate = ?, sick_leave_days = ?, paid_leave_days = ?, sick_leave_used_manual = ?, paid_leave_used_manual = ?, schedule_days = ?, shift_start = ?, shift_end = ?, break_window_start = ?, break_window_end = ?, break_limit_minutes = ?, is_active = ?
                 WHERE id = ?
             """, (
                 full_name, username, profile_image,
-                department, position, barcode_id, hourly_rate, sick_leave_days, paid_leave_days, sick_leave_used_manual, paid_leave_used_manual, schedule_days, shift_start, shift_end, user["break_window_start"] or DEFAULT_BREAK_WINDOW_START, user["break_window_end"] or DEFAULT_BREAK_WINDOW_END, break_limit_minutes, is_active, user_id
+                department, position, emergency_contact_name, emergency_contact_phone, id_issue_date, id_expiration_date, barcode_id, hourly_rate, sick_leave_days, paid_leave_days, sick_leave_used_manual, paid_leave_used_manual, schedule_days, shift_start, shift_end, user["break_window_start"] or DEFAULT_BREAK_WINDOW_START, user["break_window_end"] or DEFAULT_BREAK_WINDOW_END, break_limit_minutes, is_active, user_id
             ), commit=True)
 
         log_activity(
@@ -5177,6 +5295,10 @@ def edit_employee(user_id):
             f"Edited employee: {full_name} | " + summarize_employee_admin_changes(original_user, {
                 "department": department,
                 "position": position,
+                "emergency_contact_name": emergency_contact_name or "(not set)",
+                "emergency_contact_phone": emergency_contact_phone or "(not set)",
+                "id_issue_date": id_issue_date or "(auto)",
+                "id_expiration_date": id_expiration_date or "(auto)",
                 "barcode_id": barcode_id or "(not set)",
                 "hourly_rate": hourly_rate,
                 "sick_leave_days": sick_leave_days,
@@ -5193,6 +5315,96 @@ def edit_employee(user_id):
         return redirect(url_for("manage_employees"))
 
     return render_template("edit_employee.html", employee=user, weekday_options=WEEKDAY_OPTIONS, employee_schedule_days=get_schedule_day_codes(user["schedule_days"] if user["schedule_days"] else DEFAULT_SCHEDULE_DAYS))
+
+
+@app.route("/admin/employee-id/<int:user_id>")
+@login_required(role="admin")
+def print_employee_id(user_id):
+    employee = fetchone("""
+        SELECT *
+        FROM users
+        WHERE id = ? AND role = 'employee'
+    """, (user_id,))
+
+    if not employee:
+        flash("Employee not found.", "danger")
+        return redirect(url_for("manage_employees"))
+    employee = dict(employee)
+
+    card_number = get_employee_card_number(employee)
+    barcode_value = (employee["barcode_id"] or card_number).strip()
+    company_settings = get_company_settings()
+    if employee["id_issue_date"]:
+        issue_date_value = employee["id_issue_date"]
+    else:
+        try:
+            issue_dt = datetime.strptime((employee["created_at"] or now_str())[:19], "%Y-%m-%d %H:%M:%S").date()
+        except Exception:
+            issue_dt = now_dt().date()
+        issue_date_value = issue_dt.strftime("%Y-%m-%d")
+
+    if employee["id_expiration_date"]:
+        expiration_date_value = employee["id_expiration_date"]
+    else:
+        try:
+            base_issue_dt = datetime.strptime(issue_date_value, "%Y-%m-%d").date()
+        except Exception:
+            base_issue_dt = now_dt().date()
+        expiration_date_value = (base_issue_dt + timedelta(days=365)).strftime("%Y-%m-%d")
+
+    try:
+        formatted_issue_date = datetime.strptime(issue_date_value, "%Y-%m-%d").strftime("%m/%d/%Y")
+    except Exception:
+        formatted_issue_date = issue_date_value
+    try:
+        formatted_expiration_date = datetime.strptime(expiration_date_value, "%Y-%m-%d").strftime("%m/%d/%Y")
+    except Exception:
+        formatted_expiration_date = expiration_date_value
+    return render_template(
+        "admin_employee_id_card.html",
+        employee=employee,
+        card_number=card_number,
+        barcode_value=barcode_value,
+        company_settings=company_settings,
+        issue_date=formatted_issue_date,
+        expiration_date=formatted_expiration_date
+    )
+
+
+@app.route("/admin/employee-id/signatory", methods=["POST"])
+@login_required(role="admin")
+def update_employee_id_signatory():
+    signatory_name = request.form.get("id_signatory_name", "").strip() or "Kirk Danny Fernandez"
+    signatory_title = request.form.get("id_signatory_title", "").strip() or "Head Of Operations"
+    current_settings = get_company_settings()
+    signature_file = current_settings["id_signature_file"] if current_settings else None
+
+    file = request.files.get("id_signature_file")
+    if file and file.filename:
+        saved = save_uploaded_file(file, prefix="id_signature")
+        if not saved:
+            flash("Invalid signature image file type.", "danger")
+            employee_id = request.form.get("employee_id", "").strip()
+            if employee_id:
+                return redirect(url_for("print_employee_id", user_id=employee_id))
+            return redirect(url_for("manage_employees"))
+        signature_file = saved
+
+    execute_db("""
+        INSERT INTO company_settings (id, id_signatory_name, id_signatory_title, id_signature_file)
+        VALUES (1, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            id_signatory_name = excluded.id_signatory_name,
+            id_signatory_title = excluded.id_signatory_title,
+            id_signature_file = excluded.id_signature_file
+    """, (signatory_name, signatory_title, signature_file), commit=True)
+
+    log_activity(session["user_id"], "UPDATE ID SIGNATORY", f"Updated ID signatory to {signatory_name} | {signatory_title}")
+    flash("ID signatory details updated.", "success")
+    employee_id = request.form.get("employee_id", "").strip()
+    if employee_id:
+        return redirect(url_for("print_employee_id", user_id=employee_id))
+    return redirect(url_for("manage_employees"))
 
 
 @app.route("/admin/delete-employee/<int:user_id>", methods=["POST"])
