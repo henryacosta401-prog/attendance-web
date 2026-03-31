@@ -4114,61 +4114,6 @@ def admin_live_status():
     })
 
 
-@app.route("/admin/scanner-test", methods=["GET", "POST"])
-@login_required(role="admin")
-def admin_scanner_test():
-    scan_result = None
-
-    if request.method == "POST":
-        action_type = request.form.get("action_type", "").strip()
-        barcode_id = request.form.get("barcode_id", "").strip()
-        allowed_actions = {
-            "time_in": "Time In",
-            "start_break": "Start Break",
-            "end_break": "End Break",
-            "time_out": "Time Out",
-        }
-
-        if action_type not in allowed_actions:
-            flash("Choose a valid attendance action.", "danger")
-            return redirect(url_for("admin_scanner_test"))
-
-        if not barcode_id:
-            flash("Scan or enter a barcode ID first.", "danger")
-            return redirect(url_for("admin_scanner_test"))
-
-        employee = get_user_by_barcode(barcode_id)
-        if not employee:
-            scan_result = {
-                "ok": False,
-                "action_label": allowed_actions[action_type],
-                "barcode_id": barcode_id,
-                "message": "No employee matched that barcode.",
-            }
-        else:
-            ok, message, employee_row = perform_attendance_action(
-                employee["id"],
-                action_type,
-                actor_id=session["user_id"],
-                source_label="Phone Scanner Test"
-            )
-            latest_attendance = get_current_attendance(employee["id"])
-            scan_result = {
-                "ok": ok,
-                "action_label": allowed_actions[action_type],
-                "barcode_id": barcode_id,
-                "message": message,
-                "employee": employee_row or employee,
-                "status_display": get_user_live_status(employee["id"]),
-                "attendance": latest_attendance,
-                "break_minutes_today": total_break_minutes(latest_attendance["id"]) if latest_attendance else 0,
-                "break_limit_minutes": get_employee_break_limit(employee),
-            }
-            flash(message, "success" if ok else "warning")
-
-    return render_template("admin_scanner_test.html", scan_result=scan_result)
-
-
 @app.route("/admin/payroll")
 @login_required(role="admin")
 def admin_payroll():
