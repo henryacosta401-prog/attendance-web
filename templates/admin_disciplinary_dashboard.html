@@ -1,0 +1,197 @@
+{% extends "base.html" %}
+{% block title %}Disciplinary Dashboard{% endblock %}
+
+{% block extra_head %}
+<style>
+.disciplinary-shell { display: grid; gap: 20px; }
+.disciplinary-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }
+.disciplinary-card, .disciplinary-panel {
+    border-radius: 24px;
+    background: linear-gradient(180deg, rgba(22, 31, 53, 0.98), rgba(15, 23, 42, 0.96));
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    box-shadow: 0 22px 34px rgba(15, 23, 42, 0.22);
+}
+.disciplinary-card { padding: 18px; }
+.disciplinary-label { color: #9fb0d4; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
+.disciplinary-value { margin-top: 10px; color: #f8fbff; font-size: 34px; font-weight: 900; line-height: 1; }
+.disciplinary-note, .disciplinary-subtitle, .disciplinary-subtext { color: #9fb0d4; font-size: 12px; }
+.disciplinary-panel { padding: 20px; }
+.disciplinary-toolbar { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
+.disciplinary-table-wrap { overflow-x: auto; margin-top: 18px; border-radius: 18px; border: 1px solid rgba(148, 163, 184, 0.14); }
+.disciplinary-table { width: 100%; border-collapse: collapse; }
+.disciplinary-table th, .disciplinary-table td { padding: 14px 16px; border-bottom: 1px solid rgba(148, 163, 184, 0.12); vertical-align: top; }
+.disciplinary-table th { background: rgba(59, 130, 246, 0.08); color: #bad0ff; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+.disciplinary-table td { color: #ecf3ff; font-size: 14px; }
+.disciplinary-row-form { display: grid; gap: 8px; min-width: 290px; }
+@media (max-width: 1100px) {
+    .disciplinary-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 720px) {
+    .disciplinary-toolbar { grid-template-columns: 1fr; }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="hero-card" style="margin-bottom:20px;">
+    <div class="hero">
+        <div>
+            <h1>Disciplinary Dashboard</h1>
+            <p class="section-subtitle">Manage Coaching, NTE, and Suspension separately from operational error reports.</p>
+        </div>
+        <div class="status status-red">Admin Discipline</div>
+    </div>
+</div>
+
+<div class="disciplinary-shell">
+    <div class="disciplinary-stats">
+        <div class="disciplinary-card"><div class="disciplinary-label">Coaching</div><div class="disciplinary-value">{{ summary.coaching }}</div><div class="disciplinary-note">Records in current filter</div></div>
+        <div class="disciplinary-card"><div class="disciplinary-label">NTE</div><div class="disciplinary-value">{{ summary.nte }}</div><div class="disciplinary-note">Records in current filter</div></div>
+        <div class="disciplinary-card"><div class="disciplinary-label">Suspension</div><div class="disciplinary-value">{{ summary.suspension }}</div><div class="disciplinary-note">Records in current filter</div></div>
+        <div class="disciplinary-card"><div class="disciplinary-label">Active Suspensions</div><div class="disciplinary-value">{{ summary.active_suspensions }}</div><div class="disciplinary-note">Employees currently suspended</div></div>
+        <div class="disciplinary-card"><div class="disciplinary-label">Upcoming Starts</div><div class="disciplinary-value">{{ summary.upcoming_suspensions }}</div><div class="disciplinary-note">Suspensions not yet active</div></div>
+        <div class="disciplinary-card"><div class="disciplinary-label">Starts Today</div><div class="disciplinary-value">{{ summary.starts_today }}</div><div class="disciplinary-note">Suspensions beginning today</div></div>
+    </div>
+
+    <section class="disciplinary-panel">
+        <h2 style="margin:0;color:#f8fbff;">Create Disciplinary Action</h2>
+        <p class="disciplinary-subtitle" style="margin-top:6px;">Suspension supports a duration in days. Coaching and NTE are single-date records.</p>
+        <form method="POST" action="{{ url_for('create_disciplinary_action_route') }}" class="disciplinary-toolbar">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <div>
+                <label>Employee</label>
+                <select name="user_id" class="input" required>
+                    <option value="">Select employee</option>
+                    {% for emp in employees %}
+                        <option value="{{ emp.id }}">{{ emp.full_name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label>Action Type</label>
+                <select name="action_type" class="input" required>
+                    <option value="">Select type</option>
+                    {% for item in disciplinary_types %}
+                        <option value="{{ item }}">{{ item }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label>Action Date</label>
+                <input class="input" type="date" name="action_date" required>
+            </div>
+            <div>
+                <label>Suspension Days</label>
+                <input class="input" type="number" name="duration_days" value="1" min="1" step="1">
+            </div>
+            <div>
+                <label>Details</label>
+                <input class="input" type="text" name="details" placeholder="Reason or note">
+            </div>
+            <div style="grid-column: 1 / -1;">
+                <button class="btn btn-danger" type="submit">Save Disciplinary Action</button>
+            </div>
+        </form>
+    </section>
+
+    <section class="disciplinary-panel">
+        <h2 style="margin:0;color:#f8fbff;">Disciplinary Records</h2>
+        <form method="GET" class="disciplinary-toolbar">
+            <div>
+                <label>Type</label>
+                <select class="input" name="action_type">
+                    <option value="">All Types</option>
+                    {% for item in disciplinary_types %}
+                        <option value="{{ item }}" {% if action_type == item %}selected{% endif %}>{{ item }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label>Employee</label>
+                <select class="input" name="user_id">
+                    <option value="">All Employees</option>
+                    {% for emp in employees %}
+                        <option value="{{ emp.id }}" {% if user_id == (emp.id|string) %}selected{% endif %}>{{ emp.full_name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label>Department</label>
+                <select class="input" name="department">
+                    <option value="">All Departments</option>
+                    {% for dept in departments %}
+                        <option value="{{ dept.department }}" {% if department == dept.department %}selected{% endif %}>{{ dept.department }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label>Date From</label>
+                <input class="input" type="date" name="date_from" value="{{ date_from }}">
+            </div>
+            <div>
+                <label>Date To</label>
+                <input class="input" type="date" name="date_to" value="{{ date_to }}">
+            </div>
+            <div style="grid-column: 1 / -1;">
+                <button class="btn btn-primary" type="submit">Filter</button>
+                <a class="btn btn-gray" href="{{ url_for('admin_disciplinary_dashboard') }}">Clear</a>
+                <a class="btn btn-purple" href="{{ url_for('export_admin_disciplinary_excel', action_type=action_type, user_id=user_id, department=department, date_from=date_from, date_to=date_to) }}">Export Excel</a>
+            </div>
+        </form>
+
+        <div class="disciplinary-table-wrap">
+            <table class="disciplinary-table">
+                <thead>
+                    <tr>
+                        <th>Employee</th>
+                        <th>Department</th>
+                        <th>Type</th>
+                        <th>Start Date</th>
+                        <th>Days</th>
+                        <th>End Date</th>
+                        <th>Status</th>
+                        <th>Details</th>
+                        <th>Manage</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if actions %}
+                        {% for row in actions %}
+                            <tr>
+                                <td><div style="font-weight:800;color:#fff;">{{ row.full_name }}</div><div class="disciplinary-subtext">@{{ row.username }}</div></td>
+                                <td>{{ row.department or '-' }}</td>
+                                <td>{{ row.action_type }}</td>
+                                <td>{{ row.action_date }}</td>
+                                <td>{{ row.duration_days }}</td>
+                                <td>{{ row.end_date if row.end_date else row.action_date }}</td>
+                                <td>{{ row.status_label }}</td>
+                                <td>{{ row.details or '-' }}</td>
+                                <td>
+                                    <form method="POST" action="{{ url_for('update_disciplinary_action_route', action_id=row.id) }}" class="disciplinary-row-form">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                        <select class="input" name="action_type">
+                                            {% for item in disciplinary_types %}
+                                                <option value="{{ item }}" {% if row.action_type == item %}selected{% endif %}>{{ item }}</option>
+                                            {% endfor %}
+                                        </select>
+                                        <input class="input" type="date" name="action_date" value="{{ row.action_date }}">
+                                        <input class="input" type="number" name="duration_days" value="{{ row.duration_days if row.duration_days else 1 }}" min="1" step="1">
+                                        <textarea class="textarea" name="details" rows="3" placeholder="Details...">{{ row.details or '' }}</textarea>
+                                        <button class="btn btn-primary" type="submit">Save</button>
+                                    </form>
+                                    <form method="POST" action="{{ url_for('delete_disciplinary_action_route', action_id=row.id) }}" onsubmit="return confirm('Delete this disciplinary record?')" style="margin-top:8px;">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                        <button class="btn btn-danger" type="submit">Delete</button>
+                                    </form>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr><td colspan="9" class="muted" style="padding:18px;">No disciplinary records yet.</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</div>
+{% endblock %}

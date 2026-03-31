@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% block title %}Payroll Dashboard{% endblock %}
+
+{% block extra_head %}
+<style>
+.payroll-shell { display: grid; gap: 20px; }
+.payroll-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; }
+.payroll-card, .payroll-panel {
+    border-radius: 24px;
+    background: linear-gradient(180deg, rgba(22, 31, 53, 0.98), rgba(15, 23, 42, 0.96));
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    box-shadow: 0 22px 34px rgba(15, 23, 42, 0.22);
+}
+.payroll-card { padding: 18px; }
+.payroll-label { color: #9fb0d4; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
+.payroll-value { margin-top: 10px; color: #f8fbff; font-size: 34px; font-weight: 900; line-height: 1; }
+.payroll-note, .payroll-subtitle, .payroll-subtext { color: #9fb0d4; font-size: 12px; }
+.payroll-panel { padding: 20px; }
+.payroll-toolbar { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }
+.payroll-table-wrap { overflow-x: auto; margin-top: 18px; border-radius: 18px; border: 1px solid rgba(148, 163, 184, 0.14); }
+.payroll-table { width: 100%; border-collapse: collapse; }
+.payroll-table th, .payroll-table td { padding: 14px 16px; border-bottom: 1px solid rgba(148, 163, 184, 0.12); }
+.payroll-table th { background: rgba(59, 130, 246, 0.08); color: #bad0ff; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+.payroll-table td { color: #ecf3ff; font-size: 14px; }
+.payroll-status { display: inline-flex; align-items: center; padding: 6px 10px; border-radius: 999px; font-size: 12px; font-weight: 800; }
+.payroll-status-ready { background: rgba(16, 185, 129, 0.18); color: #7ef5bf; }
+.payroll-status-missing { background: rgba(239, 68, 68, 0.18); color: #ffb4b4; }
+.payroll-empty { padding: 18px; color: #9fb0d4; text-align: center; }
+@media (max-width: 1100px) {
+    .payroll-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 720px) {
+    .payroll-toolbar { grid-template-columns: 1fr; }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="hero-card" style="margin-bottom:20px;">
+    <div class="hero">
+        <div>
+            <h1>Payroll Dashboard</h1>
+            <p class="section-subtitle">Preview gross hourly payroll from attendance records and quickly spot employees who still need a pay rate.</p>
+        </div>
+        <div class="status status-green">{{ date_from }} to {{ date_to }}</div>
+    </div>
+</div>
+
+<div class="payroll-shell">
+    <div class="payroll-stats">
+        <div class="payroll-card"><div class="payroll-label">Gross Payroll</div><div class="payroll-value">{{ format_currency(stats.total_gross) }}</div><div class="payroll-note">Hourly pay based on worked hours</div></div>
+        <div class="payroll-card"><div class="payroll-label">Paid Hours</div><div class="payroll-value">{{ "%.2f"|format(stats.total_hours) }}</div><div class="payroll-note">Attendance rows with time in and time out</div></div>
+        <div class="payroll-card"><div class="payroll-label">Employees In View</div><div class="payroll-value">{{ stats.employees }}</div><div class="payroll-note">Current department and date filter</div></div>
+        <div class="payroll-card"><div class="payroll-label">Employees With Pay</div><div class="payroll-value">{{ stats.paid_employees }}</div><div class="payroll-note">At least one payable record in range</div></div>
+        <div class="payroll-card"><div class="payroll-label">Missing Rates</div><div class="payroll-value">{{ stats.missing_rates }}</div><div class="payroll-note">Needs hourly rate before payroll is final</div></div>
+        <div class="payroll-card"><div class="payroll-label">Suspension Days</div><div class="payroll-value">{{ stats.suspension_days }}</div><div class="payroll-note">Scheduled suspension days in range</div></div>
+        <div class="payroll-card"><div class="payroll-label">Lost Pay Estimate</div><div class="payroll-value">{{ format_currency(stats.suspension_pay) }}</div><div class="payroll-note">Reference impact from suspensions</div></div>
+    </div>
+
+    <section class="payroll-panel">
+        <h2 style="margin:0;color:#f8fbff;">Payroll Filters</h2>
+        <p class="payroll-subtitle" style="margin-top:6px;">Use quick date ranges or enter custom dates for payroll review.</p>
+        <form method="GET" class="payroll-toolbar">
+            <div>
+                <label>Period</label>
+                <select class="input" name="period">
+                    <option value="this_month" {% if period == 'this_month' %}selected{% endif %}>This Month</option>
+                    <option value="last_month" {% if period == 'last_month' %}selected{% endif %}>Last Month</option>
+                    <option value="last_14_days" {% if period == 'last_14_days' %}selected{% endif %}>Last 14 Days</option>
+                    <option value="custom" {% if period == 'custom' %}selected{% endif %}>Custom</option>
+                </select>
+            </div>
+            <div>
+                <label>Date From</label>
+                <input class="input" type="date" name="date_from" value="{{ date_from }}">
+            </div>
+            <div>
+                <label>Date To</label>
+                <input class="input" type="date" name="date_to" value="{{ date_to }}">
+            </div>
+            <div>
+                <label>Department</label>
+                <select class="input" name="department">
+                    <option value="">All Departments</option>
+                    {% for dept in departments %}
+                        <option value="{{ dept.department }}" {% if department_filter == dept.department %}selected{% endif %}>{{ dept.department }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label>Employee</label>
+                <select class="input" name="employee_id">
+                    <option value="">All Employees</option>
+                    {% for employee in employees %}
+                        <option value="{{ employee.id }}" {% if employee_filter == (employee.id|string) %}selected{% endif %}>{{ employee.full_name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div style="display:flex;align-items:end;gap:10px;">
+                <button class="btn btn-primary" type="submit" style="width:100%;">Apply</button>
+            </div>
+        </form>
+
+        <div class="payroll-table-wrap">
+            <table class="payroll-table">
+                <thead>
+                    <tr>
+                        <th>Employee</th>
+                        <th>Department</th>
+                        <th>Hourly Rate</th>
+                        <th>Days Worked</th>
+                        <th>Total Hours</th>
+                        <th>Late Minutes</th>
+                        <th>Break Minutes</th>
+                        <th>Suspension Days</th>
+                        <th>Lost Pay Estimate</th>
+                        <th>Gross Pay</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if payroll_rows %}
+                        {% for row in payroll_rows %}
+                            <tr>
+                                <td><div style="font-weight:800;color:#fff;">{{ row.full_name }}</div><div class="payroll-subtext">@{{ row.username }}{% if row.position %} | {{ row.position }}{% endif %}</div></td>
+                                <td>{{ row.department or '-' }}</td>
+                                <td>{{ format_currency(row.hourly_rate) }}</td>
+                                <td>{{ row.days_worked }}</td>
+                                <td>{{ "%.2f"|format(row.total_hours) }}</td>
+                                <td>{{ row.late_minutes }}</td>
+                                <td>{{ row.break_minutes }}</td>
+                                <td>{{ row.suspension_days }}</td>
+                                <td>{{ format_currency(row.suspension_pay) }}</td>
+                                <td style="font-weight:800;color:#fff;">{{ format_currency(row.gross_pay) }}</td>
+                                <td>
+                                    <span class="payroll-status {% if row.has_rate %}payroll-status-ready{% else %}payroll-status-missing{% endif %}">
+                                        {{ row.status_label }}
+                                    </span>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr><td colspan="11" class="payroll-empty">No employees matched this payroll filter.</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</div>
+{% endblock %}

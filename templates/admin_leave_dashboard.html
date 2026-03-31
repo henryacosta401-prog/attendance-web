@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% block title %}Leave Dashboard{% endblock %}
+
+{% block extra_head %}
+<style>
+.leave-shell { display: grid; gap: 20px; }
+.leave-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }
+.leave-card, .leave-panel {
+    border-radius: 24px;
+    background: linear-gradient(180deg, rgba(22, 31, 53, 0.98), rgba(15, 23, 42, 0.96));
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    box-shadow: 0 22px 34px rgba(15, 23, 42, 0.22);
+}
+.leave-card { padding: 18px; }
+.leave-label { color: #9fb0d4; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
+.leave-value { margin-top: 10px; color: #f8fbff; font-size: 34px; font-weight: 900; line-height: 1; }
+.leave-note, .leave-subtitle, .leave-subtext { color: #9fb0d4; font-size: 12px; }
+.leave-panel { padding: 20px; }
+.leave-toolbar { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
+.leave-table-wrap { overflow-x: auto; margin-top: 18px; border-radius: 18px; border: 1px solid rgba(148, 163, 184, 0.14); }
+.leave-table { width: 100%; border-collapse: collapse; }
+.leave-table th, .leave-table td { padding: 14px 16px; border-bottom: 1px solid rgba(148, 163, 184, 0.12); }
+.leave-table th { background: rgba(59, 130, 246, 0.08); color: #bad0ff; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+.leave-table td { color: #ecf3ff; font-size: 14px; }
+.leave-pill { display: inline-flex; align-items: center; padding: 6px 10px; border-radius: 999px; font-size: 12px; font-weight: 800; }
+.leave-pill-sick { background: rgba(245, 158, 11, 0.18); color: #fcd34d; }
+.leave-pill-paid { background: rgba(16, 185, 129, 0.18); color: #86efac; }
+@media (max-width: 900px) {
+    .leave-toolbar { grid-template-columns: 1fr; }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="hero-card" style="margin-bottom:20px;">
+    <div class="hero">
+        <div>
+            <h1>Leave Dashboard</h1>
+            <p class="section-subtitle">Monitor yearly sick leave and paid leave balances, remaining credits, and pending approvals.</p>
+        </div>
+        <div class="status status-green">Leave Year {{ year }}</div>
+    </div>
+</div>
+
+<div class="leave-shell">
+    <div class="leave-stats">
+        <div class="leave-card"><div class="leave-label">Employees</div><div class="leave-value">{{ stats.employees }}</div><div class="leave-note">Employees in the current view</div></div>
+        <div class="leave-card"><div class="leave-label">Sick Leave Used</div><div class="leave-value">{{ stats.sick_used }}</div><div class="leave-note">Approved sick leave days</div></div>
+        <div class="leave-card"><div class="leave-label">Paid Leave Used</div><div class="leave-value">{{ stats.paid_used }}</div><div class="leave-note">Approved paid leave days</div></div>
+        <div class="leave-card"><div class="leave-label">Sick Leave Remaining</div><div class="leave-value">{{ stats.sick_remaining }}</div><div class="leave-note">Balance left across employees</div></div>
+        <div class="leave-card"><div class="leave-label">Paid Leave Remaining</div><div class="leave-value">{{ stats.paid_remaining }}</div><div class="leave-note">Balance left across employees</div></div>
+        <div class="leave-card"><div class="leave-label">Pending Leave</div><div class="leave-value">{{ stats.pending_total }}</div><div class="leave-note">Pending approvals</div></div>
+        <div class="leave-card"><div class="leave-label">Sick Exhausted</div><div class="leave-value">{{ stats.sick_exhausted }}</div><div class="leave-note">Employees with zero sick leave left</div></div>
+        <div class="leave-card"><div class="leave-label">Paid Exhausted</div><div class="leave-value">{{ stats.paid_exhausted }}</div><div class="leave-note">Employees with zero paid leave left</div></div>
+        <div class="leave-card"><div class="leave-label">Overdue Pending</div><div class="leave-value">{{ stats.overdue_pending }}</div><div class="leave-note">Requests pending for 3+ days</div></div>
+    </div>
+
+    <section class="leave-panel">
+        <h2 style="margin:0;color:#f8fbff;">Leave Filters</h2>
+        <p class="leave-subtitle" style="margin-top:6px;">Review balances by year and department.</p>
+        <form method="GET" class="leave-toolbar">
+            <div>
+                <label>Year</label>
+                <input class="input" type="number" name="year" value="{{ year }}" min="2020" max="2100">
+            </div>
+            <div>
+                <label>Department</label>
+                <select class="input" name="department">
+                    <option value="">All Departments</option>
+                    {% for dept in departments %}
+                        <option value="{{ dept.department }}" {% if department == dept.department %}selected{% endif %}>{{ dept.department }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div style="display:flex;align-items:end;gap:10px;">
+                <button class="btn btn-primary" type="submit" style="width:100%;">Apply</button>
+            </div>
+        </form>
+        <div style="margin-top:14px;">
+            <a class="btn btn-purple" href="{{ url_for('export_admin_leave_dashboard_excel', year=year, department=department) }}">Export Excel</a>
+        </div>
+
+        <div class="leave-table-wrap">
+            <table class="leave-table">
+                <thead>
+                    <tr>
+                        <th>Employee</th>
+                        <th>Department</th>
+                        <th>Sick Leave</th>
+                        <th>Paid Leave</th>
+                        <th>Pending</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if leave_rows %}
+                        {% for row in leave_rows %}
+                            <tr>
+                                <td><div style="font-weight:800;color:#fff;">{{ row.full_name }}</div><div class="leave-subtext">@{{ row.username }}{% if row.position %} | {{ row.position }}{% endif %}</div></td>
+                                <td>{{ row.department or '-' }}</td>
+                                <td><span class="leave-pill leave-pill-sick">{{ row.sick_used }}/{{ row.sick_total }} used</span><div class="leave-subtext" style="margin-top:8px;">{{ row.sick_remaining }} remaining</div><div class="leave-subtext">Manual {{ row.sick_used_manual }} | Approved {{ row.sick_used_in_app }}</div></td>
+                                <td><span class="leave-pill leave-pill-paid">{{ row.paid_used }}/{{ row.paid_total }} used</span><div class="leave-subtext" style="margin-top:8px;">{{ row.paid_remaining }} remaining</div><div class="leave-subtext">Manual {{ row.paid_used_manual }} | Approved {{ row.paid_used_in_app }}</div></td>
+                                <td>{{ row.pending_total }} total<div class="leave-subtext" style="margin-top:8px;">Sick {{ row.pending_sick }} | Paid {{ row.pending_paid }}</div></td>
+                            </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr><td colspan="5" class="muted" style="padding:18px;">No employees matched this leave filter.</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="leave-panel">
+        <h2 style="margin:0;color:#f8fbff;">Pending Leave Requests</h2>
+        <p class="leave-subtitle" style="margin-top:6px;">These requests are waiting in the approvals queue.</p>
+        <div class="leave-table-wrap">
+            <table class="leave-table">
+                <thead>
+                    <tr>
+                        <th>Employee</th>
+                        <th>Type</th>
+                        <th>Date</th>
+                        <th>Days</th>
+                        <th>Department</th>
+                        <th>Age</th>
+                        <th>Message</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if pending_requests %}
+                        {% for item in pending_requests %}
+                            <tr>
+                                <td><div style="font-weight:800;color:#fff;">{{ item.full_name }}</div><div class="leave-subtext">@{{ item.username }}</div></td>
+                                <td>{{ item.request_type }}</td>
+                                <td>{{ item.display_date_range }}</td>
+                                <td>{{ item.requested_days }}</td>
+                                <td>{{ item.department or '-' }}</td>
+                                <td>{{ item.age_days }} day(s)</td>
+                                <td>{{ item.message or '-' }}</td>
+                            </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr><td colspan="7" class="muted" style="padding:18px;">No pending leave requests right now.</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</div>
+{% endblock %}
