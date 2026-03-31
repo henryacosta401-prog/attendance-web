@@ -258,12 +258,18 @@ def login_required(role=None):
 
             if role and session.get("role") != role:
                 flash("Access denied.", "danger")
-                if session.get("role") == "admin":
-                    return redirect(url_for("admin_dashboard"))
-                return redirect(url_for("dashboard"))
+                return redirect(get_home_route_for_role(session.get("role")))
             return f(*args, **kwargs)
         return wrapped
     return decorator
+
+
+def get_home_route_for_role(role_name):
+    if role_name == "admin":
+        return url_for("admin_dashboard")
+    if role_name == "scanner":
+        return url_for("scanner_kiosk")
+    return url_for("dashboard")
 
 
 # =========================
@@ -924,12 +930,25 @@ def get_user_by_barcode(barcode_id):
     cleaned = (barcode_id or "").strip()
     if not cleaned:
         return None
-    return fetchone("""
+    direct_match = fetchone("""
         SELECT *
         FROM users
         WHERE role = 'employee' AND TRIM(COALESCE(barcode_id, '')) = ?
         ORDER BY id DESC LIMIT 1
     """, (cleaned,))
+    if direct_match:
+        return direct_match
+
+    if cleaned.upper().startswith("EMP-"):
+        suffix = cleaned[4:].strip()
+        if suffix.isdigit():
+            return fetchone("""
+                SELECT *
+                FROM users
+                WHERE role = 'employee' AND id = ?
+                ORDER BY id DESC LIMIT 1
+            """, (int(suffix),))
+    return None
 
 
 def get_company_settings():
@@ -942,6 +961,16 @@ def get_company_settings():
         "id_signatory_title": "Head Of Operations",
         "id_signature_file": None,
     }
+
+
+def get_scanner_account():
+    return fetchone("""
+        SELECT *
+        FROM users
+        WHERE role = 'scanner'
+        ORDER BY id ASC
+        LIMIT 1
+    """)
 
 
 def get_attendance_by_id(attendance_id):
@@ -2653,10 +2682,7 @@ def home():
         if not user:
             session.clear()
             return redirect(url_for("login"))
-
-        if session.get("role") == "admin":
-            return redirect(url_for("admin_dashboard"))
-        return redirect(url_for("dashboard"))
+        return redirect(get_home_route_for_role(session.get("role")))
     return redirect(url_for("login"))
 
 
@@ -2681,6 +2707,10 @@ def login():
             if user["role"] == "admin":
                 flash("Welcome Admin.", "success")
                 return redirect(url_for("admin_dashboard"))
+
+            if user["role"] == "scanner":
+                flash("Scanner kiosk ready.", "success")
+                return redirect(url_for("scanner_kiosk"))
 
             flash("Login successful.", "success")
             return redirect(url_for("dashboard"))
@@ -2872,6 +2902,62 @@ def admin_profile():
         return redirect(url_for("login"))
 
     if request.method == "POST":
+        form_action = request.form.get("form_action", "admin_profile").strip()
+
+        if form_action == "scanner_account":
+            scanner_full_name = request.form.get("scanner_full_name", "").strip() or "Scanner Kiosk"
+            scanner_username = request.form.get("scanner_username", "").strip()
+            scanner_password = request.form.get("scanner_password", "").strip()
+
+            if not scanner_username:
+                flash("Scanner username is required.", "danger")
+                return redirect(url_for("admin_profile"))
+
+            existing_scanner = get_scanner_account()
+            username_owner = fetchone("SELECT id, role FROM users WHERE username = ?", (scanner_username,))
+            if username_owner and (not existing_scanner or username_owner["id"] != existing_scanner["id"]):
+                flash("That scanner username is already in use.", "warning")
+                return redirect(url_for("admin_profile"))
+
+            if existing_scanner:
+                if scanner_password:
+                    execute_db("""
+                        UPDATE users
+                        SET full_name = ?, username = ?, password_hash = ?
+                        WHERE id = ?
+                    """, (scanner_full_name, scanner_username, generate_password_hash(scanner_password), existing_scanner["id"]), commit=True)
+                    log_activity(session["user_id"], "UPDATE SCANNER ACCOUNT", f"Updated scanner account {scanner_username} and reset password")
+                else:
+                    execute_db("""
+                        UPDATE users
+                        SET full_name = ?, username = ?
+                        WHERE id = ?
+                    """, (scanner_full_name, scanner_username, existing_scanner["id"]), commit=True)
+                    log_activity(session["user_id"], "UPDATE SCANNER ACCOUNT", f"Updated scanner account {scanner_username}")
+                flash("Scanner account updated.", "success")
+            else:
+                if not scanner_password:
+                    flash("Scanner password is required when creating the scanner account.", "danger")
+                    return redirect(url_for("admin_profile"))
+                execute_db("""
+                    INSERT INTO users (
+                        full_name, username, password_hash, role, department, position,
+                        break_limit_minutes, is_active, created_at
+                    )
+                    VALUES (?, ?, ?, 'scanner', ?, ?, ?, 1, ?)
+                """, (
+                    scanner_full_name,
+                    scanner_username,
+                    generate_password_hash(scanner_password),
+                    "Kiosk",
+                    "Scanner Only",
+                    BREAK_LIMIT_MINUTES,
+                    now_str()
+                ), commit=True)
+                log_activity(session["user_id"], "CREATE SCANNER ACCOUNT", f"Created scanner account {scanner_username}")
+                flash("Scanner account created.", "success")
+            return redirect(url_for("admin_profile"))
+
         full_name = request.form.get("full_name", "").strip()
         if not full_name:
             flash("Full name is required.", "danger")
@@ -2907,7 +2993,7 @@ def admin_profile():
         flash("Admin profile updated successfully.", "success")
         return redirect(url_for("admin_profile"))
 
-    return render_template("admin_profile.html", user=user)
+    return render_template("admin_profile.html", user=user, scanner_account=get_scanner_account())
 
 
 @app.route("/corrections", methods=["GET", "POST"])
@@ -5408,6 +5494,53 @@ def print_employee_id(user_id):
         issue_date=formatted_issue_date,
         expiration_date=formatted_expiration_date
     )
+
+
+@app.route("/scanner")
+@login_required(role="scanner")
+def scanner_kiosk():
+    return render_template("admin_scanner_kiosk.html")
+
+
+@app.route("/scanner/scan", methods=["POST"])
+@login_required(role="scanner")
+def scanner_kiosk_scan():
+    action_type = (request.form.get("action_type", "") or "").strip()
+    barcode_value = (request.form.get("barcode_value", "") or "").strip()
+
+    if action_type not in {"time_in", "start_break", "end_break", "time_out"}:
+        return jsonify({"ok": False, "message": "Please choose a valid attendance action."}), 400
+
+    if not barcode_value:
+        return jsonify({"ok": False, "message": "Scan or enter a barcode first."}), 400
+
+    employee = get_user_by_barcode(barcode_value)
+    if not employee:
+        return jsonify({"ok": False, "message": "No employee matched that barcode. Check the employee Barcode ID first."}), 404
+
+    ok, message, employee_row = perform_attendance_action(
+        employee["id"],
+        action_type,
+        actor_id=session["user_id"],
+        source_label="Tablet kiosk"
+    )
+    employee_for_payload = employee_row or employee
+    attendance = get_current_attendance(employee["id"])
+    break_minutes = total_break_minutes(attendance["id"], include_open=True) if attendance else 0
+
+    return jsonify({
+        "ok": ok,
+        "message": message,
+        "employee_name": employee_for_payload["full_name"],
+        "department": employee_for_payload["department"] or "",
+        "position": employee_for_payload["position"] or "",
+        "barcode_value": barcode_value,
+        "status": attendance["status"] if attendance else "Offline",
+        "time_in": attendance["time_in"] if attendance else None,
+        "time_out": attendance["time_out"] if attendance else None,
+        "break_minutes": break_minutes,
+        "action_type": action_type
+    }), (200 if ok else 400)
 
 
 @app.route("/admin/employee-id/signatory", methods=["POST"])

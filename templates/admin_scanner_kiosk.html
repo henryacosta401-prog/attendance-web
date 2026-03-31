@@ -1,0 +1,568 @@
+{% extends "base.html" %}
+{% block title %}Scanner Kiosk{% endblock %}
+
+{% block extra_head %}
+<style>
+body.kiosk-mode .navbar,
+body.kiosk-mode .flash-wrap,
+body.kiosk-mode .hero-card {
+    display: none !important;
+}
+body.kiosk-mode .page-shell,
+body.kiosk-mode .page-shell > .container {
+    padding-top: 0 !important;
+}
+.scanner-shell {
+    display: grid;
+    gap: 14px;
+}
+.scanner-grid {
+    display: grid;
+    grid-template-columns: 1.1fr 0.9fr;
+    gap: 14px;
+}
+.scanner-card {
+    padding: 18px;
+    border-radius: 24px;
+    background:
+        radial-gradient(circle at top right, rgba(96, 165, 250, 0.18), transparent 25%),
+        linear-gradient(180deg, rgba(15, 23, 42, 0.94), rgba(15, 23, 42, 0.88));
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    box-shadow: 0 24px 48px rgba(15, 23, 42, 0.24);
+}
+.scanner-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+.scanner-action-btn {
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    border-radius: 18px;
+    padding: 18px 16px;
+    background: rgba(15, 23, 42, 0.66);
+    color: #e2e8f0;
+    text-align: left;
+    transition: 0.2s ease;
+}
+.scanner-action-btn strong {
+    display: block;
+    font-size: 20px;
+    margin-bottom: 6px;
+}
+.scanner-action-btn span {
+    display: block;
+    font-size: 14px;
+    color: rgba(226, 232, 240, 0.72);
+}
+.scanner-action-btn.is-active {
+    background: linear-gradient(135deg, rgba(37, 99, 235, 0.95), rgba(14, 165, 233, 0.72));
+    border-color: rgba(191, 219, 254, 0.38);
+    box-shadow: 0 18px 30px rgba(37, 99, 235, 0.24);
+}
+.scanner-stage {
+    position: relative;
+    overflow: hidden;
+    border-radius: 22px;
+    background: #020617;
+    min-height: 420px;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+}
+.scanner-stage video {
+    width: 100%;
+    height: 100%;
+    min-height: 420px;
+    object-fit: cover;
+    display: block;
+    background: #020617;
+}
+.scanner-stage::after {
+    content: "";
+    position: absolute;
+    inset: 20% 12%;
+    border: 2px solid rgba(125, 211, 252, 0.88);
+    border-radius: 20px;
+    box-shadow: 0 0 0 999px rgba(2, 6, 23, 0.28);
+    pointer-events: none;
+}
+.scanner-stage.is-idle::after {
+    opacity: 0.4;
+}
+.scanner-overlay {
+    position: absolute;
+    inset: auto 16px 16px 16px;
+    padding: 12px 14px;
+    border-radius: 16px;
+    background: rgba(15, 23, 42, 0.72);
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    color: #e2e8f0;
+    font-size: 14px;
+    line-height: 1.45;
+    backdrop-filter: blur(12px);
+}
+.scanner-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.scanner-kicker {
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: rgba(148, 163, 184, 0.82);
+}
+.scanner-title {
+    font-size: 34px;
+    line-height: 1;
+    font-weight: 900;
+    color: #f8fafc;
+    letter-spacing: -0.04em;
+    margin-top: 4px;
+}
+.scanner-subtitle {
+    margin-top: 8px;
+    max-width: 620px;
+    font-size: 15px;
+    line-height: 1.5;
+    color: rgba(226, 232, 240, 0.76);
+}
+.scanner-toolbar-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.scanner-toolbar-actions .btn {
+    min-width: 130px;
+}
+.scanner-controls {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+.scanner-camera-select {
+    min-width: 220px;
+}
+.scanner-manual {
+    display: grid;
+    gap: 10px;
+}
+.scanner-manual-row {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.scanner-manual-row .input {
+    flex: 1 1 220px;
+}
+.scanner-result {
+    display: grid;
+    gap: 12px;
+}
+.scanner-banner {
+    padding: 14px 16px;
+    border-radius: 18px;
+    background: rgba(15, 23, 42, 0.66);
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    color: #e2e8f0;
+}
+.scanner-banner.is-success {
+    background: rgba(22, 101, 52, 0.26);
+    border-color: rgba(74, 222, 128, 0.3);
+}
+.scanner-banner.is-error {
+    background: rgba(127, 29, 29, 0.26);
+    border-color: rgba(248, 113, 113, 0.28);
+}
+.scanner-kv {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+.scanner-kv .cardlet {
+    padding: 12px 14px;
+    border-radius: 18px;
+    background: rgba(15, 23, 42, 0.46);
+    border: 1px solid rgba(148, 163, 184, 0.14);
+}
+.scanner-kv .label {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: rgba(148, 163, 184, 0.86);
+    margin-bottom: 4px;
+}
+.scanner-kv .value {
+    font-size: 15px;
+    font-weight: 800;
+    color: #f8fafc;
+    overflow-wrap: anywhere;
+}
+.scanner-help {
+    font-size: 13px;
+    line-height: 1.5;
+    color: rgba(226, 232, 240, 0.72);
+}
+@media (max-width: 960px) {
+    .scanner-title {
+        font-size: 28px;
+    }
+    .scanner-grid {
+        grid-template-columns: 1fr;
+    }
+    .scanner-kv {
+        grid-template-columns: 1fr;
+    }
+    .scanner-stage,
+    .scanner-stage video {
+        min-height: 320px;
+    }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="scanner-toolbar">
+    <div>
+        <div class="scanner-kicker">Tablet Kiosk</div>
+        <div class="scanner-title">Attendance Scanner</div>
+        <div class="scanner-subtitle">Choose the action, scan the employee’s Code 128 ID barcode, and let the app record the attendance step with the same rules used everywhere else.</div>
+    </div>
+    <div class="scanner-toolbar-actions">
+        <button class="btn btn-primary" type="button" id="fullscreenBtn">Fullscreen</button>
+        <button class="btn btn-gray" type="button" id="toggleKioskBtn">Minimal Mode</button>
+        <a class="btn btn-gray" href="{{ url_for('logout') }}">Logout</a>
+    </div>
+</div>
+
+<div class="scanner-shell">
+    <div class="scanner-grid">
+        <section class="scanner-card">
+            <div class="section-title">1. Choose Action</div>
+            <div class="scanner-actions" id="scannerActions">
+                <button class="scanner-action-btn is-active" type="button" data-action="time_in">
+                    <strong>Time In</strong>
+                    <span>Start the employee's workday</span>
+                </button>
+                <button class="scanner-action-btn" type="button" data-action="start_break">
+                    <strong>Start Break</strong>
+                    <span>Begin a break session</span>
+                </button>
+                <button class="scanner-action-btn" type="button" data-action="end_break">
+                    <strong>End Break</strong>
+                    <span>Return from break</span>
+                </button>
+                <button class="scanner-action-btn" type="button" data-action="time_out">
+                    <strong>Time Out</strong>
+                    <span>Close the employee's workday</span>
+                </button>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="section-title">2. Scan Barcode</div>
+            <div class="scanner-controls" style="margin-bottom:12px;">
+                <select class="input scanner-camera-select" id="cameraSelect">
+                    <option value="">Default Camera</option>
+                </select>
+                <button class="btn btn-primary" type="button" id="startCameraBtn">Start Camera</button>
+                <button class="btn btn-gray" type="button" id="stopCameraBtn">Stop Camera</button>
+            </div>
+
+            <div class="scanner-stage is-idle" id="scannerStage">
+                <video id="scannerVideo" autoplay playsinline muted></video>
+                <div class="scanner-overlay" id="scannerOverlay">
+                    Point the tablet camera at the printed employee ID barcode. If the browser does not support live scanning, use the manual barcode field below.
+                </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="section-title">Manual Fallback</div>
+            <div class="scanner-manual">
+                <div class="scanner-help">
+                    Use this if the camera is blocked, the tablet browser does not support barcode detection, or you want to test a barcode value manually.
+                </div>
+                <div class="scanner-manual-row">
+                    <input class="input" type="text" id="manualBarcodeInput" placeholder="Enter barcode value, e.g. EMP-0001">
+                    <button class="btn btn-success" type="button" id="manualSubmitBtn">Submit Barcode</button>
+                </div>
+            </div>
+        </section>
+
+        <section class="scanner-card">
+            <div class="section-title">Scan Result</div>
+            <div class="scanner-result">
+                <div class="scanner-banner" id="scannerBanner">
+                    Ready to scan. Choose an action, then point the camera at the employee ID barcode.
+                </div>
+
+                <div class="scanner-kv">
+                    <div class="cardlet">
+                        <div class="label">Employee</div>
+                        <div class="value" id="resultEmployee">-</div>
+                    </div>
+                    <div class="cardlet">
+                        <div class="label">Action</div>
+                        <div class="value" id="resultAction">Time In</div>
+                    </div>
+                    <div class="cardlet">
+                        <div class="label">Status</div>
+                        <div class="value" id="resultStatus">-</div>
+                    </div>
+                    <div class="cardlet">
+                        <div class="label">Barcode</div>
+                        <div class="value" id="resultBarcode">-</div>
+                    </div>
+                    <div class="cardlet">
+                        <div class="label">Time In</div>
+                        <div class="value" id="resultTimeIn">-</div>
+                    </div>
+                    <div class="cardlet">
+                        <div class="label">Time Out</div>
+                        <div class="value" id="resultTimeOut">-</div>
+                    </div>
+                    <div class="cardlet">
+                        <div class="label">Break Minutes</div>
+                        <div class="value" id="resultBreakMinutes">-</div>
+                    </div>
+                    <div class="cardlet">
+                        <div class="label">Department / Position</div>
+                        <div class="value" id="resultMeta">-</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </div>
+</div>
+
+<form id="scannerPostForm" hidden>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+</form>
+
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+    const state = {
+        action: "time_in",
+        detector: null,
+        stream: null,
+        isScanning: false,
+        scanLoopId: null,
+        lastScannedValue: "",
+        lastScanAt: 0
+    };
+
+    const actionsWrap = document.getElementById("scannerActions");
+    const actionButtons = Array.from(actionsWrap.querySelectorAll("[data-action]"));
+    const cameraSelect = document.getElementById("cameraSelect");
+    const startCameraBtn = document.getElementById("startCameraBtn");
+    const stopCameraBtn = document.getElementById("stopCameraBtn");
+    const scannerVideo = document.getElementById("scannerVideo");
+    const scannerStage = document.getElementById("scannerStage");
+    const scannerOverlay = document.getElementById("scannerOverlay");
+    const manualBarcodeInput = document.getElementById("manualBarcodeInput");
+    const manualSubmitBtn = document.getElementById("manualSubmitBtn");
+    const scannerBanner = document.getElementById("scannerBanner");
+    const fullscreenBtn = document.getElementById("fullscreenBtn");
+    const toggleKioskBtn = document.getElementById("toggleKioskBtn");
+
+    const resultEmployee = document.getElementById("resultEmployee");
+    const resultAction = document.getElementById("resultAction");
+    const resultStatus = document.getElementById("resultStatus");
+    const resultBarcode = document.getElementById("resultBarcode");
+    const resultTimeIn = document.getElementById("resultTimeIn");
+    const resultTimeOut = document.getElementById("resultTimeOut");
+    const resultBreakMinutes = document.getElementById("resultBreakMinutes");
+    const resultMeta = document.getElementById("resultMeta");
+
+    function setKioskMode(enabled) {
+        document.body.classList.toggle("kiosk-mode", enabled);
+        toggleKioskBtn.textContent = enabled ? "Exit Minimal" : "Minimal Mode";
+        localStorage.setItem("scanner-kiosk-mode", enabled ? "1" : "0");
+    }
+
+    const supportedDetector = "BarcodeDetector" in window;
+    if (supportedDetector) {
+        try {
+            state.detector = new BarcodeDetector({ formats: ["code_128"] });
+        } catch (error) {
+            state.detector = null;
+        }
+    }
+
+    actionButtons.forEach((button) => {
+        button.addEventListener("click", () => {
+            state.action = button.dataset.action;
+            actionButtons.forEach((item) => item.classList.toggle("is-active", item === button));
+            resultAction.textContent = button.querySelector("strong").textContent.trim();
+        });
+    });
+
+    async function loadCameras() {
+        if (!navigator.mediaDevices?.enumerateDevices) return;
+        try {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const cameras = devices.filter((device) => device.kind === "videoinput");
+            cameraSelect.innerHTML = '<option value="">Default Camera</option>';
+            cameras.forEach((camera, index) => {
+                const option = document.createElement("option");
+                option.value = camera.deviceId;
+                option.textContent = camera.label || `Camera ${index + 1}`;
+                cameraSelect.appendChild(option);
+            });
+        } catch (error) {
+            console.error(error);
+        }
+    }
+
+    function stopCamera() {
+        if (state.scanLoopId) {
+            cancelAnimationFrame(state.scanLoopId);
+            state.scanLoopId = null;
+        }
+        if (state.stream) {
+            state.stream.getTracks().forEach((track) => track.stop());
+            state.stream = null;
+        }
+        scannerVideo.srcObject = null;
+        state.isScanning = false;
+        scannerStage.classList.add("is-idle");
+        scannerOverlay.textContent = "Camera stopped. Start the camera again or use the manual barcode field below.";
+    }
+
+    async function startCamera() {
+        stopCamera();
+        const constraints = {
+            video: cameraSelect.value
+                ? { deviceId: { exact: cameraSelect.value } }
+                : { facingMode: { ideal: "environment" } },
+            audio: false
+        };
+
+        try {
+            state.stream = await navigator.mediaDevices.getUserMedia(constraints);
+            scannerVideo.srcObject = state.stream;
+            await scannerVideo.play();
+            scannerStage.classList.remove("is-idle");
+            scannerOverlay.textContent = state.detector
+                ? "Camera is live. Hold the barcode steady inside the guide box."
+                : "Live camera started. This browser does not support automatic Code 128 detection, so use the manual barcode field below.";
+            await loadCameras();
+
+            if (state.detector) {
+                state.isScanning = true;
+                scanFrame();
+            }
+        } catch (error) {
+            console.error(error);
+            scannerOverlay.textContent = "Unable to access the camera. Check browser permissions, then try again or use the manual barcode field.";
+        }
+    }
+
+    async function scanFrame() {
+        if (!state.isScanning || !state.detector || scannerVideo.readyState < 2) {
+            state.scanLoopId = requestAnimationFrame(scanFrame);
+            return;
+        }
+
+        try {
+            const barcodes = await state.detector.detect(scannerVideo);
+            if (barcodes.length > 0) {
+                const rawValue = (barcodes[0].rawValue || "").trim();
+                const now = Date.now();
+                if (rawValue && (rawValue !== state.lastScannedValue || now - state.lastScanAt > 2200)) {
+                    state.lastScannedValue = rawValue;
+                    state.lastScanAt = now;
+                    submitScan(rawValue);
+                }
+            }
+        } catch (error) {
+            console.error(error);
+        }
+
+        state.scanLoopId = requestAnimationFrame(scanFrame);
+    }
+
+    async function submitScan(barcodeValue) {
+        const formData = new FormData(document.getElementById("scannerPostForm"));
+        formData.append("action_type", state.action);
+        formData.append("barcode_value", barcodeValue);
+
+        scannerBanner.className = "scanner-banner";
+        scannerBanner.textContent = `Processing ${barcodeValue}...`;
+
+        try {
+            const response = await fetch("{{ url_for('scanner_kiosk_scan') }}", {
+                method: "POST",
+                body: formData,
+                credentials: "same-origin"
+            });
+            const payload = await response.json();
+
+            scannerBanner.className = `scanner-banner ${payload.ok ? "is-success" : "is-error"}`;
+            scannerBanner.textContent = payload.message || "Scan processed.";
+
+            resultEmployee.textContent = payload.employee_name || "-";
+            resultStatus.textContent = payload.status || "-";
+            resultBarcode.textContent = payload.barcode_value || barcodeValue || "-";
+            resultTimeIn.textContent = payload.time_in || "-";
+            resultTimeOut.textContent = payload.time_out || "-";
+            resultBreakMinutes.textContent = payload.break_minutes ?? "-";
+            resultMeta.textContent = [payload.department, payload.position].filter(Boolean).join(" / ") || "-";
+        } catch (error) {
+            console.error(error);
+            scannerBanner.className = "scanner-banner is-error";
+            scannerBanner.textContent = "The scan request failed. Check the network, then try again.";
+        }
+    }
+
+    startCameraBtn.addEventListener("click", startCamera);
+    stopCameraBtn.addEventListener("click", stopCamera);
+    manualSubmitBtn.addEventListener("click", () => {
+        const value = manualBarcodeInput.value.trim();
+        if (!value) {
+            scannerBanner.className = "scanner-banner is-error";
+            scannerBanner.textContent = "Enter a barcode value first.";
+            manualBarcodeInput.focus();
+            return;
+        }
+        submitScan(value);
+    });
+    manualBarcodeInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+            event.preventDefault();
+            manualSubmitBtn.click();
+        }
+    });
+
+    fullscreenBtn.addEventListener("click", async () => {
+        try {
+            if (!document.fullscreenElement) {
+                await document.documentElement.requestFullscreen();
+                fullscreenBtn.textContent = "Exit Fullscreen";
+            } else {
+                await document.exitFullscreen();
+                fullscreenBtn.textContent = "Fullscreen";
+            }
+        } catch (error) {
+            console.error(error);
+            scannerBanner.className = "scanner-banner is-error";
+            scannerBanner.textContent = "Fullscreen mode was blocked by the browser.";
+        }
+    });
+
+    toggleKioskBtn.addEventListener("click", () => {
+        setKioskMode(!document.body.classList.contains("kiosk-mode"));
+    });
+
+    document.addEventListener("fullscreenchange", () => {
+        fullscreenBtn.textContent = document.fullscreenElement ? "Exit Fullscreen" : "Fullscreen";
+    });
+
+    loadCameras();
+    resultAction.textContent = "Time In";
+    setKioskMode(localStorage.getItem("scanner-kiosk-mode") === "1");
+});
+</script>
+{% endblock %}

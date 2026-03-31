@@ -841,6 +841,8 @@
             <a class="pill-link {% if request.endpoint == 'admin_data_tools' %}active{% endif %}" href="{{ url_for('admin_data_tools') }}">Data Tools</a>
             <a class="pill-link {% if request.endpoint == 'manage_employees' or request.endpoint == 'edit_employee' %}active{% endif %}" data-tour-id="nav-employees" href="{{ url_for('manage_employees') }}">Employees</a>
             <a class="pill-link {% if request.endpoint == 'admin_profile' %}active{% endif %}" data-tour-id="nav-account" href="{{ url_for('admin_profile') }}">Account</a>
+        {% elif session.get('role') == 'scanner' %}
+            <a class="pill-link {% if request.endpoint == 'scanner_kiosk' %}active{% endif %}" href="{{ url_for('scanner_kiosk') }}">Scanner Kiosk</a>
         {% else %}
             <a class="pill-link {% if request.endpoint == 'dashboard' %}active{% endif %}" data-tour-id="nav-dashboard" href="{{ url_for('dashboard') }}">Dashboard</a>
             <a class="pill-link {% if request.endpoint == 'employee_actions' %}active{% endif %}" data-tour-id="nav-quick-actions" href="{{ url_for('employee_actions') }}">Quick Actions</a>

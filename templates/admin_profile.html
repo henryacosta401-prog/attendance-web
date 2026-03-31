@@ -12,9 +12,11 @@
     </div>
 </div>
 
-<div class="card" style="max-width:820px;">
+<div class="grid grid-2">
+    <div class="card">
     <form method="POST" enctype="multipart/form-data">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="form_action" value="admin_profile">
 
         <label>Full Name</label>
         <input class="input" type="text" name="full_name" value="{{ user.full_name }}" required>
@@ -43,5 +45,40 @@
             <a class="btn btn-gray" href="{{ url_for('admin_dashboard') }}">Back</a>
         </div>
     </form>
+</div>
+
+<div class="card">
+    <div class="section-title">Scanner Account</div>
+    <p class="muted" style="margin-bottom:14px;">Create or update the tablet kiosk login. This account can only access the scanner page.</p>
+
+    <form method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="form_action" value="scanner_account">
+
+        <label>Scanner Display Name</label>
+        <input class="input" type="text" name="scanner_full_name" value="{{ scanner_account.full_name if scanner_account else 'Scanner Kiosk' }}" required>
+
+        <label style="display:block; margin-top:12px;">Scanner Username</label>
+        <input class="input" type="text" name="scanner_username" value="{{ scanner_account.username if scanner_account else '' }}" placeholder="e.g. scanner-tablet" required>
+
+        <label style="display:block; margin-top:12px;">Scanner Password</label>
+        <input class="input" type="password" name="scanner_password" placeholder="{% if scanner_account %}Leave blank to keep current scanner password{% else %}Create scanner password{% endif %}">
+
+        <div class="small muted" style="margin-top:10px;">
+            {% if scanner_account %}
+                Current scanner account is active. Update the password only when you want to rotate the tablet login.
+            {% else %}
+                No scanner account exists yet. Save this form to create the dedicated scanner-only login.
+            {% endif %}
+        </div>
+
+        <div class="top-actions" style="margin-top:16px;">
+            <button class="btn btn-primary" type="submit">{% if scanner_account %}Update Scanner Account{% else %}Create Scanner Account{% endif %}</button>
+            {% if scanner_account %}
+                <span class="status status-blue">Scanner route: {{ url_for('scanner_kiosk') }}</span>
+            {% endif %}
+        </div>
+    </form>
+</div>
 </div>
 {% endblock %}
