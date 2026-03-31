@@ -6,7 +6,7 @@
     <div class="hero">
         <div>
             <h1>Correction Requests</h1>
-            <p class="section-subtitle">Review employee attendance corrections, undertime requests, and leave requests.</p>
+            <p class="section-subtitle">Review employee attendance corrections, undertime requests, sick leave, and paid leave requests.</p>
         </div>
         <div class="status status-yellow">Admin Review</div>
     </div>
@@ -63,7 +63,7 @@
                             <div class="small muted">@{{ item.username }}</div>
                         </td>
                         <td>{{ item.request_type }}</td>
-                        <td>{{ item.work_date }}</td>
+                        <td>{{ item.display_date_range }}{% if item.requested_days > 1 %}<div class="small muted">{{ item.requested_days }} days</div>{% endif %}</td>
                         <td style="min-width:220px;">
                             <div class="small">In: {{ item.current_time_in and format_time_12h(item.current_time_in) or '-' }}</div>
                             <div class="small">Break: {{ item.current_break_start and format_time_12h(item.current_break_start) or '-' }} to {{ item.current_break_end and format_time_12h(item.current_break_end) or '-' }}</div>
@@ -112,7 +112,7 @@
             </table>
         </div>
     {% else %}
-        <p class="muted">No attendance or leave requests found.</p>
+        <p class="muted">No attendance, sick leave, or paid leave requests found.</p>
     {% endif %}
 </div>
 {% endblock %}

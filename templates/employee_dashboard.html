@@ -247,6 +247,12 @@
                         <span class="employee-status-badge employee-status-yellow">Live Status: On Break</span>
                     {% elif current_status == "Timed Out" %}
                         <span class="employee-status-badge employee-status-blue">Live Status: Timed Out</span>
+                    {% elif current_status == "Suspended" %}
+                        <span class="employee-status-badge employee-status-red">Live Status: Suspended</span>
+                    {% elif current_status == "Sick Leave" %}
+                        <span class="employee-status-badge employee-status-yellow">Live Status: Sick Leave</span>
+                    {% elif current_status == "Paid Leave" %}
+                        <span class="employee-status-badge employee-status-green">Live Status: Paid Leave</span>
                     {% else %}
                         <span class="employee-status-badge employee-status-gray">Live Status: Offline</span>
                     {% endif %}
@@ -274,6 +280,16 @@
                     <div class="employee-glance-value">{{ minutes_to_hm(todays_work_minutes) }}</div>
                     <div class="employee-glance-note">Break limit: {{ minutes_to_hm(break_limit_minutes) }}</div>
                 </div>
+                <div class="employee-glance-card">
+                    <div class="employee-glance-label">Sick Leave</div>
+                    <div class="employee-glance-value">{{ leave_summary.sick_remaining }}/{{ leave_summary.sick_total }}</div>
+                    <div class="employee-glance-note">{{ leave_summary.sick_used }} used this {{ leave_summary.year }}</div>
+                </div>
+                <div class="employee-glance-card">
+                    <div class="employee-glance-label">Paid Leave</div>
+                    <div class="employee-glance-value">{{ leave_summary.paid_remaining }}/{{ leave_summary.paid_total }}</div>
+                    <div class="employee-glance-note">{{ leave_summary.paid_used }} used this {{ leave_summary.year }}</div>
+                </div>
             </div>
 
             <div class="employee-alerts">
@@ -285,6 +301,11 @@
                 {% endif %}
                 {% if not today_attendance %}
                     <span class="employee-status-badge employee-status-gray">No attendance record yet today</span>
+                {% endif %}
+                {% if override_status %}
+                    <span class="employee-status-badge {% if override_status.type == 'Suspension' %}employee-status-red{% elif override_status.type == 'Sick Leave' %}employee-status-yellow{% else %}employee-status-green{% endif %}">
+                        {{ override_status.label }}{% if override_status.type == 'Suspension' %} until {{ override_status.end_date }}{% endif %}
+                    </span>
                 {% endif %}
             </div>
         </section>

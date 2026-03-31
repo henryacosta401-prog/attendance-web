@@ -5,7 +5,7 @@
 <div class="hero">
     <div>
         <h1>Attendance History</h1>
-        <p class="muted" style="margin-top:8px;">Review employee logs, approved undertime or leave records, late records, and proof uploads.</p>
+        <p class="muted" style="margin-top:8px;">Review employee logs, approved undertime, sick leave, paid leave, late records, and proof uploads.</p>
     </div>
 </div>
 
@@ -39,7 +39,9 @@
                     <option value="">All</option>
                     <option value="Attendance" {% if type_filter == 'Attendance' %}selected{% endif %}>Attendance</option>
                     <option value="Undertime" {% if type_filter == 'Undertime' %}selected{% endif %}>Undertime</option>
-                    <option value="Leave Request" {% if type_filter == 'Leave Request' %}selected{% endif %}>Leave Request</option>
+                    <option value="Sick Leave" {% if type_filter == 'Sick Leave' %}selected{% endif %}>Sick Leave</option>
+                    <option value="Paid Leave" {% if type_filter == 'Paid Leave' %}selected{% endif %}>Paid Leave</option>
+                    <option value="Suspension" {% if type_filter == 'Suspension' %}selected{% endif %}>Suspension</option>
                     <option value="Absent" {% if type_filter == 'Absent' %}selected{% endif %}>Absent</option>
                 </select>
             </div>

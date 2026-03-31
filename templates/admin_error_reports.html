@@ -6,7 +6,7 @@
     <div class="hero">
         <div>
             <h1>Employee Error Reports</h1>
-            <p class="section-subtitle">Review submitted incident records with quick employee, type, and date filters.</p>
+            <p class="section-subtitle">Review submitted incident records with quick employee, department, type, and date filters.</p>
         </div>
         <div class="status status-red">Report Review</div>
     </div>
@@ -86,18 +86,18 @@
                         <th>Error Type</th>
                         <th>Report Date</th>
                         <th>Message</th>
-                        <th>Status</th>
+                        <th>Review Status</th>
                         <th>Admin Note</th>
                         <th>Created At</th>
                         <th>Reviewed</th>
-                        <th>Action</th>
+                        <th>Manage</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for report in reports %}
                     <tr>
                         <td>{{ report.full_name if report.full_name else report.employee_name if report.employee_name else 'Unknown' }}</td>
-                        <td>{{ report.department if report.department else '—' }}</td>
+                        <td>{{ report.report_department if report.report_department else report.department if report.department else '-' }}</td>
                         <td>{{ report.error_type }}</td>
                         <td>{{ report.report_date if report.report_date else report.incident_date }}</td>
                         <td>{{ report.message }}</td>
@@ -111,17 +111,25 @@
                                 <span class="status status-red">{{ report_status }}</span>
                             {% endif %}
                         </td>
-                        <td style="min-width:240px;">{{ report.admin_note if report.admin_note else '—' }}</td>
+                        <td style="min-width:240px;">{{ report.admin_note if report.admin_note else '-' }}</td>
                         <td>{{ format_datetime_12h(report.created_at) }}</td>
                         <td>
                             {% if report.reviewed_at %}
                                 {{ format_datetime_12h(report.reviewed_at) }}
                                 <div class="small muted">{{ report.reviewed_by_name if report.reviewed_by_name else 'Admin' }}</div>
                             {% else %}
-                                —
+                                -
                             {% endif %}
                         </td>
-                        <td style="min-width:270px;">
+                        <td style="min-width:320px;">
+                            <form method="POST" action="{{ url_for('edit_incident_report', report_id=report.id) }}" class="grid" style="gap:8px; margin-bottom:10px;">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                <input name="error_type" class="input" type="text" value="{{ report.error_type }}" required>
+                                <input name="report_date" class="input" type="date" value="{{ report.report_date if report.report_date else report.incident_date }}">
+                                <input name="report_department" class="input" type="text" value="{{ report.report_department if report.report_department else report.department if report.department else '' }}" placeholder="Department">
+                                <textarea name="message" class="textarea" rows="3" placeholder="Update message...">{{ report.message if report.message else '' }}</textarea>
+                                <button class="btn btn-gray" type="submit">Save Details</button>
+                            </form>
                             <form method="POST" action="{{ url_for('update_incident_report', report_id=report.id) }}" class="grid" style="gap:8px;">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                 <select name="status" class="input" required>
@@ -131,6 +139,10 @@
                                 </select>
                                 <textarea name="admin_note" class="textarea" rows="3" placeholder="Add note for this report...">{{ report.admin_note if report.admin_note else '' }}</textarea>
                                 <button class="btn btn-primary" type="submit">Update</button>
+                            </form>
+                            <form method="POST" action="{{ url_for('delete_incident_report', report_id=report.id) }}" onsubmit="return confirm('Delete this incident report?')" style="margin-top:8px;">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                <button class="btn btn-danger" type="submit">Delete</button>
                             </form>
                         </td>
                     </tr>
