@@ -5064,6 +5064,33 @@ def delete_incident_report(report_id):
     return redirect(url_for("admin_error_reports"))
 
 
+def normalize_employee_id_dates(id_issue_date_raw, id_expiration_date_raw):
+    id_issue_date = (id_issue_date_raw or "").strip()
+    id_expiration_date = (id_expiration_date_raw or "").strip()
+
+    issue_date_obj = None
+    expiration_date_obj = None
+
+    if id_issue_date:
+        try:
+            issue_date_obj = datetime.strptime(id_issue_date, "%Y-%m-%d").date()
+            id_issue_date = issue_date_obj.strftime("%Y-%m-%d")
+        except ValueError:
+            return None, None, "ID Issue Date must be a valid date."
+
+    if id_expiration_date:
+        try:
+            expiration_date_obj = datetime.strptime(id_expiration_date, "%Y-%m-%d").date()
+            id_expiration_date = expiration_date_obj.strftime("%Y-%m-%d")
+        except ValueError:
+            return None, None, "ID Expiration Date must be a valid date."
+
+    if issue_date_obj and expiration_date_obj and expiration_date_obj < issue_date_obj:
+        return None, None, "ID Expiration Date cannot be earlier than ID Issue Date."
+
+    return id_issue_date, id_expiration_date, None
+
+
 @app.route("/admin/employees", methods=["GET", "POST"])
 @login_required(role="admin")
 def manage_employees():
@@ -5075,8 +5102,10 @@ def manage_employees():
         position = request.form.get("position", "").strip() or "Employee"
         emergency_contact_name = request.form.get("emergency_contact_name", "").strip()
         emergency_contact_phone = request.form.get("emergency_contact_phone", "").strip()
-        id_issue_date = request.form.get("id_issue_date", "").strip()
-        id_expiration_date = request.form.get("id_expiration_date", "").strip()
+        id_issue_date, id_expiration_date, id_date_error = normalize_employee_id_dates(
+            request.form.get("id_issue_date", ""),
+            request.form.get("id_expiration_date", "")
+        )
         barcode_id = request.form.get("barcode_id", "").strip()
         hourly_rate = parse_money_value(request.form.get("hourly_rate", "0"))
         sick_leave_days = parse_non_negative_int(request.form.get("sick_leave_days", DEFAULT_SICK_LEAVE_DAYS), DEFAULT_SICK_LEAVE_DAYS)
@@ -5095,6 +5124,10 @@ def manage_employees():
         existing = fetchone("SELECT id FROM users WHERE username = ?", (username,))
         if existing:
             flash("Username already exists.", "warning")
+            return redirect(url_for("manage_employees"))
+
+        if id_date_error:
+            flash(id_date_error, "danger")
             return redirect(url_for("manage_employees"))
 
         if barcode_id:
@@ -5222,8 +5255,10 @@ def edit_employee(user_id):
         position = request.form.get("position", "").strip() or "Employee"
         emergency_contact_name = request.form.get("emergency_contact_name", "").strip()
         emergency_contact_phone = request.form.get("emergency_contact_phone", "").strip()
-        id_issue_date = request.form.get("id_issue_date", "").strip()
-        id_expiration_date = request.form.get("id_expiration_date", "").strip()
+        id_issue_date, id_expiration_date, id_date_error = normalize_employee_id_dates(
+            request.form.get("id_issue_date", ""),
+            request.form.get("id_expiration_date", "")
+        )
         barcode_id = request.form.get("barcode_id", "").strip()
         hourly_rate = parse_money_value(request.form.get("hourly_rate", user["hourly_rate"] or 0))
         sick_leave_days = parse_non_negative_int(request.form.get("sick_leave_days", user["sick_leave_days"] if user["sick_leave_days"] is not None else DEFAULT_SICK_LEAVE_DAYS), DEFAULT_SICK_LEAVE_DAYS)
@@ -5248,6 +5283,10 @@ def edit_employee(user_id):
 
         if existing:
             flash("Username already used by another employee.", "warning")
+            return redirect(url_for("edit_employee", user_id=user_id))
+
+        if id_date_error:
+            flash(id_date_error, "danger")
             return redirect(url_for("edit_employee", user_id=user_id))
 
         if barcode_id:

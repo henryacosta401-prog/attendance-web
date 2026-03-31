@@ -240,6 +240,7 @@
     line-height: 1.28;
     text-align: center;
     color: rgba(255,255,255,0.92);
+    overflow-wrap: anywhere;
 }
 .id-side {
     display: flex;
@@ -252,6 +253,7 @@
 .id-contact {
     text-align: left;
     min-width: 0;
+    max-width: 100%;
 }
 .id-contact-label,
 .id-dates-label {
@@ -265,7 +267,9 @@
     font-size: 2.02mm;
     font-weight: 800;
     overflow-wrap: anywhere;
+    word-break: break-word;
     line-height: 1.15;
+    max-width: 100%;
 }
 .id-contact-phone,
 .employment-note,
@@ -273,11 +277,14 @@
     font-size: 1.72mm;
     color: rgba(255,255,255,0.82);
     overflow-wrap: anywhere;
+    word-break: break-word;
     line-height: 1.28;
+    max-width: 100%;
 }
 .id-dates {
     text-align: left;
     min-width: 0;
+    max-width: 100%;
 }
 .id-date-row + .id-date-row {
     margin-top: 0.45mm;
@@ -298,6 +305,7 @@
     margin-top: auto;
     text-align: left;
     min-width: 0;
+    max-width: 100%;
 }
 .id-sign-image {
     max-width: 24mm;
@@ -318,12 +326,22 @@
     text-transform: uppercase;
     line-height: 1.12;
     overflow-wrap: anywhere;
+    word-break: break-word;
+    max-width: 100%;
 }
 .id-sign-title {
     font-size: 1.58mm;
     color: rgba(255,255,255,0.82);
     line-height: 1.18;
     overflow-wrap: anywhere;
+    word-break: break-word;
+    max-width: 100%;
+}
+.id-settings-note {
+    margin: 8px 0 14px;
+    font-size: 12px;
+    line-height: 1.45;
+    color: rgba(226, 232, 240, 0.82);
 }
 @media print {
     @page {
@@ -391,7 +409,8 @@
     </div>
 
     <div class="card id-settings">
-        <div class="section-title">ID Signatory</div>
+        <div class="section-title">Global ID Signatory Settings</div>
+        <div class="id-settings-note">These signatory details apply to every employee ID card, not just this employee.</div>
         <form method="POST" action="{{ url_for('update_employee_id_signatory') }}" enctype="multipart/form-data">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <input type="hidden" name="employee_id" value="{{ employee.id }}">
