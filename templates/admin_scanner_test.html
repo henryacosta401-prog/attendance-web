@@ -79,6 +79,12 @@
 
             <form method="POST" id="scanner-form" style="margin-top:18px;">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <label>Camera</label>
+                <select class="input" id="camera-mode" style="margin-top:8px;">
+                    <option value="environment" selected>Back Camera</option>
+                    <option value="user">Front Camera</option>
+                </select>
+
                 <div class="scanner-actions">
                     <label class="scanner-action">
                         <input type="radio" name="action_type" value="time_in" checked>
@@ -131,6 +137,9 @@
                             <div>Employee: {{ scan_result.employee.full_name }}{% if scan_result.employee.barcode_id %} | {{ scan_result.employee.barcode_id }}{% endif %}</div>
                             <div>Status Now: {{ scan_result.status_display }}</div>
                             <div>Break Today: {{ scan_result.break_minutes_today }} / {{ scan_result.break_limit_minutes }} minutes</div>
+                            <div>Work Date: {{ scan_result.attendance and scan_result.attendance.work_date or '-' }}</div>
+                            <div>Time In Recorded: {{ scan_result.attendance and scan_result.attendance.time_in and format_datetime_12h(scan_result.attendance.time_in) or '-' }}</div>
+                            <div>Time Out Recorded: {{ scan_result.attendance and scan_result.attendance.time_out and format_datetime_12h(scan_result.attendance.time_out) or '-' }}</div>
                         {% endif %}
                     </div>
                 </div>
@@ -152,6 +161,7 @@
     const stopBtn = document.getElementById('stop-camera');
     const clearBtn = document.getElementById('clear-barcode');
     const form = document.getElementById('scanner-form');
+    const cameraMode = document.getElementById('camera-mode');
     let stream = null;
     let rafId = null;
     let detector = null;
@@ -211,13 +221,13 @@
         try {
             detector = new BarcodeDetector({ formats: ['code_128', 'code_39', 'ean_13', 'ean_8', 'qr_code'] });
             stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: { ideal: 'environment' } },
+                video: { facingMode: { ideal: cameraMode ? cameraMode.value : 'environment' } },
                 audio: false
             });
             video.srcObject = stream;
             await video.play();
             scanCooldown = false;
-            setStatus('Camera running. Point it at the barcode.');
+            setStatus(`Camera running (${cameraMode && cameraMode.value === 'user' ? 'front' : 'back'}). Point it at the barcode.`);
             detectLoop();
         } catch (error) {
             setStatus('Unable to start the camera. Please allow camera access or use manual barcode entry.');
@@ -231,6 +241,14 @@
             barcodeInput.value = '';
             scanCooldown = false;
             setStatus('Barcode cleared. Ready for another scan.');
+        });
+    }
+    if (cameraMode) {
+        cameraMode.addEventListener('change', async () => {
+            if (stream) {
+                await stopCamera();
+                startCamera();
+            }
         });
     }
     window.addEventListener('beforeunload', stopCamera);
