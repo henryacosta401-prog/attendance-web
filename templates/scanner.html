@@ -1,0 +1,542 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>Scanner Kiosk | Stellar Seats</title>
+    <style>
+        :root {
+            --bg-1: #0b1d3a;
+            --bg-2: #143d7a;
+            --panel: rgba(255, 255, 255, 0.14);
+            --panel-border: rgba(255, 255, 255, 0.18);
+            --text: #f8fbff;
+            --muted: rgba(241, 245, 249, 0.78);
+            --success: #16a34a;
+            --danger: #dc2626;
+            --shadow: 0 20px 45px rgba(5, 12, 29, 0.32);
+        }
+
+        html, body {
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+            font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+            background:
+                radial-gradient(circle at top, rgba(96, 165, 250, 0.28), transparent 28%),
+                linear-gradient(180deg, var(--bg-2) 0%, var(--bg-1) 56%, #081224 100%);
+            color: var(--text);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        .scanner-app {
+            height: 100vh;
+            display: grid;
+            grid-template-rows: auto auto 1fr auto;
+            gap: 12px;
+            padding: 14px 14px calc(14px + env(safe-area-inset-bottom, 0px));
+        }
+
+        .header-card,
+        .employee-card,
+        .actions-card,
+        .status-card {
+            background: var(--panel);
+            border: 1px solid var(--panel-border);
+            border-radius: 26px;
+            box-shadow: var(--shadow);
+            backdrop-filter: blur(18px);
+        }
+
+        .header-card {
+            padding: 12px 16px;
+            display: grid;
+            gap: 4px;
+            text-align: center;
+        }
+
+        .header-title {
+            font-size: 26px;
+            font-weight: 900;
+            letter-spacing: -0.04em;
+            line-height: 1;
+        }
+
+        .header-meta {
+            font-size: 14px;
+            color: var(--muted);
+            line-height: 1.3;
+        }
+
+        .employee-card {
+            padding: 16px 14px;
+            display: grid;
+            justify-items: center;
+            align-items: center;
+            gap: 10px;
+            min-height: 0;
+        }
+
+        .employee-photo {
+            width: 152px;
+            height: 152px;
+            border-radius: 50%;
+            overflow: hidden;
+            border: 5px solid rgba(255, 255, 255, 0.22);
+            box-shadow: 0 16px 36px rgba(2, 6, 23, 0.28);
+            background: linear-gradient(180deg, rgba(255,255,255,0.9), rgba(226, 232, 240, 0.88));
+            display: grid;
+            place-items: center;
+        }
+
+        .employee-photo img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            object-position: center;
+            display: block;
+        }
+
+        .employee-fallback {
+            width: 100%;
+            height: 100%;
+            display: grid;
+            place-items: center;
+            font-size: 54px;
+            font-weight: 900;
+            color: #0f172a;
+            background: linear-gradient(135deg, #dbeafe, #bfdbfe);
+        }
+
+        .employee-name {
+            font-size: 28px;
+            font-weight: 900;
+            text-align: center;
+            line-height: 1.02;
+            letter-spacing: -0.04em;
+            min-height: 58px;
+            display: grid;
+            align-items: center;
+            padding: 0 8px;
+        }
+
+        .employee-status {
+            font-size: 16px;
+            line-height: 1.35;
+            color: var(--muted);
+            text-align: center;
+            min-height: 42px;
+            display: grid;
+            align-items: center;
+            padding: 0 8px;
+        }
+
+        .actions-card {
+            min-height: 0;
+            padding: 12px;
+            display: grid;
+            grid-template-rows: auto 1fr;
+            gap: 10px;
+            overflow: hidden;
+        }
+
+        .actions-title {
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: rgba(241, 245, 249, 0.74);
+            text-align: center;
+        }
+
+        .actions-list {
+            display: grid;
+            grid-template-rows: repeat(6, minmax(0, 1fr));
+            gap: 8px;
+            min-height: 0;
+        }
+
+        .action-btn {
+            width: 100%;
+            min-height: 0;
+            border: none;
+            border-radius: 18px;
+            color: white;
+            font-size: 20px;
+            font-weight: 900;
+            letter-spacing: -0.02em;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            box-shadow: 0 12px 24px rgba(2, 6, 23, 0.22);
+            transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+            padding: 0 12px;
+        }
+
+        .action-btn:active {
+            transform: scale(0.985);
+        }
+
+        .action-btn.is-active {
+            box-shadow: 0 0 0 3px rgba(255,255,255,0.22), 0 12px 24px rgba(2, 6, 23, 0.22);
+        }
+
+        .action-btn.is-disabled {
+            opacity: 0.48;
+            box-shadow: none;
+        }
+
+        .action-time-in { background: linear-gradient(135deg, #16a34a, #22c55e); }
+        .action-break-start { background: linear-gradient(135deg, #ea580c, #fb923c); }
+        .action-break-end { background: linear-gradient(135deg, #0284c7, #38bdf8); }
+        .action-time-out { background: linear-gradient(135deg, #7c3aed, #a855f7); }
+        .action-overtime-start { background: linear-gradient(135deg, #0f766e, #14b8a6); }
+        .action-overtime-end { background: linear-gradient(135deg, #be123c, #f43f5e); }
+
+        .status-card {
+            padding: 12px 14px;
+            display: grid;
+            gap: 8px;
+        }
+
+        .status-banner {
+            min-height: 54px;
+            border-radius: 18px;
+            background: rgba(15, 23, 42, 0.4);
+            border: 1px solid rgba(255,255,255,0.12);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 10px 12px;
+            font-size: 16px;
+            font-weight: 800;
+            line-height: 1.3;
+        }
+
+        .status-banner.is-success {
+            background: rgba(22, 163, 74, 0.24);
+            border-color: rgba(134, 239, 172, 0.42);
+        }
+
+        .status-banner.is-error {
+            background: rgba(220, 38, 38, 0.22);
+            border-color: rgba(252, 165, 165, 0.4);
+        }
+
+        .status-meta {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+        }
+
+        .meta-item {
+            border-radius: 16px;
+            padding: 10px 12px;
+            background: rgba(15, 23, 42, 0.34);
+            border: 1px solid rgba(255,255,255,0.1);
+            min-height: 62px;
+        }
+
+        .meta-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: rgba(226, 232, 240, 0.72);
+            margin-bottom: 5px;
+        }
+
+        .meta-value {
+            font-size: 15px;
+            font-weight: 800;
+            line-height: 1.25;
+            overflow-wrap: anywhere;
+        }
+
+        .scanner-input {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            opacity: 0.01;
+            pointer-events: none;
+            left: -9999px;
+            top: auto;
+        }
+
+        .scanner-focus {
+            font-size: 12px;
+            text-align: center;
+            color: rgba(226, 232, 240, 0.64);
+        }
+
+        @media (max-width: 800px) {
+            .scanner-app {
+                padding: 10px 10px calc(10px + env(safe-area-inset-bottom, 0px));
+                gap: 10px;
+            }
+
+            .employee-photo {
+                width: 132px;
+                height: 132px;
+            }
+
+            .employee-name {
+                font-size: 24px;
+                min-height: 50px;
+            }
+
+            .employee-status {
+                font-size: 15px;
+                min-height: 38px;
+            }
+
+            .action-btn {
+                font-size: 18px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="scanner-app">
+        <header class="header-card">
+            <div class="header-title">Welcome to Stellar Seats</div>
+            <div class="header-meta" id="liveDateTime">Loading date and time...</div>
+        </header>
+
+        <section class="employee-card">
+            <div class="employee-photo">
+                <div class="employee-fallback" id="employeeFallback">SS</div>
+                <img id="employeePhoto" alt="Employee photo" hidden>
+            </div>
+            <div class="employee-name" id="employeeName">Ready for Attendance</div>
+            <div class="employee-status" id="employeeStatus">Scan your ID to begin.</div>
+        </section>
+
+        <section class="actions-card">
+            <div class="actions-title">Select Action Before Scanning</div>
+            <div class="actions-list" id="actionsList">
+                <button class="action-btn action-time-in is-active" type="button" data-action="time_in">Time In</button>
+                <button class="action-btn action-break-start" type="button" data-action="start_break">Break Start</button>
+                <button class="action-btn action-break-end" type="button" data-action="end_break">Break End</button>
+                <button class="action-btn action-time-out" type="button" data-action="time_out">Time Out</button>
+                <button class="action-btn action-overtime-start is-disabled" type="button" data-action="overtime_start" data-disabled="1">Overtime Start</button>
+                <button class="action-btn action-overtime-end is-disabled" type="button" data-action="overtime_end" data-disabled="1">Overtime End</button>
+            </div>
+        </section>
+
+        <section class="status-card">
+            <div class="status-banner" id="statusBanner">Waiting for barcode scan...</div>
+            <div class="status-meta">
+                <div class="meta-item">
+                    <div class="meta-label">Current Action</div>
+                    <div class="meta-value" id="metaAction">Time In</div>
+                </div>
+                <div class="meta-item">
+                    <div class="meta-label">Status</div>
+                    <div class="meta-value" id="metaStatus">Idle</div>
+                </div>
+                <div class="meta-item">
+                    <div class="meta-label">Barcode</div>
+                    <div class="meta-value" id="metaBarcode">-</div>
+                </div>
+                <div class="meta-item">
+                    <div class="meta-label">Employee</div>
+                    <div class="meta-value" id="metaEmployee">-</div>
+                </div>
+            </div>
+            <div class="scanner-focus">Scanner input stays active automatically. Tap anywhere if the scanner stops typing.</div>
+        </section>
+    </div>
+
+    <form id="scanForm" hidden>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    </form>
+    <input id="scannerInput" class="scanner-input" inputmode="none" autocomplete="off" autocapitalize="off" spellcheck="false">
+
+    <script>
+    document.addEventListener("DOMContentLoaded", () => {
+        const state = {
+            action: "time_in",
+            resetTimer: null,
+            soundCtx: null
+        };
+
+        const actionButtons = Array.from(document.querySelectorAll("[data-action]"));
+        const scannerInput = document.getElementById("scannerInput");
+        const statusBanner = document.getElementById("statusBanner");
+        const employeeName = document.getElementById("employeeName");
+        const employeeStatus = document.getElementById("employeeStatus");
+        const employeePhoto = document.getElementById("employeePhoto");
+        const employeeFallback = document.getElementById("employeeFallback");
+        const metaAction = document.getElementById("metaAction");
+        const metaStatus = document.getElementById("metaStatus");
+        const metaBarcode = document.getElementById("metaBarcode");
+        const metaEmployee = document.getElementById("metaEmployee");
+        const liveDateTime = document.getElementById("liveDateTime");
+        const scanForm = document.getElementById("scanForm");
+
+        function keepScannerFocused() {
+            window.requestAnimationFrame(() => scannerInput.focus());
+        }
+
+        function updateClock() {
+            const now = new Date();
+            liveDateTime.textContent = now.toLocaleString([], {
+                weekday: "short",
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+                hour: "numeric",
+                minute: "2-digit",
+                second: "2-digit"
+            });
+        }
+
+        function playTone(kind) {
+            try {
+                state.soundCtx = state.soundCtx || new (window.AudioContext || window.webkitAudioContext)();
+                const ctx = state.soundCtx;
+                const oscillator = ctx.createOscillator();
+                const gain = ctx.createGain();
+                oscillator.type = "sine";
+                oscillator.frequency.value = kind === "success" ? 880 : 240;
+                gain.gain.value = 0.0001;
+                oscillator.connect(gain);
+                gain.connect(ctx.destination);
+                oscillator.start();
+                gain.gain.exponentialRampToValueAtTime(0.12, ctx.currentTime + 0.01);
+                gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.22);
+                oscillator.stop(ctx.currentTime + 0.24);
+            } catch (error) {
+                console.error(error);
+            }
+        }
+
+        function setSelectedAction(action) {
+            state.action = action;
+            actionButtons.forEach((button) => {
+                button.classList.toggle("is-active", button.dataset.action === action);
+            });
+            const activeButton = actionButtons.find((button) => button.dataset.action === action);
+            metaAction.textContent = activeButton ? activeButton.textContent.trim() : action;
+        }
+
+        function resetEmployeeDisplay() {
+            employeeName.textContent = "Ready for Attendance";
+            employeeStatus.textContent = "Scan your ID to begin.";
+            employeePhoto.hidden = true;
+            employeePhoto.removeAttribute("src");
+            employeeFallback.hidden = false;
+            employeeFallback.textContent = "SS";
+            metaStatus.textContent = "Idle";
+            metaBarcode.textContent = "-";
+            metaEmployee.textContent = "-";
+            statusBanner.className = "status-banner";
+            statusBanner.textContent = "Waiting for barcode scan...";
+        }
+
+        function showEmployee(payload, ok) {
+            employeeName.textContent = payload.employee_name || "Employee Not Found";
+            employeeStatus.textContent = payload.message || (ok ? "Attendance recorded." : "Unable to record attendance.");
+            metaStatus.textContent = payload.status || (ok ? "Updated" : "Error");
+            metaBarcode.textContent = payload.barcode_value || "-";
+            metaEmployee.textContent = payload.employee_name || "-";
+
+            if (payload.profile_image_url) {
+                employeePhoto.src = payload.profile_image_url;
+                employeePhoto.hidden = false;
+                employeeFallback.hidden = true;
+            } else {
+                employeePhoto.hidden = true;
+                employeePhoto.removeAttribute("src");
+                employeeFallback.hidden = false;
+                employeeFallback.textContent = payload.avatar_initials || "SS";
+            }
+
+            statusBanner.className = `status-banner ${ok ? "is-success" : "is-error"}`;
+            statusBanner.textContent = payload.message || (ok ? "Attendance recorded." : "Unable to record attendance.");
+            playTone(ok ? "success" : "error");
+
+            clearTimeout(state.resetTimer);
+            state.resetTimer = setTimeout(() => {
+                resetEmployeeDisplay();
+                scannerInput.value = "";
+                keepScannerFocused();
+            }, 2600);
+        }
+
+        async function submitScan(barcodeValue) {
+            const formData = new FormData(scanForm);
+            formData.append("action_type", state.action);
+            formData.append("barcode_value", barcodeValue);
+
+            statusBanner.className = "status-banner";
+            statusBanner.textContent = "Processing scan...";
+
+            try {
+                const response = await fetch("{{ url_for('scanner_kiosk_scan') }}", {
+                    method: "POST",
+                    body: formData,
+                    credentials: "same-origin"
+                });
+                const payload = await response.json();
+                showEmployee(payload, !!payload.ok);
+            } catch (error) {
+                console.error(error);
+                showEmployee({
+                    employee_name: "Connection Error",
+                    message: "The kiosk could not reach the server. Please try again.",
+                    barcode_value: barcodeValue,
+                    avatar_initials: "ER",
+                    status: "Offline"
+                }, false);
+            }
+        }
+
+        actionButtons.forEach((button) => {
+            button.addEventListener("click", () => {
+                if (button.dataset.disabled === "1") {
+                    statusBanner.className = "status-banner is-error";
+                    statusBanner.textContent = `${button.textContent.trim()} is not enabled yet.`;
+                    keepScannerFocused();
+                    return;
+                }
+                setSelectedAction(button.dataset.action);
+                keepScannerFocused();
+            });
+        });
+
+        scannerInput.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                const value = scannerInput.value.trim();
+                scannerInput.value = "";
+                if (value) {
+                    submitScan(value);
+                } else {
+                    keepScannerFocused();
+                }
+            }
+        });
+
+        document.addEventListener("click", keepScannerFocused);
+        document.addEventListener("touchstart", keepScannerFocused, { passive: true });
+        window.addEventListener("focus", keepScannerFocused);
+        document.addEventListener("visibilitychange", () => {
+            if (!document.hidden) {
+                keepScannerFocused();
+            }
+        });
+
+        updateClock();
+        setInterval(updateClock, 1000);
+        setSelectedAction("time_in");
+        resetEmployeeDisplay();
+        keepScannerFocused();
+    });
+    </script>
+</body>
+</html>

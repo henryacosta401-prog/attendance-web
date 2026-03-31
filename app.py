@@ -1879,6 +1879,8 @@ def can_access_uploaded_file(user_row, filename):
         return False
     if user_row["role"] == "admin":
         return True
+    if user_row["role"] == "scanner":
+        return filename.startswith("profile_") and is_image(filename)
     if user_row["profile_image"] == filename:
         return True
 
@@ -5499,7 +5501,7 @@ def print_employee_id(user_id):
 @app.route("/scanner")
 @login_required(role="scanner")
 def scanner_kiosk():
-    return render_template("admin_scanner_kiosk.html")
+    return render_template("scanner.html")
 
 
 @app.route("/scanner/scan", methods=["POST"])
@@ -5508,11 +5510,19 @@ def scanner_kiosk_scan():
     action_type = (request.form.get("action_type", "") or "").strip()
     barcode_value = (request.form.get("barcode_value", "") or "").strip()
 
-    if action_type not in {"time_in", "start_break", "end_break", "time_out"}:
+    if action_type not in {"time_in", "start_break", "end_break", "time_out", "overtime_start", "overtime_end"}:
         return jsonify({"ok": False, "message": "Please choose a valid attendance action."}), 400
 
     if not barcode_value:
         return jsonify({"ok": False, "message": "Scan or enter a barcode first."}), 400
+
+    if action_type in {"overtime_start", "overtime_end"}:
+        return jsonify({
+            "ok": False,
+            "message": "Overtime scanning is not enabled yet in the backend.",
+            "barcode_value": barcode_value,
+            "action_type": action_type
+        }), 400
 
     employee = get_user_by_barcode(barcode_value)
     if not employee:
@@ -5534,6 +5544,8 @@ def scanner_kiosk_scan():
         "employee_name": employee_for_payload["full_name"],
         "department": employee_for_payload["department"] or "",
         "position": employee_for_payload["position"] or "",
+        "avatar_initials": get_avatar_initials(employee_for_payload["full_name"]),
+        "profile_image_url": url_for("uploaded_file", filename=employee_for_payload["profile_image"]) if employee_for_payload["profile_image"] and uploaded_file_exists(employee_for_payload["profile_image"]) else None,
         "barcode_value": barcode_value,
         "status": attendance["status"] if attendance else "Offline",
         "time_in": attendance["time_in"] if attendance else None,
