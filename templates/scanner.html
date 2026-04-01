@@ -84,6 +84,26 @@
             align-items: center;
             gap: 6px;
             min-height: 0;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .employee-card::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(circle at 50% 14%, rgba(96, 165, 250, 0.2), transparent 42%);
+            opacity: 0.9;
+            pointer-events: none;
+            transition: opacity 0.25s ease;
+        }
+
+        .employee-card.is-success::after {
+            background: radial-gradient(circle at 50% 18%, rgba(34, 197, 94, 0.24), transparent 46%);
+        }
+
+        .employee-card.is-error::after {
+            background: radial-gradient(circle at 50% 18%, rgba(248, 113, 113, 0.22), transparent 46%);
         }
 
         .employee-photo {
@@ -96,6 +116,9 @@
             background: linear-gradient(180deg, rgba(255,255,255,0.9), rgba(226, 232, 240, 0.88));
             display: grid;
             place-items: center;
+            position: relative;
+            z-index: 1;
+            transition: transform 0.24s ease, box-shadow 0.24s ease, border-color 0.24s ease;
         }
 
         .employee-photo img {
@@ -122,6 +145,18 @@
             background: linear-gradient(135deg, #e0f2fe, #bfdbfe);
         }
 
+        .employee-card.is-success .employee-photo {
+            transform: scale(1.04);
+            border-color: rgba(134, 239, 172, 0.7);
+            box-shadow: 0 14px 28px rgba(22, 163, 74, 0.24);
+        }
+
+        .employee-card.is-error .employee-photo {
+            transform: scale(1.03);
+            border-color: rgba(252, 165, 165, 0.66);
+            box-shadow: 0 14px 28px rgba(220, 38, 38, 0.22);
+        }
+
         .employee-name {
             font-size: 24px;
             font-weight: 900;
@@ -132,6 +167,9 @@
             display: grid;
             align-items: center;
             padding: 0 8px;
+            position: relative;
+            z-index: 1;
+            transition: transform 0.24s ease, opacity 0.24s ease;
         }
 
         .employee-status {
@@ -143,6 +181,49 @@
             display: grid;
             align-items: center;
             padding: 0 8px;
+            position: relative;
+            z-index: 1;
+            transition: transform 0.24s ease, opacity 0.24s ease;
+        }
+
+        .employee-card.is-success .employee-name,
+        .employee-card.is-success .employee-status,
+        .employee-card.is-error .employee-name,
+        .employee-card.is-error .employee-status {
+            transform: translateY(-1px);
+        }
+
+        .scan-result-chip {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 28px;
+            padding: 6px 12px;
+            border-radius: 999px;
+            background: rgba(15, 23, 42, 0.52);
+            border: 1px solid rgba(191, 219, 254, 0.12);
+            color: rgba(226, 232, 240, 0.72);
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            position: relative;
+            z-index: 1;
+            transition: background 0.24s ease, border-color 0.24s ease, color 0.24s ease, transform 0.24s ease;
+        }
+
+        .employee-card.is-success .scan-result-chip {
+            background: rgba(22, 163, 74, 0.2);
+            border-color: rgba(134, 239, 172, 0.36);
+            color: #dcfce7;
+            transform: translateY(-1px);
+        }
+
+        .employee-card.is-error .scan-result-chip {
+            background: rgba(220, 38, 38, 0.18);
+            border-color: rgba(252, 165, 165, 0.32);
+            color: #fee2e2;
+            transform: translateY(-1px);
         }
 
         .actions-card {
@@ -398,6 +479,7 @@
                 <div class="employee-fallback" id="employeeFallback">SS</div>
                 <img id="employeePhoto" alt="Employee photo" hidden>
             </div>
+            <div class="scan-result-chip" id="scanResultChip">Ready for Attendance</div>
             <div class="employee-name" id="employeeName">Ready for Attendance</div>
             <div class="employee-status" id="employeeStatus">Scan your ID to begin.</div>
         </section>
@@ -467,10 +549,12 @@
         const statusBanner = document.getElementById("statusBanner");
         const cameraVideo = document.getElementById("cameraVideo");
         const cameraOverlay = document.getElementById("cameraOverlay");
+        const employeeCard = document.querySelector(".employee-card");
         const employeeName = document.getElementById("employeeName");
         const employeeStatus = document.getElementById("employeeStatus");
         const employeePhoto = document.getElementById("employeePhoto");
         const employeeFallback = document.getElementById("employeeFallback");
+        const scanResultChip = document.getElementById("scanResultChip");
         const metaAction = document.getElementById("metaAction");
         const metaStatus = document.getElementById("metaStatus");
         const metaBarcode = document.getElementById("metaBarcode");
@@ -614,9 +698,23 @@
             metaAction.textContent = activeButton ? activeButton.textContent.trim() : action;
         }
 
+        function getActionDisplay(actionType) {
+            const labels = {
+                time_in: "Time In Recorded",
+                start_break: "Break Started",
+                end_break: "Break Ended",
+                time_out: "Time Out Recorded",
+                overtime_start: "Overtime Started",
+                overtime_end: "Overtime Ended"
+            };
+            return labels[actionType] || "Attendance Updated";
+        }
+
         function resetEmployeeDisplay() {
+            employeeCard.classList.remove("is-success", "is-error");
             employeeName.textContent = "Ready for Attendance";
             employeeStatus.textContent = "Scan your ID to begin.";
+            scanResultChip.textContent = "Ready for Attendance";
             employeePhoto.hidden = true;
             employeePhoto.removeAttribute("src");
             employeeFallback.hidden = false;
@@ -629,8 +727,11 @@
         }
 
         function showEmployee(payload, ok) {
+            employeeCard.classList.remove("is-success", "is-error");
+            employeeCard.classList.add(ok ? "is-success" : "is-error");
             employeeName.textContent = payload.employee_name || "Employee Not Found";
             employeeStatus.textContent = payload.message || (ok ? "Attendance recorded." : "Unable to record attendance.");
+            scanResultChip.textContent = ok ? getActionDisplay(payload.action_type) : "Scan Failed";
             metaStatus.textContent = payload.status || (ok ? "Updated" : "Error");
             metaBarcode.textContent = payload.barcode_value || "-";
             metaEmployee.textContent = payload.employee_name || "-";

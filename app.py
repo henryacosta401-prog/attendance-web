@@ -440,6 +440,25 @@ def init_sqlite_db():
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS scanner_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scanner_user_id INTEGER,
+            employee_user_id INTEGER,
+            action_type TEXT,
+            barcode_value TEXT,
+            result_status TEXT NOT NULL,
+            result_message TEXT,
+            source_label TEXT,
+            device_label TEXT,
+            ip_address TEXT,
+            user_agent TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (scanner_user_id) REFERENCES users (id),
+            FOREIGN KEY (employee_user_id) REFERENCES users (id)
+        )
+    """)
+
     # users migration
     existing_cols_users = [row[1] for row in cursor.execute("PRAGMA table_info(users)").fetchall()]
     if "department" not in existing_cols_users:
@@ -577,6 +596,50 @@ def init_sqlite_db():
             cursor.execute("ALTER TABLE correction_requests ADD COLUMN reviewed_by INTEGER")
         if "reviewed_at" not in existing_cols_corrections:
             cursor.execute("ALTER TABLE correction_requests ADD COLUMN reviewed_at TEXT")
+
+    existing_cols_scanner_logs = [row[1] for row in cursor.execute("PRAGMA table_info(scanner_logs)").fetchall()]
+    if not existing_cols_scanner_logs:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS scanner_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scanner_user_id INTEGER,
+                employee_user_id INTEGER,
+                action_type TEXT,
+                barcode_value TEXT,
+                result_status TEXT NOT NULL,
+                result_message TEXT,
+                source_label TEXT,
+                device_label TEXT,
+                ip_address TEXT,
+                user_agent TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (scanner_user_id) REFERENCES users (id),
+                FOREIGN KEY (employee_user_id) REFERENCES users (id)
+            )
+        """)
+        existing_cols_scanner_logs = [row[1] for row in cursor.execute("PRAGMA table_info(scanner_logs)").fetchall()]
+    if "scanner_user_id" not in existing_cols_scanner_logs:
+        cursor.execute("ALTER TABLE scanner_logs ADD COLUMN scanner_user_id INTEGER")
+    if "employee_user_id" not in existing_cols_scanner_logs:
+        cursor.execute("ALTER TABLE scanner_logs ADD COLUMN employee_user_id INTEGER")
+    if "action_type" not in existing_cols_scanner_logs:
+        cursor.execute("ALTER TABLE scanner_logs ADD COLUMN action_type TEXT")
+    if "barcode_value" not in existing_cols_scanner_logs:
+        cursor.execute("ALTER TABLE scanner_logs ADD COLUMN barcode_value TEXT")
+    if "result_status" not in existing_cols_scanner_logs:
+        cursor.execute("ALTER TABLE scanner_logs ADD COLUMN result_status TEXT NOT NULL DEFAULT 'error'")
+    if "result_message" not in existing_cols_scanner_logs:
+        cursor.execute("ALTER TABLE scanner_logs ADD COLUMN result_message TEXT")
+    if "source_label" not in existing_cols_scanner_logs:
+        cursor.execute("ALTER TABLE scanner_logs ADD COLUMN source_label TEXT")
+    if "device_label" not in existing_cols_scanner_logs:
+        cursor.execute("ALTER TABLE scanner_logs ADD COLUMN device_label TEXT")
+    if "ip_address" not in existing_cols_scanner_logs:
+        cursor.execute("ALTER TABLE scanner_logs ADD COLUMN ip_address TEXT")
+    if "user_agent" not in existing_cols_scanner_logs:
+        cursor.execute("ALTER TABLE scanner_logs ADD COLUMN user_agent TEXT")
+    if "created_at" not in existing_cols_scanner_logs:
+        cursor.execute("ALTER TABLE scanner_logs ADD COLUMN created_at TEXT")
 
     db.commit()
 
@@ -756,6 +819,34 @@ def init_postgres_db():
         """)
 
         cur.execute("""
+            CREATE TABLE IF NOT EXISTS scanner_logs (
+                id SERIAL PRIMARY KEY,
+                scanner_user_id INTEGER,
+                employee_user_id INTEGER,
+                action_type TEXT,
+                barcode_value TEXT,
+                result_status TEXT NOT NULL,
+                result_message TEXT,
+                source_label TEXT,
+                device_label TEXT,
+                ip_address TEXT,
+                user_agent TEXT,
+                created_at TEXT NOT NULL
+            )
+        """)
+        cur.execute("ALTER TABLE scanner_logs ADD COLUMN IF NOT EXISTS scanner_user_id INTEGER")
+        cur.execute("ALTER TABLE scanner_logs ADD COLUMN IF NOT EXISTS employee_user_id INTEGER")
+        cur.execute("ALTER TABLE scanner_logs ADD COLUMN IF NOT EXISTS action_type TEXT")
+        cur.execute("ALTER TABLE scanner_logs ADD COLUMN IF NOT EXISTS barcode_value TEXT")
+        cur.execute("ALTER TABLE scanner_logs ADD COLUMN IF NOT EXISTS result_status TEXT")
+        cur.execute("ALTER TABLE scanner_logs ADD COLUMN IF NOT EXISTS result_message TEXT")
+        cur.execute("ALTER TABLE scanner_logs ADD COLUMN IF NOT EXISTS source_label TEXT")
+        cur.execute("ALTER TABLE scanner_logs ADD COLUMN IF NOT EXISTS device_label TEXT")
+        cur.execute("ALTER TABLE scanner_logs ADD COLUMN IF NOT EXISTS ip_address TEXT")
+        cur.execute("ALTER TABLE scanner_logs ADD COLUMN IF NOT EXISTS user_agent TEXT")
+        cur.execute("ALTER TABLE scanner_logs ADD COLUMN IF NOT EXISTS created_at TEXT")
+
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS correction_requests (
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER NOT NULL,
@@ -920,6 +1011,30 @@ def log_activity(user_id, action, details=""):
         INSERT INTO activity_logs (user_id, action, details, created_at)
         VALUES (?, ?, ?, ?)
     """, (user_id, action, details, now_str()), commit=True)
+
+
+def log_scanner_activity(scanner_user_id, action_type, barcode_value, result_status, result_message,
+                         employee_user_id=None, source_label="Scanner kiosk", device_label="Tablet camera kiosk",
+                         ip_address=None, user_agent=None):
+    execute_db("""
+        INSERT INTO scanner_logs (
+            scanner_user_id, employee_user_id, action_type, barcode_value, result_status,
+            result_message, source_label, device_label, ip_address, user_agent, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        scanner_user_id,
+        employee_user_id,
+        action_type,
+        barcode_value,
+        result_status,
+        result_message,
+        source_label,
+        device_label,
+        ip_address,
+        user_agent,
+        now_str()
+    ), commit=True)
 
 
 def get_user_by_id(user_id):
@@ -5504,19 +5619,120 @@ def scanner_kiosk():
     return render_template("scanner.html")
 
 
+@app.route("/admin/scanner-logs")
+@login_required(role="admin")
+def admin_scanner_logs():
+    date_from = (request.args.get("date_from", "") or "").strip()
+    date_to = (request.args.get("date_to", "") or "").strip()
+    action_type = (request.args.get("action_type", "") or "").strip()
+    result_status = (request.args.get("result_status", "") or "").strip()
+    employee_id = (request.args.get("employee_id", "") or "").strip()
+
+    where_clauses = []
+    params = []
+
+    if date_from:
+        where_clauses.append("sl.created_at >= ?")
+        params.append(f"{date_from} 00:00:00")
+    if date_to:
+        where_clauses.append("sl.created_at <= ?")
+        params.append(f"{date_to} 23:59:59")
+    if action_type:
+        where_clauses.append("sl.action_type = ?")
+        params.append(action_type)
+    if result_status:
+        where_clauses.append("sl.result_status = ?")
+        params.append(result_status)
+    if employee_id.isdigit():
+        where_clauses.append("sl.employee_user_id = ?")
+        params.append(int(employee_id))
+
+    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+
+    rows = fetchall(f"""
+        SELECT
+            sl.*,
+            scanner.full_name AS scanner_name,
+            scanner.username AS scanner_username,
+            employee.full_name AS employee_name,
+            employee.department AS employee_department,
+            employee.position AS employee_position
+        FROM scanner_logs sl
+        LEFT JOIN users scanner ON scanner.id = sl.scanner_user_id
+        LEFT JOIN users employee ON employee.id = sl.employee_user_id
+        {where_sql}
+        ORDER BY sl.created_at DESC, sl.id DESC
+        LIMIT 300
+    """, tuple(params))
+
+    stats = fetchone(f"""
+        SELECT
+            COUNT(*) AS total_scans,
+            SUM(CASE WHEN sl.result_status = 'success' THEN 1 ELSE 0 END) AS success_count,
+            SUM(CASE WHEN sl.result_status = 'error' THEN 1 ELSE 0 END) AS error_count,
+            SUM(CASE WHEN substr(sl.created_at, 1, 10) = ? THEN 1 ELSE 0 END) AS today_count
+        FROM scanner_logs sl
+        {where_sql}
+    """, tuple([today_str(), *params])) or {}
+
+    employees = fetchall("""
+        SELECT id, full_name, department
+        FROM users
+        WHERE role = 'employee'
+        ORDER BY full_name
+    """)
+
+    return render_template(
+        "admin_scanner_logs.html",
+        scanner_logs=rows,
+        stats=stats,
+        date_from=date_from,
+        date_to=date_to,
+        action_type=action_type,
+        result_status=result_status,
+        employee_id=employee_id,
+        employees=employees
+    )
+
+
 @app.route("/scanner/scan", methods=["POST"])
 @login_required(role="scanner")
 def scanner_kiosk_scan():
     action_type = (request.form.get("action_type", "") or "").strip()
     barcode_value = (request.form.get("barcode_value", "") or "").strip()
+    scanner_user_id = session.get("user_id")
+    source_label = "Tablet kiosk"
+    device_label = "Tablet camera kiosk"
+    ip_address = request.headers.get("X-Forwarded-For", request.remote_addr or "")
+    if ip_address and "," in ip_address:
+        ip_address = ip_address.split(",", 1)[0].strip()
+    user_agent = request.headers.get("User-Agent", "")
 
     if action_type not in {"time_in", "start_break", "end_break", "time_out", "overtime_start", "overtime_end"}:
+        log_scanner_activity(
+            scanner_user_id, action_type, barcode_value, "error",
+            "Please choose a valid attendance action.",
+            source_label=source_label, device_label=device_label,
+            ip_address=ip_address, user_agent=user_agent
+        )
         return jsonify({"ok": False, "message": "Please choose a valid attendance action."}), 400
 
     if not barcode_value:
+        log_scanner_activity(
+            scanner_user_id, action_type, barcode_value, "error",
+            "Scan or enter a barcode first.",
+            source_label=source_label, device_label=device_label,
+            ip_address=ip_address, user_agent=user_agent
+        )
         return jsonify({"ok": False, "message": "Scan or enter a barcode first."}), 400
 
     if action_type in {"overtime_start", "overtime_end"}:
+        log_scanner_activity(
+            scanner_user_id, action_type, barcode_value, "error",
+            "Overtime scanning is not enabled yet in the backend.",
+            source_label=source_label, device_label=device_label,
+            ip_address=ip_address, user_agent=user_agent
+        )
         return jsonify({
             "ok": False,
             "message": "Overtime scanning is not enabled yet in the backend.",
@@ -5526,17 +5742,35 @@ def scanner_kiosk_scan():
 
     employee = get_user_by_barcode(barcode_value)
     if not employee:
+        log_scanner_activity(
+            scanner_user_id, action_type, barcode_value, "error",
+            "No employee matched that barcode. Check the employee Barcode ID first.",
+            source_label=source_label, device_label=device_label,
+            ip_address=ip_address, user_agent=user_agent
+        )
         return jsonify({"ok": False, "message": "No employee matched that barcode. Check the employee Barcode ID first."}), 404
 
     ok, message, employee_row = perform_attendance_action(
         employee["id"],
         action_type,
-        actor_id=session["user_id"],
-        source_label="Tablet kiosk"
+        actor_id=scanner_user_id,
+        source_label=source_label
     )
     employee_for_payload = employee_row or employee
     attendance = get_current_attendance(employee["id"])
     break_minutes = total_break_minutes(attendance["id"], include_open=True) if attendance else 0
+    log_scanner_activity(
+        scanner_user_id,
+        action_type,
+        barcode_value,
+        "success" if ok else "error",
+        message,
+        employee_user_id=employee["id"],
+        source_label=source_label,
+        device_label=device_label,
+        ip_address=ip_address,
+        user_agent=user_agent
+    )
 
     return jsonify({
         "ok": ok,

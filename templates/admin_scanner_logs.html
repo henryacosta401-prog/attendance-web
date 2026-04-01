@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% block title %}Scanner Logs{% endblock %}
+
+{% block extra_head %}
+<style>
+.scanner-log-shell { display: grid; gap: 20px; }
+.scanner-log-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }
+.scanner-log-card, .scanner-log-panel {
+    border-radius: 24px;
+    background: linear-gradient(180deg, rgba(22, 31, 53, 0.98), rgba(15, 23, 42, 0.96));
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    box-shadow: 0 22px 34px rgba(15, 23, 42, 0.22);
+}
+.scanner-log-card { padding: 18px; }
+.scanner-log-label { color: #9fb0d4; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
+.scanner-log-value { margin-top: 10px; color: #f8fbff; font-size: 34px; font-weight: 900; line-height: 1; }
+.scanner-log-note, .scanner-log-subtitle, .scanner-log-subtext { color: #9fb0d4; font-size: 12px; }
+.scanner-log-panel { padding: 20px; }
+.scanner-log-toolbar { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
+.scanner-log-table-wrap { overflow-x: auto; margin-top: 18px; border-radius: 18px; border: 1px solid rgba(148, 163, 184, 0.14); }
+.scanner-log-table { width: 100%; border-collapse: collapse; }
+.scanner-log-table th, .scanner-log-table td { padding: 14px 16px; border-bottom: 1px solid rgba(148, 163, 184, 0.12); vertical-align: top; }
+.scanner-log-table th { background: rgba(59, 130, 246, 0.08); color: #bad0ff; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+.scanner-log-table td { color: #ecf3ff; font-size: 14px; }
+.scanner-pill { display: inline-flex; align-items: center; padding: 6px 10px; border-radius: 999px; font-size: 12px; font-weight: 800; }
+.scanner-pill-success { background: rgba(16, 185, 129, 0.18); color: #86efac; }
+.scanner-pill-error { background: rgba(239, 68, 68, 0.18); color: #fca5a5; }
+.scanner-pill-action { background: rgba(96, 165, 250, 0.16); color: #bfdbfe; }
+@media (max-width: 1100px) {
+    .scanner-log-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 700px) {
+    .scanner-log-toolbar { grid-template-columns: 1fr; }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="hero-card" style="margin-bottom:20px;">
+    <div class="hero">
+        <div>
+            <h1>Scanner Logs</h1>
+            <p class="section-subtitle">Audit every kiosk scan, including failed attempts, matched employees, and scanner outcomes.</p>
+        </div>
+        <div class="status status-blue">Kiosk Activity</div>
+    </div>
+</div>
+
+<div class="scanner-log-shell">
+    <div class="scanner-log-stats">
+        <div class="scanner-log-card"><div class="scanner-log-label">Total Scans</div><div class="scanner-log-value">{{ stats.total_scans or 0 }}</div><div class="scanner-log-note">Rows in the current filtered view</div></div>
+        <div class="scanner-log-card"><div class="scanner-log-label">Successful</div><div class="scanner-log-value">{{ stats.success_count or 0 }}</div><div class="scanner-log-note">Attendance actions recorded</div></div>
+        <div class="scanner-log-card"><div class="scanner-log-label">Errors</div><div class="scanner-log-value">{{ stats.error_count or 0 }}</div><div class="scanner-log-note">Failed or blocked scan attempts</div></div>
+        <div class="scanner-log-card"><div class="scanner-log-label">Today</div><div class="scanner-log-value">{{ stats.today_count or 0 }}</div><div class="scanner-log-note">Scans recorded today</div></div>
+    </div>
+
+    <section class="scanner-log-panel">
+        <h2 style="margin:0;color:#f8fbff;">Log Filters</h2>
+        <p class="scanner-log-subtitle" style="margin-top:6px;">Review scanner activity by date, action, result, and employee.</p>
+        <form method="GET" class="scanner-log-toolbar">
+            <div>
+                <label>Date From</label>
+                <input class="input" type="date" name="date_from" value="{{ date_from }}">
+            </div>
+            <div>
+                <label>Date To</label>
+                <input class="input" type="date" name="date_to" value="{{ date_to }}">
+            </div>
+            <div>
+                <label>Action</label>
+                <select class="input" name="action_type">
+                    <option value="">All Actions</option>
+                    {% for value, label in [('time_in','Time In'),('start_break','Break Start'),('end_break','Break End'),('time_out','Time Out'),('overtime_start','Overtime Start'),('overtime_end','Overtime End')] %}
+                        <option value="{{ value }}" {% if action_type == value %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label>Result</label>
+                <select class="input" name="result_status">
+                    <option value="">All Results</option>
+                    <option value="success" {% if result_status == 'success' %}selected{% endif %}>Success</option>
+                    <option value="error" {% if result_status == 'error' %}selected{% endif %}>Error</option>
+                </select>
+            </div>
+            <div>
+                <label>Employee</label>
+                <select class="input" name="employee_id">
+                    <option value="">All Employees</option>
+                    {% for employee in employees %}
+                        <option value="{{ employee.id }}" {% if employee_id == employee.id|string %}selected{% endif %}>{{ employee.full_name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div style="display:flex;align-items:end;gap:10px;">
+                <button class="btn btn-primary" type="submit" style="width:100%;">Apply Filters</button>
+            </div>
+        </form>
+
+        <div class="scanner-log-table-wrap">
+            <table class="scanner-log-table">
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Action</th>
+                        <th>Result</th>
+                        <th>Employee</th>
+                        <th>Barcode</th>
+                        <th>Scanner</th>
+                        <th>Details</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if scanner_logs %}
+                        {% for row in scanner_logs %}
+                            <tr>
+                                <td>
+                                    <div style="font-weight:800;color:#fff;">{{ row.created_at }}</div>
+                                    <div class="scanner-log-subtext">{{ row.device_label or row.source_label or 'Scanner kiosk' }}</div>
+                                </td>
+                                <td>
+                                    <span class="scanner-pill scanner-pill-action">{{ (row.action_type or 'unknown')|replace('_', ' ')|title }}</span>
+                                </td>
+                                <td>
+                                    <span class="scanner-pill {% if row.result_status == 'success' %}scanner-pill-success{% else %}scanner-pill-error{% endif %}">{{ row.result_status|title }}</span>
+                                </td>
+                                <td>
+                                    <div style="font-weight:800;color:#fff;">{{ row.employee_name or 'No employee matched' }}</div>
+                                    <div class="scanner-log-subtext">{% if row.employee_department %}{{ row.employee_department }}{% endif %}{% if row.employee_position %} | {{ row.employee_position }}{% endif %}</div>
+                                </td>
+                                <td>
+                                    <div style="font-weight:800;color:#fff;">{{ row.barcode_value or '-' }}</div>
+                                    <div class="scanner-log-subtext">IP {{ row.ip_address or '-' }}</div>
+                                </td>
+                                <td>
+                                    <div style="font-weight:800;color:#fff;">{{ row.scanner_name or 'Scanner account' }}</div>
+                                    <div class="scanner-log-subtext">@{{ row.scanner_username or 'scanner' }}</div>
+                                </td>
+                                <td>
+                                    <div>{{ row.result_message or '-' }}</div>
+                                    <div class="scanner-log-subtext" style="margin-top:6px;">{{ row.user_agent or '-' }}</div>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr><td colspan="7" class="muted" style="padding:18px;">No scanner activity matched this filter yet.</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</div>
+{% endblock %}
