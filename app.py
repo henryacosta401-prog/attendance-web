@@ -11,7 +11,8 @@ from urllib.parse import quote
 
 from flask import (
     Flask, render_template, request, redirect, url_for,
-    session, flash, g, send_from_directory, jsonify, Response, abort
+    session, flash, g, send_from_directory, jsonify, Response, abort,
+    has_app_context
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -1894,10 +1895,11 @@ def is_absent_today(user_row, attendance_row):
         return False
     if not is_scheduled_today(user_row):
         return False
-    if get_approved_leave_for_date(user_row["id"], today_str()):
-        return False
-    if get_suspension_for_date(user_row["id"], today_str()):
-        return False
+    if has_app_context():
+        if get_approved_leave_for_date(user_row["id"], today_str()):
+            return False
+        if get_suspension_for_date(user_row["id"], today_str()):
+            return False
 
     shift_dt, _ = get_shift_bounds_for_work_date(user_row, today_str())
     return now_dt() >= (shift_dt + timedelta(minutes=LATE_GRACE_MINUTES))
@@ -2342,6 +2344,9 @@ def perform_go_live_reset():
                     correction_requests,
                     notifications,
                     activity_logs,
+                    scanner_logs,
+                    overtime_sessions,
+                    login_attempts,
                     incident_reports,
                     disciplinary_actions
                 RESTART IDENTITY
@@ -2355,6 +2360,9 @@ def perform_go_live_reset():
             "correction_requests",
             "notifications",
             "activity_logs",
+            "scanner_logs",
+            "overtime_sessions",
+            "login_attempts",
             "incident_reports",
             "disciplinary_actions",
         ]:
@@ -2362,7 +2370,7 @@ def perform_go_live_reset():
         try:
             cur.execute("""
                 DELETE FROM sqlite_sequence
-                WHERE name IN ('breaks', 'attendance', 'correction_requests', 'notifications', 'activity_logs', 'incident_reports', 'disciplinary_actions')
+                WHERE name IN ('breaks', 'attendance', 'correction_requests', 'notifications', 'activity_logs', 'scanner_logs', 'overtime_sessions', 'login_attempts', 'incident_reports', 'disciplinary_actions')
             """)
         except sqlite3.OperationalError:
             pass
@@ -4870,13 +4878,9 @@ def build_attendance_audit_rows(date_from="", date_to="", employee_id="", source
     overtime_rows = fetchall(f"""
         SELECT
             o.id,
-            COALESCE(o.overtime_end, o.overtime_start, o.created_at) AS created_at,
-            'overtime' AS source_type,
-            CASE WHEN o.overtime_end IS NULL THEN 'OVERTIME START' ELSE 'OVERTIME END' END AS event_action,
-            CASE
-                WHEN o.overtime_end IS NULL THEN 'Overtime session started.'
-                ELSE 'Overtime session ended.'
-            END AS event_details,
+            o.overtime_start,
+            o.overtime_end,
+            o.created_at,
             u.full_name AS actor_name,
             u.username AS actor_username,
             o.user_id AS target_user_id,
@@ -4898,9 +4902,34 @@ def build_attendance_audit_rows(date_from="", date_to="", employee_id="", source
         item["source_label"] = "Scanner Kiosk"
         combined.append(item)
     for row in overtime_rows:
-        item = dict(row)
-        item["source_label"] = "Overtime"
-        combined.append(item)
+        base = dict(row)
+        combined.append({
+            "id": f"ot-start-{base['id']}",
+            "created_at": base.get("overtime_start") or base.get("created_at"),
+            "source_type": "overtime",
+            "event_action": "OVERTIME START",
+            "event_details": "Overtime session started.",
+            "actor_name": base.get("actor_name"),
+            "actor_username": base.get("actor_username"),
+            "target_user_id": base.get("target_user_id"),
+            "employee_name": base.get("employee_name"),
+            "employee_department": base.get("employee_department"),
+            "source_label": "Overtime",
+        })
+        if base.get("overtime_end"):
+            combined.append({
+                "id": f"ot-end-{base['id']}",
+                "created_at": base.get("overtime_end"),
+                "source_type": "overtime",
+                "event_action": "OVERTIME END",
+                "event_details": "Overtime session ended.",
+                "actor_name": base.get("actor_name"),
+                "actor_username": base.get("actor_username"),
+                "target_user_id": base.get("target_user_id"),
+                "employee_name": base.get("employee_name"),
+                "employee_department": base.get("employee_department"),
+                "source_label": "Overtime",
+            })
 
     if date_from:
         combined = [row for row in combined if (row.get("created_at") or "")[:10] >= date_from]
@@ -4909,7 +4938,7 @@ def build_attendance_audit_rows(date_from="", date_to="", employee_id="", source
     if source_filter:
         combined = [row for row in combined if row.get("source_type") == source_filter]
 
-    combined.sort(key=lambda item: ((item.get("created_at") or ""), item.get("id") or 0), reverse=True)
+    combined.sort(key=lambda item: ((item.get("created_at") or ""), str(item.get("id") or "")), reverse=True)
     return combined[:limit]
 
 
@@ -4943,6 +4972,11 @@ def apply_attendance_correction(user_id, work_date, time_in_value="", break_star
     )
 
     if undertime_only_adjustment and final_time_out:
+        final_time_out = combine_work_date_and_time(
+            target_work_date,
+            time_out_value,
+            not_before=attendance["time_in"] if attendance else None
+        )
         if final_break_start and final_break_start > final_time_out:
             final_break_start = None
             final_break_end = None
@@ -5021,13 +5055,16 @@ def apply_attendance_correction(user_id, work_date, time_in_value="", break_star
     if not attendance:
         return
 
-    if break_row and (break_start_value or break_end_value):
+    if break_row and (
+        final_break_start != break_row["break_start"]
+        or final_break_end != break_row["break_end"]
+    ):
         execute_db("""
             UPDATE breaks
             SET break_start = ?, break_end = ?
             WHERE id = ?
         """, (final_break_start, final_break_end, break_row["id"]), commit=True)
-    elif not break_row and (break_start_value or break_end_value):
+    elif not break_row and (final_break_start or final_break_end):
         execute_db("""
             INSERT INTO breaks (user_id, attendance_id, work_date, break_start, break_end, created_at)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -6465,6 +6502,15 @@ def admin_attendance_audit():
     date_to = (request.args.get("date_to", "") or "").strip()
     employee_id = (request.args.get("employee_id", "") or "").strip()
     source_filter = (request.args.get("source", "") or "").strip()
+
+    if date_from and date_to:
+        try:
+            start_date = datetime.strptime(date_from, "%Y-%m-%d").date()
+            end_date = datetime.strptime(date_to, "%Y-%m-%d").date()
+            if start_date > end_date:
+                date_from, date_to = date_to, date_from
+        except ValueError:
+            pass
 
     rows = build_attendance_audit_rows(
         date_from=date_from,
