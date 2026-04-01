@@ -847,9 +847,6 @@
             <a class="pill-link {% if request.endpoint == 'scanner_kiosk' %}active{% endif %}" href="{{ url_for('scanner_kiosk') }}">Scanner Kiosk</a>
         {% else %}
             <a class="pill-link {% if request.endpoint == 'dashboard' %}active{% endif %}" data-tour-id="nav-dashboard" href="{{ url_for('dashboard') }}">Dashboard</a>
-            {% if not company_settings.scanner_attendance_mode %}
-                <a class="pill-link {% if request.endpoint == 'employee_actions' %}active{% endif %}" data-tour-id="nav-quick-actions" href="{{ url_for('employee_actions') }}">Quick Actions</a>
-            {% endif %}
             <a class="pill-link {% if request.endpoint == 'employee_activity' %}active{% endif %}" href="{{ url_for('employee_activity') }}">Recent Activity</a>
             <a class="pill-link {% if request.endpoint == 'employee_history' %}active{% endif %}" data-tour-id="nav-history" href="{{ url_for('employee_history') }}">History</a>
             <a class="pill-link {% if request.endpoint == 'employee_corrections' %}active{% endif %}" data-tour-id="nav-corrections" href="{{ url_for('employee_corrections') }}">Corrections</a>
@@ -1002,7 +999,6 @@ document.addEventListener("DOMContentLoaded", function () {
             { selector: "[data-tour-id='nav-dashboard']", title: "Your dashboard is home base", body: "This page summarizes your shift, break use, work hours, and recent updates in one place." },
             { selector: "[data-tour-id='employee-summary']", title: "Check your live shift status here", body: "This summary shows whether you are timed in, on break, timed out, and how your totals look today." },
             { selector: "[data-tour-id='employee-today-panel']", title: "Review today's timeline", body: "Use this section to confirm your time in, time out, break sessions, and work summary for the current shift." },
-            { selector: "[data-tour-id='employee-quick-actions-link']", title: "Quick Actions handles attendance", body: "Open Quick Actions when you need to time in, start or end a break, upload proof, or time out." },
             { selector: "[data-tour-id='nav-history']", title: "History keeps your past records", body: "Use History to review earlier shifts, work hours, break details, and uploaded proofs." },
             { selector: "[data-tour-id='nav-corrections']", title: "Corrections is for requests", body: "Submit missed punches, undertime, sick leave, or paid leave requests here whenever something needs approval." },
             { selector: "[data-tour-id='nav-notifications']", title: "Notifications keep you updated", body: "Open Notifications to see approvals, attendance alerts, and other important account updates." }

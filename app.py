@@ -1607,7 +1607,7 @@ def verify_scanner_exit_pin(pin_value):
 def get_manual_attendance_block_message():
     if not is_scanner_attendance_mode_enabled():
         return ""
-    return "Attendance is recorded through the company scanner kiosk. Please use the scanner station for time in, breaks, and time out."
+    return "Attendance is recorded through the company scanner kiosk. Please use the scanner station for time in, breaks, time out, and overtime."
 
 
 def get_scanner_account():
@@ -1645,6 +1645,17 @@ def get_current_attendance(user_id):
     if active_attendance:
         return active_attendance
     return get_today_attendance(user_id)
+
+
+def get_latest_attendance_with_time_in(user_id):
+    return fetchone("""
+        SELECT *
+        FROM attendance
+        WHERE user_id = ?
+          AND time_in IS NOT NULL
+        ORDER BY work_date DESC, id DESC
+        LIMIT 1
+    """, (user_id,))
 
 
 def get_open_break_for_attendance(attendance_id):
@@ -1925,6 +1936,11 @@ def perform_attendance_action(user_id, action_type, actor_id=None, source_label=
         if not attendance or not attendance["time_in"]:
             return False, "Employee is not timed in.", user
         if attendance["time_out"]:
+            recorded_time_out_dt = parse_db_datetime(attendance["time_out"])
+            _, shift_end_dt = get_shift_bounds_for_work_date(user, attendance["work_date"])
+            shift_end_naive = shift_end_dt.replace(tzinfo=None)
+            if recorded_time_out_dt and recorded_time_out_dt == shift_end_naive and now_dt().replace(tzinfo=None) > shift_end_naive:
+                return False, "Regular shift already closed at the scheduled end. Use Overtime Start for work after midnight.", user
             return False, "Employee is already timed out.", user
 
         if open_break:
@@ -1959,9 +1975,29 @@ def perform_attendance_action(user_id, action_type, actor_id=None, source_label=
         if open_overtime:
             return False, "Employee already has an active overtime session.", user
 
-        latest_today = get_today_attendance(user_id)
-        if not latest_today or not latest_today["time_in"] or not latest_today["time_out"]:
+        latest_reference = get_active_attendance(user_id) or get_latest_attendance_with_time_in(user_id)
+        if not latest_reference or not latest_reference["time_in"]:
             return False, "Employee must complete the regular shift before starting overtime.", user
+
+        latest_reference_was_active = not latest_reference.get("time_out")
+        latest_reference = auto_close_stale_attendance(user, latest_reference, actor_id=actor_id, source_label=source_label)
+        if not latest_reference or not latest_reference["time_out"]:
+            return False, "Employee must complete the regular shift before starting overtime.", user
+
+        _, shift_end_dt = get_shift_bounds_for_work_date(user, latest_reference["work_date"])
+        shift_end_naive = shift_end_dt.replace(tzinfo=None)
+        regular_time_out_dt = parse_db_datetime(latest_reference["time_out"])
+
+        if not latest_reference_was_active and regular_time_out_dt and regular_time_out_dt < shift_end_naive:
+            return False, "Regular shift must reach the scheduled end before overtime can start.", user
+
+        overtime_start_dt = regular_time_out_dt or shift_end_naive
+
+        if overtime_start_dt < shift_end_naive:
+            overtime_start_dt = shift_end_naive
+
+        if now_dt().replace(tzinfo=None) < shift_end_naive:
+            return False, "Overtime can only start after the regular shift ends.", user
 
         try:
             execute_db("""
@@ -1969,9 +2005,9 @@ def perform_attendance_action(user_id, action_type, actor_id=None, source_label=
                 VALUES (?, ?, ?, ?, ?)
             """, (
                 user_id,
-                latest_today["id"],
-                latest_today["work_date"] or today_str(),
-                now_str(),
+                latest_reference["id"],
+                overtime_start_dt.strftime("%Y-%m-%d"),
+                overtime_start_dt.strftime("%Y-%m-%d %H:%M:%S"),
                 now_str()
             ), commit=True)
         except sqlite3.IntegrityError:
@@ -1980,8 +2016,17 @@ def perform_attendance_action(user_id, action_type, actor_id=None, source_label=
             if POSTGRES_ENABLED and exc.__class__.__name__ == "IntegrityError":
                 return False, "Employee already has an active overtime session.", user
             raise
-        create_notification(user_id, "Overtime Started", f"Overtime started at {now_str()} ET.")
-        log_activity(actor_id or user_id, "KIOSK OVERTIME START", f"{source_label} overtime start for {user['full_name']}", target_user_id=user_id)
+        create_notification(
+            user_id,
+            "Overtime Started",
+            f"Overtime started at {overtime_start_dt.strftime('%Y-%m-%d %H:%M:%S')} ET."
+        )
+        log_activity(
+            actor_id or user_id,
+            "KIOSK OVERTIME START",
+            f"{source_label} overtime start for {user['full_name']} after regular shift ending {shift_end_naive.strftime('%Y-%m-%d %H:%M:%S')}",
+            target_user_id=user_id
+        )
         return True, "Overtime started.", user
 
     if action_key == "overtime_end":
@@ -3968,10 +4013,15 @@ def employee_actions():
         flash("Your session expired. Please log in again.", "warning")
         return redirect(url_for("login"))
 
+    manual_attendance_block_message = get_manual_attendance_block_message()
+    if manual_attendance_block_message:
+        flash(manual_attendance_block_message, "info")
+        return redirect(url_for("dashboard"))
+
     return render_template(
         "employee_actions.html",
         user=user,
-        manual_attendance_block_message=get_manual_attendance_block_message()
+        manual_attendance_block_message=manual_attendance_block_message
     )
 
 

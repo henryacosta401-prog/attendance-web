@@ -354,9 +354,6 @@
                 <div class="employee-panel-subtitle">Your full attendance timeline, proof upload, and schedule reference.</div>
             </div>
             <div style="display:flex;gap:10px;flex-wrap:wrap;">
-                {% if not company_settings.scanner_attendance_mode %}
-                    <a class="btn btn-gray" data-tour-id="employee-quick-actions-link" href="{{ url_for('employee_actions') }}">Open Quick Actions</a>
-                {% endif %}
                 <a class="btn btn-gray" href="{{ url_for('employee_activity') }}">Open Recent Activity</a>
             </div>
         </div>
