@@ -12,33 +12,43 @@ body.kiosk-mode .page-shell,
 body.kiosk-mode .page-shell > .container {
     padding-top: 0 !important;
 }
+body.kiosk-mode {
+    overflow: hidden;
+}
+body.kiosk-mode .page-shell {
+    min-height: 100vh;
+}
 .scanner-shell {
     display: grid;
-    gap: 14px;
+    gap: 10px;
+    min-height: calc(100vh - 170px);
 }
 .scanner-grid {
     display: grid;
     grid-template-columns: 1.1fr 0.9fr;
-    gap: 14px;
+    gap: 10px;
+    min-height: calc(100vh - 170px);
+    align-items: stretch;
 }
 .scanner-card {
-    padding: 18px;
-    border-radius: 24px;
+    padding: 14px;
+    border-radius: 22px;
     background:
         radial-gradient(circle at top right, rgba(96, 165, 250, 0.18), transparent 25%),
         linear-gradient(180deg, rgba(15, 23, 42, 0.94), rgba(15, 23, 42, 0.88));
     border: 1px solid rgba(148, 163, 184, 0.16);
     box-shadow: 0 24px 48px rgba(15, 23, 42, 0.24);
+    min-height: 0;
 }
 .scanner-actions {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
+    gap: 8px;
 }
 .scanner-action-btn {
     border: 1px solid rgba(148, 163, 184, 0.16);
-    border-radius: 18px;
-    padding: 18px 16px;
+    border-radius: 16px;
+    padding: 14px 14px;
     background: rgba(15, 23, 42, 0.66);
     color: #e2e8f0;
     text-align: left;
@@ -46,12 +56,12 @@ body.kiosk-mode .page-shell > .container {
 }
 .scanner-action-btn strong {
     display: block;
-    font-size: 20px;
-    margin-bottom: 6px;
+    font-size: 18px;
+    margin-bottom: 4px;
 }
 .scanner-action-btn span {
     display: block;
-    font-size: 14px;
+    font-size: 12px;
     color: rgba(226, 232, 240, 0.72);
 }
 .scanner-action-btn.is-active {
@@ -64,13 +74,14 @@ body.kiosk-mode .page-shell > .container {
     overflow: hidden;
     border-radius: 22px;
     background: #020617;
-    min-height: 420px;
+    min-height: 0;
+    height: 100%;
     border: 1px solid rgba(148, 163, 184, 0.16);
 }
 .scanner-stage video {
     width: 100%;
     height: 100%;
-    min-height: 420px;
+    min-height: 0;
     object-fit: cover;
     display: block;
     background: #020617;
@@ -90,20 +101,20 @@ body.kiosk-mode .page-shell > .container {
 .scanner-overlay {
     position: absolute;
     inset: auto 16px 16px 16px;
-    padding: 12px 14px;
+    padding: 10px 12px;
     border-radius: 16px;
     background: rgba(15, 23, 42, 0.72);
     border: 1px solid rgba(148, 163, 184, 0.18);
     color: #e2e8f0;
-    font-size: 14px;
-    line-height: 1.45;
+    font-size: 13px;
+    line-height: 1.35;
     backdrop-filter: blur(12px);
 }
 .scanner-toolbar {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     flex-wrap: wrap;
 }
 .scanner-kicker {
@@ -113,18 +124,18 @@ body.kiosk-mode .page-shell > .container {
     color: rgba(148, 163, 184, 0.82);
 }
 .scanner-title {
-    font-size: 34px;
+    font-size: 30px;
     line-height: 1;
     font-weight: 900;
     color: #f8fafc;
     letter-spacing: -0.04em;
-    margin-top: 4px;
+    margin-top: 2px;
 }
 .scanner-subtitle {
-    margin-top: 8px;
+    margin-top: 4px;
     max-width: 620px;
-    font-size: 15px;
-    line-height: 1.5;
+    font-size: 13px;
+    line-height: 1.35;
     color: rgba(226, 232, 240, 0.76);
 }
 .scanner-toolbar-actions {
@@ -133,24 +144,24 @@ body.kiosk-mode .page-shell > .container {
     flex-wrap: wrap;
 }
 .scanner-toolbar-actions .btn {
-    min-width: 130px;
+    min-width: 116px;
 }
 .scanner-controls {
     display: flex;
-    gap: 10px;
+    gap: 8px;
     flex-wrap: wrap;
     align-items: center;
 }
 .scanner-camera-select {
-    min-width: 220px;
+    min-width: 180px;
 }
 .scanner-manual {
     display: grid;
-    gap: 10px;
+    gap: 8px;
 }
 .scanner-manual-row {
     display: flex;
-    gap: 10px;
+    gap: 8px;
     flex-wrap: wrap;
 }
 .scanner-manual-row .input {
@@ -158,14 +169,16 @@ body.kiosk-mode .page-shell > .container {
 }
 .scanner-result {
     display: grid;
-    gap: 12px;
+    gap: 8px;
 }
 .scanner-banner {
-    padding: 14px 16px;
-    border-radius: 18px;
+    padding: 10px 12px;
+    border-radius: 16px;
     background: rgba(15, 23, 42, 0.66);
     border: 1px solid rgba(148, 163, 184, 0.16);
     color: #e2e8f0;
+    font-size: 13px;
+    line-height: 1.35;
 }
 .scanner-banner.is-success {
     background: rgba(22, 101, 52, 0.26);
@@ -178,45 +191,74 @@ body.kiosk-mode .page-shell > .container {
 .scanner-kv {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
+    gap: 8px;
 }
 .scanner-kv .cardlet {
-    padding: 12px 14px;
-    border-radius: 18px;
+    padding: 10px 12px;
+    border-radius: 16px;
     background: rgba(15, 23, 42, 0.46);
     border: 1px solid rgba(148, 163, 184, 0.14);
 }
 .scanner-kv .label {
-    font-size: 12px;
+    font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: rgba(148, 163, 184, 0.86);
-    margin-bottom: 4px;
+    margin-bottom: 3px;
 }
 .scanner-kv .value {
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 800;
     color: #f8fafc;
     overflow-wrap: anywhere;
 }
 .scanner-help {
-    font-size: 13px;
-    line-height: 1.5;
+    font-size: 12px;
+    line-height: 1.35;
     color: rgba(226, 232, 240, 0.72);
+}
+body.kiosk-mode .scanner-toolbar {
+    display: none;
+}
+body.kiosk-mode .scanner-shell,
+body.kiosk-mode .scanner-grid {
+    min-height: calc(100vh - 20px);
+}
+body.kiosk-mode .scanner-card {
+    padding: 12px;
+}
+body.kiosk-mode .scanner-stage,
+body.kiosk-mode .scanner-stage video {
+    height: calc(100vh - 245px);
+}
+body.kiosk-mode .divider {
+    margin: 10px 0;
 }
 @media (max-width: 960px) {
     .scanner-title {
-        font-size: 28px;
+        font-size: 24px;
     }
     .scanner-grid {
         grid-template-columns: 1fr;
+        min-height: auto;
     }
     .scanner-kv {
         grid-template-columns: 1fr;
     }
     .scanner-stage,
     .scanner-stage video {
-        min-height: 320px;
+        min-height: 280px;
+        height: 280px;
+    }
+    body.kiosk-mode {
+        overflow: auto;
+    }
+    body.kiosk-mode .scanner-toolbar {
+        display: flex;
+    }
+    body.kiosk-mode .scanner-stage,
+    body.kiosk-mode .scanner-stage video {
+        height: 280px;
     }
 }
 </style>
@@ -232,7 +274,10 @@ body.kiosk-mode .page-shell > .container {
     <div class="scanner-toolbar-actions">
         <button class="btn btn-primary" type="button" id="fullscreenBtn">Fullscreen</button>
         <button class="btn btn-gray" type="button" id="toggleKioskBtn">Minimal Mode</button>
-        <a class="btn btn-gray" href="{{ url_for('logout') }}">Logout</a>
+        <form method="POST" action="{{ url_for('logout') }}" style="margin:0;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="btn btn-gray" type="submit">Logout</button>
+        </form>
     </div>
 </div>
 
@@ -562,7 +607,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
     loadCameras();
     resultAction.textContent = "Time In";
-    setKioskMode(localStorage.getItem("scanner-kiosk-mode") === "1");
+    const shouldStartKiosk = "{{ session.get('role') }}" === "scanner" || localStorage.getItem("scanner-kiosk-mode") === "1";
+    setKioskMode(shouldStartKiosk);
 });
 </script>
 {% endblock %}

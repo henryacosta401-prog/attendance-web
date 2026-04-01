@@ -20,7 +20,7 @@
         <input class="input" type="password" name="password" placeholder="Leave blank to keep current password">
 
         <label style="display:block; margin-top:12px;">Profile Image</label>
-        <input class="file-input" type="file" name="profile_image">
+        <input class="file-input" type="file" name="profile_image" accept=".png,.jpg,.jpeg,.gif,.webp">
 
         {% if user.profile_image and uploaded_file_exists(user.profile_image) %}
             <div style="margin-top:12px;">

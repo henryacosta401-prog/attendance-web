@@ -856,7 +856,10 @@
         <span class="pill-link">👤 {{ session.get('full_name') }}</span>
         <span class="pill-link">🔔 {{ unread_count }}</span>
         <button class="pill-link tour-launch" data-tour-launch="manual" type="button">App Tour</button>
-        <a class="btn btn-danger" data-tour-id="nav-logout" href="{{ url_for('logout') }}">Logout</a>
+        <form method="POST" action="{{ url_for('logout') }}" style="margin:0;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="btn btn-danger" data-tour-id="nav-logout" type="submit">Logout</button>
+        </form>
     </div>
 </div>
 {% endif %}

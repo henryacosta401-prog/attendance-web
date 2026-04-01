@@ -52,7 +52,9 @@ DEFAULT_UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
 UPLOAD_FOLDER = os.environ.get("UPLOAD_FOLDER", "").strip() or (
     os.path.join(PERSISTENT_DISK_PATH, "uploads") if PERSISTENT_DISK_PATH else DEFAULT_UPLOAD_FOLDER
 )
-ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "pdf", "webp"}
+IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
+DOCUMENT_EXTENSIONS = {"pdf"}
+ALLOWED_EXTENSIONS = IMAGE_EXTENSIONS | DOCUMENT_EXTENSIONS
 
 GOOGLE_CREDENTIALS_FILE = os.path.join(BASE_DIR, "attendance-credentials.json")
 GOOGLE_SHEET_NAME = "Attendance Tracker"
@@ -92,6 +94,9 @@ DEFAULT_SICK_LEAVE_DAYS = 7
 DEFAULT_PAID_LEAVE_DAYS = 7
 
 DEFAULT_SECRET_KEY = "dev-secret-key"
+LOGIN_WINDOW_MINUTES = 15
+LOGIN_MAX_ATTEMPTS = 10
+LOGIN_ATTEMPTS = {}
 
 
 def is_production_environment():
@@ -228,6 +233,10 @@ def execute_db(query, params=(), commit=False):
             db.commit()
 
 
+def get_bootstrap_admin_password():
+    return os.environ.get("BOOTSTRAP_ADMIN_PASSWORD", "").strip()
+
+
 # =========================
 # BASIC HELPERS
 # =========================
@@ -239,7 +248,36 @@ def is_image(filename):
     if not filename:
         return False
     ext = filename.rsplit(".", 1)[1].lower() if "." in filename else ""
-    return ext in {"png", "jpg", "jpeg", "gif", "webp"}
+    return ext in IMAGE_EXTENSIONS
+
+
+def get_client_ip():
+    ip_address = request.headers.get("X-Forwarded-For", request.remote_addr or "")
+    if ip_address and "," in ip_address:
+        ip_address = ip_address.split(",", 1)[0].strip()
+    return ip_address or "unknown"
+
+
+def get_recent_login_attempts(ip_address):
+    cutoff = now_dt() - timedelta(minutes=LOGIN_WINDOW_MINUTES)
+    attempts = LOGIN_ATTEMPTS.get(ip_address, [])
+    fresh_attempts = [stamp for stamp in attempts if stamp >= cutoff]
+    LOGIN_ATTEMPTS[ip_address] = fresh_attempts
+    return fresh_attempts
+
+
+def is_login_rate_limited(ip_address):
+    return len(get_recent_login_attempts(ip_address)) >= LOGIN_MAX_ATTEMPTS
+
+
+def register_login_failure(ip_address):
+    attempts = get_recent_login_attempts(ip_address)
+    attempts.append(now_dt())
+    LOGIN_ATTEMPTS[ip_address] = attempts
+
+
+def clear_login_failures(ip_address):
+    LOGIN_ATTEMPTS.pop(ip_address, None)
 
 
 def login_required(role=None):
@@ -645,6 +683,12 @@ def init_sqlite_db():
 
     admin = cursor.execute("SELECT * FROM users WHERE username = ?", ("admin",)).fetchone()
     if not admin:
+        bootstrap_password = get_bootstrap_admin_password()
+        if is_production_environment() and not bootstrap_password:
+            db.close()
+            raise RuntimeError(
+                "BOOTSTRAP_ADMIN_PASSWORD must be set before first production startup when the admin account does not exist."
+            )
         cursor.execute("""
             INSERT INTO users (
                 full_name, username, password_hash, role,
@@ -654,7 +698,7 @@ def init_sqlite_db():
         """, (
             "Administrator",
             "admin",
-            generate_password_hash("admin123"),
+            generate_password_hash(bootstrap_password or "admin123"),
             "admin",
             None,
             "Stellar Seats",
@@ -898,6 +942,11 @@ def init_postgres_db():
 
     admin = fetchone("SELECT * FROM users WHERE username = ?", ("admin",))
     if not admin:
+        bootstrap_password = get_bootstrap_admin_password()
+        if is_production_environment() and not bootstrap_password:
+            raise RuntimeError(
+                "BOOTSTRAP_ADMIN_PASSWORD must be set before first production startup when the admin account does not exist."
+            )
         execute_db("""
             INSERT INTO users (
                 full_name, username, password_hash, role,
@@ -907,7 +956,7 @@ def init_postgres_db():
         """, (
             "Administrator",
             "admin",
-            generate_password_hash("admin123"),
+            generate_password_hash(bootstrap_password or "admin123"),
             "admin",
             None,
             "Stellar Seats",
@@ -1130,6 +1179,63 @@ def get_open_break(user_id, attendance_row=None):
     return get_open_break_for_attendance(attendance["id"])
 
 
+def auto_close_stale_attendance(user_row, attendance_row, actor_id=None, source_label="System"):
+    if not user_row or not attendance_row:
+        return attendance_row
+    if not attendance_row["time_in"] or attendance_row["time_out"]:
+        return attendance_row
+
+    _, shift_end_dt = get_shift_bounds_for_work_date(user_row, attendance_row["work_date"])
+    stale_cutoff_dt = shift_end_dt + timedelta(minutes=LATE_GRACE_MINUTES)
+    if now_dt() < stale_cutoff_dt:
+        return attendance_row
+
+    time_in_dt = parse_db_datetime(attendance_row["time_in"])
+    forced_time_out_dt = shift_end_dt.replace(tzinfo=None)
+    if time_in_dt and forced_time_out_dt < time_in_dt:
+        forced_time_out_dt = time_in_dt
+    forced_time_out = forced_time_out_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    open_break = get_open_break_for_attendance(attendance_row["id"])
+    if open_break:
+        forced_break_end_dt = forced_time_out_dt
+        break_start_dt = parse_db_datetime(open_break["break_start"])
+        if break_start_dt and forced_break_end_dt < break_start_dt:
+            forced_break_end_dt = break_start_dt
+        execute_db("""
+            UPDATE breaks
+            SET break_end = ?
+            WHERE id = ?
+        """, (forced_break_end_dt.strftime("%Y-%m-%d %H:%M:%S"), open_break["id"]), commit=True)
+
+    execute_db("""
+        UPDATE attendance
+        SET time_out = ?, status = ?, updated_at = ?
+        WHERE id = ?
+    """, (forced_time_out, "Timed Out", now_str(), attendance_row["id"]), commit=True)
+
+    log_activity(
+        actor_id or user_row["id"],
+        "AUTO CLOSE STALE ATTENDANCE",
+        f"{source_label} auto-closed stale attendance for {user_row['full_name']} dated {attendance_row['work_date']}"
+    )
+    return get_attendance_by_id(attendance_row["id"])
+
+
+def get_attendance_override_block_message(override_status, action_key, attendance_row=None):
+    if not override_status:
+        return None
+
+    has_open_attendance = bool(attendance_row and attendance_row.get("time_in") and not attendance_row.get("time_out"))
+    if has_open_attendance and action_key in {"end_break", "time_out"}:
+        return None
+
+    end_date = override_status.get("end_date") or today_str()
+    if override_status["type"] == "Suspension":
+        return f"Employee is suspended until {end_date}."
+    return f"Employee is on {override_status['type']} until {end_date}."
+
+
 def perform_attendance_action(user_id, action_type, actor_id=None, source_label="System"):
     user = get_user_by_id(user_id)
     if not user or user["role"] != "employee":
@@ -1138,13 +1244,14 @@ def perform_attendance_action(user_id, action_type, actor_id=None, source_label=
     if user["is_active"] != 1:
         return False, "Employee account is inactive.", user
 
-    override_status = get_employee_override_status_for_date(user_id, today_str())
-    if override_status and override_status["type"] == "Suspension":
-        return False, f"Employee is suspended until {override_status['end_date']}.", user
-
     attendance = get_current_attendance(user_id)
+    attendance = auto_close_stale_attendance(user, attendance, actor_id=actor_id, source_label=source_label)
     open_break = get_open_break(user_id, attendance)
     action_key = (action_type or "").strip().lower()
+    override_status = get_employee_override_status_for_date(user_id, today_str())
+    override_block_message = get_attendance_override_block_message(override_status, action_key, attendance)
+    if override_block_message:
+        return False, override_block_message, user
 
     if action_key == "time_in":
         if attendance and attendance["time_in"] and not attendance["time_out"]:
@@ -1256,8 +1363,16 @@ def perform_attendance_action(user_id, action_type, actor_id=None, source_label=
         """, (now_str(), "Timed Out", now_str(), attendance["id"]), commit=True)
 
         updated_attendance = get_attendance_by_id(attendance["id"])
+        total_break = total_break_minutes(attendance["id"]) if attendance else 0
+        break_limit_minutes = get_employee_break_limit(user)
         ok, msg = append_attendance_to_google_sheet(user, updated_attendance)
         create_notification(user_id, "Timed Out", f"You timed out at {now_str()} ET.")
+        if attendance and is_overbreak(total_break, break_limit_minutes):
+            create_notification(
+                user_id,
+                "Break Limit Exceeded",
+                f"Your total break time for today is {minutes_to_hm(total_break)}, which is over your {break_limit_minutes} minute limit."
+            )
         log_activity(actor_id or user_id, "KIOSK TIME OUT", f"{source_label} time out for {user['full_name']}. Sheets sync: {msg if ok else 'Skipped/Failed'}")
         return True, "Time out successful.", user
 
@@ -1964,14 +2079,16 @@ def format_time_12h(datetime_str):
         return datetime_str
 
 
-def save_uploaded_file(file_obj, prefix="file"):
+def save_uploaded_file(file_obj, prefix="file", allowed_exts=None):
     if not file_obj or not file_obj.filename:
         return None
-    if not allowed_file(file_obj.filename):
+    allowed_exts = set(allowed_exts or ALLOWED_EXTENSIONS)
+    ext = file_obj.filename.rsplit(".", 1)[1].lower() if "." in file_obj.filename else ""
+    if ext not in allowed_exts:
         return None
 
     safe_name = secure_filename(file_obj.filename)
-    filename = f"{prefix}_{now_timestamp()}_{safe_name}"
+    filename = f"{prefix}_{now_timestamp()}_{secrets.token_hex(6)}_{safe_name}"
     filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
     file_obj.save(filepath)
     return filename
@@ -2806,6 +2923,11 @@ def home():
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
+        client_ip = get_client_ip()
+        if is_login_rate_limited(client_ip):
+            flash(f"Too many login attempts. Please wait {LOGIN_WINDOW_MINUTES} minutes and try again.", "danger")
+            return render_template("login.html"), 429
+
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "").strip()
 
@@ -2815,9 +2937,11 @@ def login():
         """, (username,))
 
         if user and check_password_hash(user["password_hash"], password):
+            session.clear()
             session["user_id"] = user["id"]
             session["role"] = user["role"]
             session["full_name"] = user["full_name"]
+            clear_login_failures(client_ip)
 
             log_activity(user["id"], "LOGIN", f"{user['full_name']} logged in")
 
@@ -2832,12 +2956,14 @@ def login():
             flash("Login successful.", "success")
             return redirect(url_for("dashboard"))
 
+        register_login_failure(client_ip)
         flash("Invalid username or password.", "danger")
 
     return render_template("login.html")
 
 
-@app.route("/logout")
+@app.route("/logout", methods=["POST"])
+@login_required()
 def logout():
     user_id = session.get("user_id")
     if user_id:
@@ -2982,7 +3108,7 @@ def employee_profile():
         profile_image = user["profile_image"]
         file = request.files.get("profile_image")
         if file and file.filename:
-            saved = save_uploaded_file(file, prefix=f"profile_{user['id']}")
+            saved = save_uploaded_file(file, prefix=f"profile_{user['id']}", allowed_exts=IMAGE_EXTENSIONS)
             if not saved:
                 flash("Invalid profile image type.", "danger")
                 return redirect(url_for("employee_profile"))
@@ -3085,7 +3211,7 @@ def admin_profile():
         profile_image = user["profile_image"]
         file = request.files.get("profile_image")
         if file and file.filename:
-            saved = save_uploaded_file(file, prefix=f"profile_{user['id']}")
+            saved = save_uploaded_file(file, prefix=f"profile_{user['id']}", allowed_exts=IMAGE_EXTENSIONS)
             if not saved:
                 flash("Invalid profile image type.", "danger")
                 return redirect(url_for("admin_profile"))
@@ -3225,12 +3351,13 @@ def time_in():
         flash("Your session expired. Please log in again.", "warning")
         return redirect(url_for("login"))
 
+    existing = auto_close_stale_attendance(user, get_current_attendance(user_id), actor_id=user_id, source_label="Employee portal")
     override_status = get_employee_override_status_for_date(user_id, today_str())
-    if override_status and override_status["type"] == "Suspension":
-        flash(f"You cannot time in while suspended. Suspension ends on {override_status['end_date']}.", "danger")
+    override_block_message = get_attendance_override_block_message(override_status, "time_in", existing)
+    if override_block_message:
+        flash(override_block_message, "danger")
         return redirect(url_for("dashboard"))
 
-    existing = get_current_attendance(user_id)
     if existing and existing["time_in"] and not existing["time_out"]:
         flash("You are already timed in.", "warning")
         return redirect(url_for("dashboard"))
@@ -3239,7 +3366,7 @@ def time_in():
     proof_filename = None
 
     if file and file.filename:
-        proof_filename = save_uploaded_file(file, prefix=f"proof_{user_id}")
+        proof_filename = save_uploaded_file(file, prefix=f"proof_{user_id}", allowed_exts=IMAGE_EXTENSIONS | DOCUMENT_EXTENSIONS)
         if not proof_filename:
             flash("Invalid upload file type.", "danger")
             return redirect(url_for("dashboard"))
@@ -3284,12 +3411,13 @@ def time_in():
 @login_required(role="employee")
 def start_break():
     user_id = session["user_id"]
-    override_status = get_employee_override_status_for_date(user_id, today_str())
-    if override_status and override_status["type"] == "Suspension":
-        flash(f"You cannot start a break while suspended. Suspension ends on {override_status['end_date']}.", "danger")
-        return redirect(url_for("dashboard"))
     user = get_user_by_id(user_id)
-    attendance = get_current_attendance(user_id)
+    attendance = auto_close_stale_attendance(user, get_current_attendance(user_id), actor_id=user_id, source_label="Employee portal")
+    override_status = get_employee_override_status_for_date(user_id, today_str())
+    override_block_message = get_attendance_override_block_message(override_status, "start_break", attendance)
+    if override_block_message:
+        flash(override_block_message, "danger")
+        return redirect(url_for("dashboard"))
 
     if not attendance or not attendance["time_in"] or attendance["time_out"]:
         flash("You must be timed in first.", "danger")
@@ -3328,11 +3456,13 @@ def start_break():
 @login_required(role="employee")
 def end_break():
     user_id = session["user_id"]
+    user = get_user_by_id(user_id)
+    attendance = auto_close_stale_attendance(user, get_current_attendance(user_id), actor_id=user_id, source_label="Employee portal")
     override_status = get_employee_override_status_for_date(user_id, today_str())
-    if override_status and override_status["type"] == "Suspension":
-        flash(f"You cannot end a break while suspended. Suspension ends on {override_status['end_date']}.", "danger")
+    override_block_message = get_attendance_override_block_message(override_status, "end_break", attendance)
+    if override_block_message:
+        flash(override_block_message, "danger")
         return redirect(url_for("dashboard"))
-    attendance = get_current_attendance(user_id)
     open_break = get_open_break(user_id, attendance)
 
     if not open_break:
@@ -3353,7 +3483,6 @@ def end_break():
     """, ("Timed In", now_str(), attendance["id"]), commit=True)
 
     create_notification(user_id, "Break Ended", f"You ended break at {now_str()} ET.")
-    user = get_user_by_id(user_id)
     if attendance:
         total_break = total_break_minutes(attendance["id"])
         break_limit_minutes = get_employee_break_limit(user)
@@ -3372,11 +3501,13 @@ def end_break():
 @login_required(role="employee")
 def time_out():
     user_id = session["user_id"]
+    user = get_user_by_id(user_id)
+    attendance = auto_close_stale_attendance(user, get_current_attendance(user_id), actor_id=user_id, source_label="Employee portal")
     override_status = get_employee_override_status_for_date(user_id, today_str())
-    if override_status and override_status["type"] == "Suspension":
-        flash(f"You cannot time out while suspended. Suspension ends on {override_status['end_date']}.", "danger")
+    override_block_message = get_attendance_override_block_message(override_status, "time_out", attendance)
+    if override_block_message:
+        flash(override_block_message, "danger")
         return redirect(url_for("dashboard"))
-    attendance = get_current_attendance(user_id)
 
     if not attendance or not attendance["time_in"]:
         flash("You are not timed in.", "danger")
@@ -3400,11 +3531,19 @@ def time_out():
         WHERE id = ?
     """, (now_str(), "Timed Out", now_str(), attendance["id"]), commit=True)
 
+    total_break = total_break_minutes(attendance["id"])
+    break_limit_minutes = get_employee_break_limit(user)
     user_row = get_user_by_id(user_id)
     updated_attendance = get_attendance_by_id(attendance["id"])
     ok, msg = append_attendance_to_google_sheet(user_row, updated_attendance)
 
     create_notification(user_id, "Timed Out", f"You timed out at {now_str()} ET.")
+    if attendance and is_overbreak(total_break, break_limit_minutes):
+        create_notification(
+            user_id,
+            "Break Limit Exceeded",
+            f"Your total break time for today is {minutes_to_hm(total_break)}, which is over your {break_limit_minutes} minute limit."
+        )
     log_activity(user_id, "TIME OUT", f"Employee timed out. Sheets sync: {msg if ok else 'Skipped/Failed'}")
     flash("Time out successful.", "success")
     return redirect(url_for("dashboard"))
@@ -3462,6 +3601,7 @@ def get_admin_employee_rows(status_filter="", search="", department_filter="", o
         attendance = get_current_attendance(user["id"])
         scheduled_today = is_scheduled_today(user)
         suspension_today = get_suspension_for_date(user["id"], today_str())
+        leave_today = get_approved_leave_for_date(user["id"], today_str())
         absent_today = is_absent_today(user, attendance)
         missing_timeout_today = is_missing_timeout_today(user, attendance)
         undertime_today = 1 if is_undertime_record(
@@ -3474,6 +3614,8 @@ def get_admin_employee_rows(status_filter="", search="", department_filter="", o
             status_display = "Inactive"
         elif suspension_today:
             status_display = "Suspended"
+        elif leave_today and live_status == "Offline":
+            status_display = leave_today["request_type"]
         elif absent_today:
             status_display = "Absent"
         elif missing_timeout_today:
@@ -3494,6 +3636,7 @@ def get_admin_employee_rows(status_filter="", search="", department_filter="", o
             "scheduled_today": 1 if scheduled_today else 0,
             "absent_flag": 1 if absent_today else 0,
             "suspension_flag": 1 if suspension_today else 0,
+            "leave_flag": 1 if leave_today else 0,
             "shift_start": user["shift_start"] or DEFAULT_SHIFT_START,
             "shift_end": user["shift_end"] or DEFAULT_SHIFT_END,
             "break_window_start": user["break_window_start"] or DEFAULT_BREAK_WINDOW_START,
@@ -5342,7 +5485,7 @@ def manage_employees():
         profile_image = None
         file = request.files.get("profile_image")
         if file and file.filename:
-            profile_image = save_uploaded_file(file, prefix="profile")
+            profile_image = save_uploaded_file(file, prefix="profile", allowed_exts=IMAGE_EXTENSIONS)
             if not profile_image:
                 flash("Invalid profile image file type.", "danger")
                 return redirect(url_for("manage_employees"))
@@ -5504,7 +5647,7 @@ def edit_employee(user_id):
         profile_image = user["profile_image"]
         file = request.files.get("profile_image")
         if file and file.filename:
-            saved = save_uploaded_file(file, prefix=f"profile_{user_id}")
+            saved = save_uploaded_file(file, prefix=f"profile_{user_id}", allowed_exts=IMAGE_EXTENSIONS)
             if not saved:
                 flash("Invalid profile image file type.", "danger")
                 return redirect(url_for("edit_employee", user_id=user_id))
@@ -5808,7 +5951,7 @@ def update_employee_id_signatory():
 
     file = request.files.get("id_signature_file")
     if file and file.filename:
-        saved = save_uploaded_file(file, prefix="id_signature")
+        saved = save_uploaded_file(file, prefix="id_signature", allowed_exts=IMAGE_EXTENSIONS)
         if not saved:
             flash("Invalid signature image file type.", "danger")
             employee_id = request.form.get("employee_id", "").strip()
@@ -5846,15 +5989,21 @@ def delete_employee(user_id):
         flash("Employee not found.", "danger")
         return redirect(url_for("manage_employees"))
 
-    execute_db("DELETE FROM notifications WHERE user_id = ?", (user_id,), commit=True)
-    execute_db("DELETE FROM breaks WHERE user_id = ?", (user_id,), commit=True)
-    execute_db("DELETE FROM attendance WHERE user_id = ?", (user_id,), commit=True)
-    execute_db("DELETE FROM activity_logs WHERE user_id = ?", (user_id,), commit=True)
-    execute_db("DELETE FROM correction_requests WHERE user_id = ?", (user_id,), commit=True)
-    execute_db("DELETE FROM scanner_logs WHERE employee_user_id = ? OR scanner_user_id = ?", (user_id, user_id), commit=True)
-    execute_db("DELETE FROM incident_reports WHERE user_id = ?", (user_id,), commit=True)
-    execute_db("DELETE FROM disciplinary_actions WHERE user_id = ?", (user_id,), commit=True)
-    execute_db("DELETE FROM users WHERE id = ?", (user_id,), commit=True)
+    db = get_db()
+    try:
+        execute_db("DELETE FROM notifications WHERE user_id = ?", (user_id,))
+        execute_db("DELETE FROM breaks WHERE user_id = ?", (user_id,))
+        execute_db("DELETE FROM attendance WHERE user_id = ?", (user_id,))
+        execute_db("DELETE FROM activity_logs WHERE user_id = ?", (user_id,))
+        execute_db("DELETE FROM correction_requests WHERE user_id = ?", (user_id,))
+        execute_db("DELETE FROM scanner_logs WHERE employee_user_id = ? OR scanner_user_id = ?", (user_id, user_id))
+        execute_db("DELETE FROM incident_reports WHERE user_id = ?", (user_id,))
+        execute_db("DELETE FROM disciplinary_actions WHERE user_id = ?", (user_id,))
+        execute_db("DELETE FROM users WHERE id = ?", (user_id,))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
     log_activity(session["user_id"], "DELETE EMPLOYEE", f"Deleted employee: {user['full_name']}")
     flash("Employee deleted successfully.", "info")
