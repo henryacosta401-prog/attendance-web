@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Payroll Summary</title>
+    <style>
+        :root {
+            color-scheme: light;
+            --ink: #0f172a;
+            --muted: #475569;
+            --line: #cbd5e1;
+            --panel: #f8fafc;
+            --brand: #1d4ed8;
+            --good: #047857;
+            --warn: #b45309;
+            --bad: #b91c1c;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            padding: 24px;
+            font-family: "Segoe UI", Arial, sans-serif;
+            color: var(--ink);
+            background: #ffffff;
+        }
+        .print-shell { display: grid; gap: 20px; }
+        .print-header, .print-panel {
+            border: 1px solid var(--line);
+            border-radius: 18px;
+            padding: 20px;
+            background: var(--panel);
+        }
+        .print-header h1,
+        .print-panel h2 {
+            margin: 0;
+        }
+        .print-header p,
+        .print-meta,
+        .print-note {
+            color: var(--muted);
+            font-size: 13px;
+        }
+        .print-meta-grid,
+        .print-stats {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 12px;
+            margin-top: 16px;
+        }
+        .print-item {
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            padding: 12px;
+            background: #ffffff;
+        }
+        .print-label {
+            font-size: 11px;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            font-weight: 700;
+        }
+        .print-value {
+            margin-top: 8px;
+            font-size: 20px;
+            font-weight: 800;
+        }
+        .status-chip {
+            display: inline-flex;
+            align-items: center;
+            padding: 6px 12px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 800;
+            text-transform: uppercase;
+        }
+        .status-chip.released { background: rgba(4, 120, 87, 0.12); color: var(--good); }
+        .status-chip.draft { background: rgba(180, 83, 9, 0.12); color: var(--warn); }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 14px;
+        }
+        th, td {
+            border: 1px solid var(--line);
+            padding: 10px;
+            font-size: 12px;
+            text-align: left;
+            vertical-align: top;
+        }
+        th {
+            background: #dbeafe;
+            color: #1e3a8a;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+        }
+        .money-strong { font-weight: 800; }
+        .allowance { color: var(--good); font-weight: 700; }
+        .deduction { color: var(--bad); font-weight: 700; }
+        @media print {
+            body { padding: 0; }
+            .print-header, .print-panel { break-inside: avoid; }
+        }
+        @page {
+            size: A4 portrait;
+            margin: 12mm;
+        }
+    </style>
+</head>
+<body>
+    <div class="print-shell">
+        <section class="print-header">
+            <div style="display:flex;justify-content:space-between;gap:16px;align-items:flex-start;">
+                <div>
+                    <h1>Payroll Summary</h1>
+                    <p>Prepared payroll summary for Stellar Seats. This print view matches the current dashboard filter and can be used for review or release signoff.</p>
+                </div>
+                <span class="status-chip {% if current_run and current_run.status == 'Released' %}released{% else %}draft{% endif %}">
+                    {{ current_run.status if current_run else 'Not Saved' }}
+                </span>
+            </div>
+
+            <div class="print-meta-grid">
+                <div class="print-item">
+                    <div class="print-label">Payroll Period</div>
+                    <div class="print-value">{{ date_from }} to {{ date_to }}</div>
+                </div>
+                <div class="print-item">
+                    <div class="print-label">Department Scope</div>
+                    <div class="print-value" style="font-size:16px;">{{ department_filter or 'All Departments' }}</div>
+                </div>
+                <div class="print-item">
+                    <div class="print-label">Employee Scope</div>
+                    <div class="print-value" style="font-size:16px;">{{ employee_filter_label }}</div>
+                </div>
+                <div class="print-item">
+                    <div class="print-label">Snapshot Updated</div>
+                    <div class="print-value" style="font-size:16px;">{{ current_run.updated_at if current_run else 'Live view only' }}</div>
+                    {% if current_run and current_run.created_by_name %}
+                        <div class="print-note" style="margin-top:6px;">By {{ current_run.created_by_name }}</div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="print-stats">
+                <div class="print-item"><div class="print-label">Final Payroll</div><div class="print-value">{{ format_currency(stats.total_final_pay) }}</div></div>
+                <div class="print-item"><div class="print-label">Gross Payroll</div><div class="print-value">{{ format_currency(stats.total_gross) }}</div></div>
+                <div class="print-item"><div class="print-label">Allowances</div><div class="print-value">{{ format_currency(stats.total_allowances) }}</div></div>
+                <div class="print-item"><div class="print-label">Deductions</div><div class="print-value">{{ format_currency(stats.total_deductions) }}</div></div>
+            </div>
+        </section>
+
+        <section class="print-panel">
+            <h2>Payroll Rows</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Employee</th>
+                        <th>Department</th>
+                        <th>Rate</th>
+                        <th>Days</th>
+                        <th>Hours</th>
+                        <th>OT Hours</th>
+                        <th>Gross</th>
+                        <th>OT Pay</th>
+                        <th>Allowances</th>
+                        <th>Deductions</th>
+                        <th>Final Pay</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in payroll_rows %}
+                        <tr>
+                            <td>{{ row.full_name }}<div class="print-note">@{{ row.username }}{% if row.position %} | {{ row.position }}{% endif %}</div></td>
+                            <td>{{ row.department or '-' }}</td>
+                            <td>{{ format_currency(row.hourly_rate) }}</td>
+                            <td>{{ row.days_worked }}</td>
+                            <td>{{ "%.2f"|format(row.total_hours) }}</td>
+                            <td>{{ "%.2f"|format(row.overtime_hours) }}</td>
+                            <td class="money-strong">{{ format_currency(row.gross_pay) }}</td>
+                            <td>{{ format_currency(row.overtime_pay) }}</td>
+                            <td class="allowance">{{ format_currency(row.allowances) }}</td>
+                            <td class="deduction">{{ format_currency(row.deductions) }}</td>
+                            <td class="money-strong">{{ format_currency(row.final_pay) }}</td>
+                            <td>{{ row.status_label }}</td>
+                        </tr>
+                    {% else %}
+                        <tr><td colspan="12">No payroll rows matched this filter.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </section>
+
+        <section class="print-panel">
+            <h2>Adjustments</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Employee</th>
+                        <th>Type</th>
+                        <th>Label</th>
+                        <th>Amount</th>
+                        <th>Notes</th>
+                        <th>Created</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for adjustment in adjustments %}
+                        <tr>
+                            <td>{{ adjustment.employee_name }}</td>
+                            <td>{{ adjustment.adjustment_type }}</td>
+                            <td>{{ adjustment.label }}</td>
+                            <td class="{% if adjustment.adjustment_type == 'Allowance' %}allowance{% else %}deduction{% endif %}">{{ format_currency(adjustment.amount) }}</td>
+                            <td>{{ adjustment.notes or '-' }}</td>
+                            <td>{{ adjustment.created_at }}</td>
+                        </tr>
+                    {% else %}
+                        <tr><td colspan="6">No adjustments recorded for this payroll view.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </section>
+    </div>
+</body>
+</html>

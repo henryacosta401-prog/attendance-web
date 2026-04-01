@@ -1,11 +1,22 @@
 {% extends "base.html" %}
 {% block title %}Payroll Dashboard{% endblock %}
 
+{% macro payroll_hidden_filters() -%}
+    <input type="hidden" name="period" value="{{ period }}">
+    <input type="hidden" name="date_from" value="{{ date_from }}">
+    <input type="hidden" name="date_to" value="{{ date_to }}">
+    <input type="hidden" name="department" value="{{ department_filter }}">
+    <input type="hidden" name="employee_id" value="{{ employee_filter }}">
+{%- endmacro %}
+
 {% block extra_head %}
 <style>
 .payroll-shell { display: grid; gap: 20px; }
-.payroll-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; }
-.payroll-card, .payroll-panel {
+.payroll-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; }
+.payroll-card,
+.payroll-panel,
+.payroll-run-card,
+.payroll-adjustment-card {
     border-radius: 24px;
     background: linear-gradient(180deg, rgba(22, 31, 53, 0.98), rgba(15, 23, 42, 0.96));
     border: 1px solid rgba(148, 163, 184, 0.16);
@@ -14,23 +25,67 @@
 .payroll-card { padding: 18px; }
 .payroll-label { color: #9fb0d4; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
 .payroll-value { margin-top: 10px; color: #f8fbff; font-size: 34px; font-weight: 900; line-height: 1; }
-.payroll-note, .payroll-subtitle, .payroll-subtext { color: #9fb0d4; font-size: 12px; }
-.payroll-panel { padding: 20px; }
+.payroll-note, .payroll-subtitle, .payroll-subtext, .payroll-meta { color: #9fb0d4; font-size: 12px; }
+.payroll-panel, .payroll-run-card, .payroll-adjustment-card { padding: 20px; }
+.payroll-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(340px, 0.8fr); gap: 20px; align-items: start; }
 .payroll-toolbar { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }
-.payroll-table-wrap { overflow-x: auto; margin-top: 18px; border-radius: 18px; border: 1px solid rgba(148, 163, 184, 0.14); }
-.payroll-table { width: 100%; border-collapse: collapse; }
-.payroll-table th, .payroll-table td { padding: 14px 16px; border-bottom: 1px solid rgba(148, 163, 184, 0.12); }
+.payroll-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.payroll-run-status {
+    display: inline-flex;
+    align-items: center;
+    padding: 7px 12px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+.payroll-run-status-draft { background: rgba(245, 158, 11, 0.18); color: #ffd58b; }
+.payroll-run-status-released { background: rgba(16, 185, 129, 0.18); color: #7ef5bf; }
+.payroll-table-wrap {
+    overflow-x: auto;
+    margin-top: 18px;
+    border-radius: 18px;
+    border: 1px solid rgba(148, 163, 184, 0.14);
+}
+.payroll-table { width: 100%; border-collapse: collapse; min-width: 1180px; }
+.payroll-table th, .payroll-table td { padding: 14px 16px; border-bottom: 1px solid rgba(148, 163, 184, 0.12); vertical-align: top; }
 .payroll-table th { background: rgba(59, 130, 246, 0.08); color: #bad0ff; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
 .payroll-table td { color: #ecf3ff; font-size: 14px; }
 .payroll-status { display: inline-flex; align-items: center; padding: 6px 10px; border-radius: 999px; font-size: 12px; font-weight: 800; }
 .payroll-status-ready { background: rgba(16, 185, 129, 0.18); color: #7ef5bf; }
 .payroll-status-missing { background: rgba(239, 68, 68, 0.18); color: #ffb4b4; }
+.payroll-adjustment-table { width: 100%; border-collapse: collapse; }
+.payroll-adjustment-table th, .payroll-adjustment-table td { padding: 12px 10px; border-bottom: 1px solid rgba(148, 163, 184, 0.12); font-size: 13px; vertical-align: top; }
+.payroll-adjustment-table th { color: #bad0ff; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; text-align: left; }
+.payroll-adjustment-positive { color: #8cf0c0; font-weight: 800; }
+.payroll-adjustment-negative { color: #ffb4b4; font-weight: 800; }
 .payroll-empty { padding: 18px; color: #9fb0d4; text-align: center; }
+.payroll-run-list { display: grid; gap: 12px; margin-top: 16px; }
+.payroll-run-entry {
+    padding: 14px;
+    border-radius: 18px;
+    background: rgba(15, 23, 42, 0.56);
+    border: 1px solid rgba(148, 163, 184, 0.12);
+}
+.payroll-summary-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
+.payroll-summary-item {
+    padding: 14px;
+    border-radius: 18px;
+    background: rgba(15, 23, 42, 0.55);
+    border: 1px solid rgba(148, 163, 184, 0.12);
+}
+.payroll-inline-form { display: inline; }
+.payroll-table td.payroll-money-strong { font-weight: 800; color: #ffffff; }
+.payroll-highlight { color: #ffffff; font-weight: 800; }
+@media (max-width: 1240px) {
+    .payroll-grid { grid-template-columns: 1fr; }
+}
 @media (max-width: 1100px) {
     .payroll-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 720px) {
-    .payroll-toolbar { grid-template-columns: 1fr; }
+    .payroll-toolbar, .payroll-summary-grid { grid-template-columns: 1fr; }
 }
 </style>
 {% endblock %}
@@ -40,70 +95,261 @@
     <div class="hero">
         <div>
             <h1>Payroll Dashboard</h1>
-            <p class="section-subtitle">Preview gross hourly payroll from attendance records and quickly spot employees who still need a pay rate.</p>
+            <p class="section-subtitle">Finalize payroll, add manual deductions or allowances, save a draft snapshot, and release the final run when everything looks right.</p>
         </div>
-        <div class="status status-green">{{ date_from }} to {{ date_to }}</div>
+        <div class="status {% if current_run and current_run.status == 'Released' %}status-green{% else %}status-yellow{% endif %}">
+            {{ date_from }} to {{ date_to }}
+        </div>
     </div>
 </div>
 
 <div class="payroll-shell">
     <div class="payroll-stats">
-        <div class="payroll-card"><div class="payroll-label">Gross Payroll</div><div class="payroll-value">{{ format_currency(stats.total_gross) }}</div><div class="payroll-note">Hourly pay based on worked hours</div></div>
+        <div class="payroll-card"><div class="payroll-label">Final Payroll</div><div class="payroll-value">{{ format_currency(stats.total_final_pay) }}</div><div class="payroll-note">Gross + overtime + allowances - deductions</div></div>
+        <div class="payroll-card"><div class="payroll-label">Gross Payroll</div><div class="payroll-value">{{ format_currency(stats.total_gross) }}</div><div class="payroll-note">Base pay from recorded worked hours</div></div>
+        <div class="payroll-card"><div class="payroll-label">Overtime Pay</div><div class="payroll-value">{{ format_currency(stats.total_overtime_pay) }}</div><div class="payroll-note">Using {{ "%.2f"|format(stats.overtime_multiplier) }}x overtime multiplier</div></div>
+        <div class="payroll-card"><div class="payroll-label">Allowances</div><div class="payroll-value">{{ format_currency(stats.total_allowances) }}</div><div class="payroll-note">Manual additions in this payroll view</div></div>
+        <div class="payroll-card"><div class="payroll-label">Deductions</div><div class="payroll-value">{{ format_currency(stats.total_deductions) }}</div><div class="payroll-note">Manual deductions in this payroll view</div></div>
         <div class="payroll-card"><div class="payroll-label">Paid Hours</div><div class="payroll-value">{{ "%.2f"|format(stats.total_hours) }}</div><div class="payroll-note">Attendance rows with time in and time out</div></div>
         <div class="payroll-card"><div class="payroll-label">Overtime Hours</div><div class="payroll-value">{{ "%.2f"|format(stats.total_overtime_hours) }}</div><div class="payroll-note">Tracked overtime sessions in this range</div></div>
-        <div class="payroll-card"><div class="payroll-label">Overtime Pay</div><div class="payroll-value">{{ format_currency(stats.total_overtime_pay) }}</div><div class="payroll-note">Using {{ "%.2f"|format(stats.overtime_multiplier) }}x overtime multiplier</div></div>
-        <div class="payroll-card"><div class="payroll-label">Employees In View</div><div class="payroll-value">{{ stats.employees }}</div><div class="payroll-note">Current department and date filter</div></div>
-        <div class="payroll-card"><div class="payroll-label">Employees With Pay</div><div class="payroll-value">{{ stats.paid_employees }}</div><div class="payroll-note">At least one payable record in range</div></div>
-        <div class="payroll-card"><div class="payroll-label">Missing Rates</div><div class="payroll-value">{{ stats.missing_rates }}</div><div class="payroll-note">Needs hourly rate before payroll is final</div></div>
-        <div class="payroll-card"><div class="payroll-label">Suspension Days</div><div class="payroll-value">{{ stats.suspension_days }}</div><div class="payroll-note">Scheduled suspension days in range</div></div>
-        <div class="payroll-card"><div class="payroll-label">Lost Pay Estimate</div><div class="payroll-value">{{ format_currency(stats.suspension_pay) }}</div><div class="payroll-note">Reference impact from suspensions</div></div>
-        <div class="payroll-card"><div class="payroll-label">Estimated Pay</div><div class="payroll-value">{{ format_currency(stats.total_net_estimate) }}</div><div class="payroll-note">Worked pay plus overtime, before other deductions</div></div>
+        <div class="payroll-card"><div class="payroll-label">Employees In View</div><div class="payroll-value">{{ stats.employees }}</div><div class="payroll-note">Current department and employee filter</div></div>
+        <div class="payroll-card"><div class="payroll-label">Employees With Pay</div><div class="payroll-value">{{ stats.paid_employees }}</div><div class="payroll-note">At least one payable row in this run</div></div>
+        <div class="payroll-card"><div class="payroll-label">Missing Rates</div><div class="payroll-value">{{ stats.missing_rates }}</div><div class="payroll-note">Release is blocked while this is above zero</div></div>
+        <div class="payroll-card"><div class="payroll-label">Suspension Days</div><div class="payroll-value">{{ stats.suspension_days }}</div><div class="payroll-note">Reference-only lost time in this range</div></div>
+        <div class="payroll-card"><div class="payroll-label">Lost Pay Estimate</div><div class="payroll-value">{{ format_currency(stats.suspension_pay) }}</div><div class="payroll-note">Shown separately from final pay</div></div>
     </div>
 
-    <section class="payroll-panel">
-        <h2 style="margin:0;color:#f8fbff;">Payroll Filters</h2>
-        <p class="payroll-subtitle" style="margin-top:6px;">Use quick date ranges or enter custom dates for payroll review.</p>
-        <form method="GET" class="payroll-toolbar">
-            <div>
-                <label>Period</label>
-                <select class="input" name="period">
-                    <option value="this_month" {% if period == 'this_month' %}selected{% endif %}>This Month</option>
-                    <option value="last_month" {% if period == 'last_month' %}selected{% endif %}>Last Month</option>
-                    <option value="last_14_days" {% if period == 'last_14_days' %}selected{% endif %}>Last 14 Days</option>
-                    <option value="custom" {% if period == 'custom' %}selected{% endif %}>Custom</option>
-                </select>
+    <div class="payroll-grid">
+        <section class="payroll-panel">
+            <h2 style="margin:0;color:#f8fbff;">Payroll Filters</h2>
+            <p class="payroll-subtitle" style="margin-top:6px;">Use quick periods or custom dates, then save the current payroll view as a draft or release snapshot.</p>
+            <form method="GET" class="payroll-toolbar">
+                <div>
+                    <label>Period</label>
+                    <select class="input" name="period">
+                        <option value="this_month" {% if period == 'this_month' %}selected{% endif %}>This Month</option>
+                        <option value="last_month" {% if period == 'last_month' %}selected{% endif %}>Last Month</option>
+                        <option value="last_14_days" {% if period == 'last_14_days' %}selected{% endif %}>Last 14 Days</option>
+                        <option value="custom" {% if period == 'custom' %}selected{% endif %}>Custom</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Date From</label>
+                    <input class="input" type="date" name="date_from" value="{{ date_from }}">
+                </div>
+                <div>
+                    <label>Date To</label>
+                    <input class="input" type="date" name="date_to" value="{{ date_to }}">
+                </div>
+                <div>
+                    <label>Department</label>
+                    <select class="input" name="department">
+                        <option value="">All Departments</option>
+                        {% for dept in departments %}
+                            <option value="{{ dept.department }}" {% if department_filter == dept.department %}selected{% endif %}>{{ dept.department }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label>Employee</label>
+                    <select class="input" name="employee_id">
+                        <option value="">All Employees</option>
+                        {% for employee in employees %}
+                            <option value="{{ employee.id }}" {% if employee_filter == (employee.id|string) %}selected{% endif %}>{{ employee.full_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div style="display:flex;align-items:end;">
+                    <button class="btn btn-primary" type="submit" style="width:100%;">Apply Filters</button>
+                </div>
+            </form>
+
+            <div class="payroll-actions">
+                <a class="btn btn-secondary" href="{{ url_for('export_admin_payroll_excel', period=period, date_from=date_from, date_to=date_to, department=department_filter, employee_id=employee_filter) }}">Export Excel</a>
+                <a class="btn btn-secondary" href="{{ url_for('print_admin_payroll', period=period, date_from=date_from, date_to=date_to, department=department_filter, employee_id=employee_filter) }}" target="_blank" rel="noopener">Print Summary</a>
             </div>
-            <div>
-                <label>Date From</label>
-                <input class="input" type="date" name="date_from" value="{{ date_from }}">
+
+            <form method="POST" action="{{ url_for('save_payroll_run') }}" style="margin-top:18px;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                {{ payroll_hidden_filters() }}
+                <label>Snapshot Notes</label>
+                <textarea class="input" name="notes" rows="3" placeholder="Optional release notes, payout reminders, or approval comments.">{{ current_run.notes if current_run else '' }}</textarea>
+                <div class="payroll-actions">
+                    <button class="btn btn-secondary" type="submit" name="run_action" value="draft">Save Draft Snapshot</button>
+                    <button class="btn btn-primary" type="submit" name="run_action" value="release">Release Payroll</button>
+                </div>
+                <p class="payroll-note" style="margin-top:10px;">Release is blocked automatically while any employee in this view is still missing an hourly rate.</p>
+            </form>
+        </section>
+
+        <section class="payroll-run-card">
+            <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
+                <div>
+                    <h2 style="margin:0;color:#f8fbff;">Current Payroll Run</h2>
+                    <p class="payroll-subtitle" style="margin-top:6px;">This shows the saved snapshot for the active filter and date range.</p>
+                </div>
+                {% if current_run %}
+                    <span class="payroll-run-status {% if current_run.status == 'Released' %}payroll-run-status-released{% else %}payroll-run-status-draft{% endif %}">
+                        {{ current_run.status }}
+                    </span>
+                {% else %}
+                    <span class="payroll-run-status payroll-run-status-draft">Not Saved</span>
+                {% endif %}
             </div>
-            <div>
-                <label>Date To</label>
-                <input class="input" type="date" name="date_to" value="{{ date_to }}">
+
+            {% if current_run %}
+                <div class="payroll-summary-grid">
+                    <div class="payroll-summary-item">
+                        <div class="payroll-label">Snapshot Size</div>
+                        <div class="payroll-highlight" style="margin-top:6px;">{{ current_run.item_count }} employee row(s)</div>
+                        <div class="payroll-meta" style="margin-top:6px;">{{ current_run.date_from }} to {{ current_run.date_to }}</div>
+                    </div>
+                    <div class="payroll-summary-item">
+                        <div class="payroll-label">Created By</div>
+                        <div class="payroll-highlight" style="margin-top:6px;">{{ current_run.created_by_name or 'Administrator' }}</div>
+                        <div class="payroll-meta" style="margin-top:6px;">Updated {{ current_run.updated_at }}</div>
+                    </div>
+                    <div class="payroll-summary-item">
+                        <div class="payroll-label">Department Scope</div>
+                        <div class="payroll-highlight" style="margin-top:6px;">{{ current_run.department_filter or 'All Departments' }}</div>
+                        <div class="payroll-meta" style="margin-top:6px;">Employee filter: {{ current_run.employee_name or current_run.employee_filter or 'All Employees' }}</div>
+                    </div>
+                    <div class="payroll-summary-item">
+                        <div class="payroll-label">Release Time</div>
+                        <div class="payroll-highlight" style="margin-top:6px;">{{ current_run.released_at or 'Not released yet' }}</div>
+                        <div class="payroll-meta" style="margin-top:6px;">Notes: {{ current_run.notes or 'None' }}</div>
+                    </div>
+                </div>
+            {% else %}
+                <div class="payroll-empty" style="margin-top:16px;">No payroll snapshot has been saved for this exact filter yet.</div>
+            {% endif %}
+
+            <div style="margin-top:18px;">
+                <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
+                    <div>
+                        <h3 style="margin:0;color:#f8fbff;">Recent Payroll Runs</h3>
+                        <p class="payroll-subtitle" style="margin-top:6px;">Quick jump list for draft and released payroll snapshots.</p>
+                    </div>
+                </div>
+                <div class="payroll-run-list">
+                    {% if recent_runs %}
+                        {% for run in recent_runs %}
+                            <div class="payroll-run-entry">
+                                <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;">
+                                    <div>
+                                        <div class="payroll-highlight">{{ run.date_from }} to {{ run.date_to }}</div>
+                                        <div class="payroll-meta" style="margin-top:4px;">{{ run.department_filter or 'All Departments' }} | {{ run.employee_name or run.employee_filter or 'All Employees' }}</div>
+                                    </div>
+                                    <span class="payroll-run-status {% if run.status == 'Released' %}payroll-run-status-released{% else %}payroll-run-status-draft{% endif %}">{{ run.status }}</span>
+                                </div>
+                                <div class="payroll-meta" style="margin-top:10px;">{{ run.item_count }} item(s) | Updated {{ run.updated_at }}{% if run.created_by_name %} | {{ run.created_by_name }}{% endif %}</div>
+                                <div class="payroll-actions" style="margin-top:10px;">
+                                    <a class="btn btn-secondary" href="{{ url_for('admin_payroll', period='custom', date_from=run.date_from, date_to=run.date_to, department=run.department_filter or '', employee_id=run.employee_filter or '') }}">Open Run</a>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="payroll-empty">No payroll runs have been saved yet.</div>
+                    {% endif %}
+                </div>
             </div>
+        </section>
+    </div>
+
+    <section class="payroll-adjustment-card">
+        <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
             <div>
-                <label>Department</label>
-                <select class="input" name="department">
-                    <option value="">All Departments</option>
-                    {% for dept in departments %}
-                        <option value="{{ dept.department }}" {% if department_filter == dept.department %}selected{% endif %}>{{ dept.department }}</option>
-                    {% endfor %}
-                </select>
+                <h2 style="margin:0;color:#f8fbff;">Adjustments</h2>
+                <p class="payroll-subtitle" style="margin-top:6px;">Record allowances and deductions that should affect the current payroll view.</p>
             </div>
+        </div>
+
+        <form method="POST" action="{{ url_for('add_payroll_adjustment') }}" class="payroll-toolbar">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            {{ payroll_hidden_filters() }}
             <div>
                 <label>Employee</label>
-                <select class="input" name="employee_id">
-                    <option value="">All Employees</option>
+                <select class="input" name="user_id" required>
+                    <option value="">Select Employee</option>
                     {% for employee in employees %}
-                        <option value="{{ employee.id }}" {% if employee_filter == (employee.id|string) %}selected{% endif %}>{{ employee.full_name }}</option>
+                        {% if not department_filter or employee.department == department_filter %}
+                            <option value="{{ employee.id }}" {% if employee_filter == (employee.id|string) %}selected{% endif %}>{{ employee.full_name }}</option>
+                        {% endif %}
                     {% endfor %}
                 </select>
             </div>
-            <div style="display:flex;align-items:end;gap:10px;">
-                <button class="btn btn-primary" type="submit" style="width:100%;">Apply</button>
+            <div>
+                <label>Type</label>
+                <select class="input" name="adjustment_type" required>
+                    <option value="Allowance">Allowance</option>
+                    <option value="Deduction">Deduction</option>
+                </select>
+            </div>
+            <div>
+                <label>Label</label>
+                <input class="input" type="text" name="label" placeholder="Bonus, Cash Advance, Meal Allowance" required>
+            </div>
+            <div>
+                <label>Amount</label>
+                <input class="input" type="number" name="amount" min="0.01" step="0.01" placeholder="0.00" required>
+            </div>
+            <div>
+                <label>Notes</label>
+                <input class="input" type="text" name="notes" placeholder="Optional reference or memo">
+            </div>
+            <div style="display:flex;align-items:end;">
+                <button class="btn btn-primary" type="submit" style="width:100%;">Add Adjustment</button>
             </div>
         </form>
 
+        <div class="payroll-table-wrap">
+            <table class="payroll-adjustment-table">
+                <thead>
+                    <tr>
+                        <th>Employee</th>
+                        <th>Type</th>
+                        <th>Label</th>
+                        <th>Amount</th>
+                        <th>Notes</th>
+                        <th>Created</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if adjustments %}
+                        {% for adjustment in adjustments %}
+                            <tr>
+                                <td>
+                                    <div class="payroll-highlight">{{ adjustment.employee_name }}</div>
+                                    <div class="payroll-subtext">{{ adjustment.employee_department or '-' }}{% if adjustment.employee_position %} | {{ adjustment.employee_position }}{% endif %}</div>
+                                </td>
+                                <td>{{ adjustment.adjustment_type }}</td>
+                                <td>{{ adjustment.label }}</td>
+                                <td class="{% if adjustment.adjustment_type == 'Allowance' %}payroll-adjustment-positive{% else %}payroll-adjustment-negative{% endif %}">
+                                    {% if adjustment.adjustment_type == 'Allowance' %}+{% else %}-{% endif %}{{ format_currency(adjustment.amount) }}
+                                </td>
+                                <td>{{ adjustment.notes or '-' }}</td>
+                                <td>{{ adjustment.created_at }}{% if adjustment.created_by_name %}<div class="payroll-subtext">{{ adjustment.created_by_name }}</div>{% endif %}</td>
+                                <td style="text-align:right;">
+                                    <form method="POST" action="{{ url_for('delete_payroll_adjustment', adjustment_id=adjustment.id) }}" class="payroll-inline-form" onsubmit="return confirm('Remove this payroll adjustment?');">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                        {{ payroll_hidden_filters() }}
+                                        <button class="btn btn-danger" type="submit">Delete</button>
+                                    </form>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr><td colspan="7" class="payroll-empty">No payroll adjustments saved for this payroll view yet.</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="payroll-panel">
+        <h2 style="margin:0;color:#f8fbff;">Payroll Table</h2>
+        <p class="payroll-subtitle" style="margin-top:6px;">Final pay is the amount currently ready for export or release in this payroll view.</p>
         <div class="payroll-table-wrap">
             <table class="payroll-table">
                 <thead>
@@ -120,7 +366,9 @@
                         <th>Lost Pay Estimate</th>
                         <th>Gross Pay</th>
                         <th>Overtime Pay</th>
-                        <th>Estimated Pay</th>
+                        <th>Allowances</th>
+                        <th>Deductions</th>
+                        <th>Final Pay</th>
                         <th>Status</th>
                     </tr>
                 </thead>
@@ -128,7 +376,10 @@
                     {% if payroll_rows %}
                         {% for row in payroll_rows %}
                             <tr>
-                                <td><div style="font-weight:800;color:#fff;">{{ row.full_name }}</div><div class="payroll-subtext">@{{ row.username }}{% if row.position %} | {{ row.position }}{% endif %}</div></td>
+                                <td>
+                                    <div style="font-weight:800;color:#fff;">{{ row.full_name }}</div>
+                                    <div class="payroll-subtext">@{{ row.username }}{% if row.position %} | {{ row.position }}{% endif %}</div>
+                                </td>
                                 <td>{{ row.department or '-' }}</td>
                                 <td>{{ format_currency(row.hourly_rate) }}</td>
                                 <td>{{ row.days_worked }}</td>
@@ -138,9 +389,11 @@
                                 <td>{{ row.break_minutes }}</td>
                                 <td>{{ row.suspension_days }}</td>
                                 <td>{{ format_currency(row.suspension_pay) }}</td>
-                                <td style="font-weight:800;color:#fff;">{{ format_currency(row.gross_pay) }}</td>
+                                <td class="payroll-money-strong">{{ format_currency(row.gross_pay) }}</td>
                                 <td>{{ format_currency(row.overtime_pay) }}</td>
-                                <td style="font-weight:800;color:#fff;">{{ format_currency(row.net_pay_estimate) }}</td>
+                                <td class="payroll-adjustment-positive">{{ format_currency(row.allowances) }}</td>
+                                <td class="payroll-adjustment-negative">{{ format_currency(row.deductions) }}</td>
+                                <td class="payroll-money-strong">{{ format_currency(row.final_pay) }}</td>
                                 <td>
                                     <span class="payroll-status {% if row.has_rate %}payroll-status-ready{% else %}payroll-status-missing{% endif %}">
                                         {{ row.status_label }}
@@ -149,7 +402,7 @@
                             </tr>
                         {% endfor %}
                     {% else %}
-                        <tr><td colspan="14" class="payroll-empty">No employees matched this payroll filter.</td></tr>
+                        <tr><td colspan="16" class="payroll-empty">No employees matched this payroll filter.</td></tr>
                     {% endif %}
                 </tbody>
             </table>

@@ -239,6 +239,51 @@ def execute_db(query, params=(), commit=False):
             db.commit()
 
 
+def table_exists(table_name):
+    db = get_db()
+    if using_postgres():
+        with db.cursor() as cur:
+            cur.execute("""
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM information_schema.tables
+                    WHERE table_schema = current_schema()
+                      AND table_name = %s
+                )
+            """, (table_name,))
+            row = cur.fetchone()
+            return bool(row[0]) if row else False
+    row = db.execute("""
+        SELECT name
+        FROM sqlite_master
+        WHERE type = 'table' AND name = ?
+    """, (table_name,)).fetchone()
+    return bool(row)
+
+
+def column_exists(table_name, column_name):
+    if not table_exists(table_name):
+        return False
+
+    db = get_db()
+    if using_postgres():
+        with db.cursor() as cur:
+            cur.execute("""
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = current_schema()
+                      AND table_name = %s
+                      AND column_name = %s
+                )
+            """, (table_name, column_name))
+            row = cur.fetchone()
+            return bool(row[0]) if row else False
+
+    rows = db.execute(f"PRAGMA table_info({table_name})").fetchall()
+    return any(row[1] == column_name for row in rows)
+
+
 def get_bootstrap_admin_password():
     return os.environ.get("BOOTSTRAP_ADMIN_PASSWORD", "").strip()
 
@@ -538,6 +583,67 @@ def init_sqlite_db():
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS payroll_adjustments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            date_from TEXT NOT NULL,
+            date_to TEXT NOT NULL,
+            adjustment_type TEXT NOT NULL,
+            label TEXT NOT NULL,
+            amount REAL NOT NULL DEFAULT 0,
+            notes TEXT,
+            created_by INTEGER,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users (id),
+            FOREIGN KEY (created_by) REFERENCES users (id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS payroll_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date_from TEXT NOT NULL,
+            date_to TEXT NOT NULL,
+            department_filter TEXT,
+            employee_filter TEXT,
+            status TEXT NOT NULL DEFAULT 'Draft',
+            notes TEXT,
+            created_by INTEGER,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            released_at TEXT,
+            FOREIGN KEY (created_by) REFERENCES users (id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS payroll_run_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            payroll_run_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            full_name TEXT,
+            department TEXT,
+            position TEXT,
+            hourly_rate REAL NOT NULL DEFAULT 0,
+            days_worked INTEGER NOT NULL DEFAULT 0,
+            total_hours REAL NOT NULL DEFAULT 0,
+            overtime_hours REAL NOT NULL DEFAULT 0,
+            late_minutes INTEGER NOT NULL DEFAULT 0,
+            break_minutes INTEGER NOT NULL DEFAULT 0,
+            suspension_days INTEGER NOT NULL DEFAULT 0,
+            suspension_pay REAL NOT NULL DEFAULT 0,
+            gross_pay REAL NOT NULL DEFAULT 0,
+            overtime_pay REAL NOT NULL DEFAULT 0,
+            allowances REAL NOT NULL DEFAULT 0,
+            deductions REAL NOT NULL DEFAULT 0,
+            final_pay REAL NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (payroll_run_id) REFERENCES payroll_runs (id),
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    """)
+
     # users migration
     existing_cols_users = [row[1] for row in cursor.execute("PRAGMA table_info(users)").fetchall()]
     if "department" not in existing_cols_users:
@@ -782,6 +888,73 @@ def init_sqlite_db():
         cursor.execute("ALTER TABLE overtime_sessions ADD COLUMN overtime_end TEXT")
     if "created_at" not in existing_cols_overtime:
         cursor.execute("ALTER TABLE overtime_sessions ADD COLUMN created_at TEXT")
+
+    existing_cols_payroll_adjustments = [row[1] for row in cursor.execute("PRAGMA table_info(payroll_adjustments)").fetchall()]
+    if not existing_cols_payroll_adjustments:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS payroll_adjustments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                date_from TEXT NOT NULL,
+                date_to TEXT NOT NULL,
+                adjustment_type TEXT NOT NULL,
+                label TEXT NOT NULL,
+                amount REAL NOT NULL DEFAULT 0,
+                notes TEXT,
+                created_by INTEGER,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users (id),
+                FOREIGN KEY (created_by) REFERENCES users (id)
+            )
+        """)
+
+    existing_cols_payroll_runs = [row[1] for row in cursor.execute("PRAGMA table_info(payroll_runs)").fetchall()]
+    if not existing_cols_payroll_runs:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS payroll_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date_from TEXT NOT NULL,
+                date_to TEXT NOT NULL,
+                department_filter TEXT,
+                employee_filter TEXT,
+                status TEXT NOT NULL DEFAULT 'Draft',
+                notes TEXT,
+                created_by INTEGER,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                released_at TEXT,
+                FOREIGN KEY (created_by) REFERENCES users (id)
+            )
+        """)
+
+    existing_cols_payroll_run_items = [row[1] for row in cursor.execute("PRAGMA table_info(payroll_run_items)").fetchall()]
+    if not existing_cols_payroll_run_items:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS payroll_run_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                payroll_run_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                full_name TEXT,
+                department TEXT,
+                position TEXT,
+                hourly_rate REAL NOT NULL DEFAULT 0,
+                days_worked INTEGER NOT NULL DEFAULT 0,
+                total_hours REAL NOT NULL DEFAULT 0,
+                overtime_hours REAL NOT NULL DEFAULT 0,
+                late_minutes INTEGER NOT NULL DEFAULT 0,
+                break_minutes INTEGER NOT NULL DEFAULT 0,
+                suspension_days INTEGER NOT NULL DEFAULT 0,
+                suspension_pay REAL NOT NULL DEFAULT 0,
+                gross_pay REAL NOT NULL DEFAULT 0,
+                overtime_pay REAL NOT NULL DEFAULT 0,
+                allowances REAL NOT NULL DEFAULT 0,
+                deductions REAL NOT NULL DEFAULT 0,
+                final_pay REAL NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (payroll_run_id) REFERENCES payroll_runs (id),
+                FOREIGN KEY (user_id) REFERENCES users (id)
+            )
+        """)
 
     db.commit()
 
@@ -1080,6 +1253,100 @@ def init_postgres_db():
         cur.execute("ALTER TABLE overtime_sessions ADD COLUMN IF NOT EXISTS overtime_start TEXT")
         cur.execute("ALTER TABLE overtime_sessions ADD COLUMN IF NOT EXISTS overtime_end TEXT")
         cur.execute("ALTER TABLE overtime_sessions ADD COLUMN IF NOT EXISTS created_at TEXT")
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS payroll_adjustments (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                date_from TEXT NOT NULL,
+                date_to TEXT NOT NULL,
+                adjustment_type TEXT NOT NULL,
+                label TEXT NOT NULL,
+                amount REAL NOT NULL DEFAULT 0,
+                notes TEXT,
+                created_by INTEGER,
+                created_at TEXT NOT NULL
+            )
+        """)
+        cur.execute("ALTER TABLE payroll_adjustments ADD COLUMN IF NOT EXISTS user_id INTEGER")
+        cur.execute("ALTER TABLE payroll_adjustments ADD COLUMN IF NOT EXISTS date_from TEXT")
+        cur.execute("ALTER TABLE payroll_adjustments ADD COLUMN IF NOT EXISTS date_to TEXT")
+        cur.execute("ALTER TABLE payroll_adjustments ADD COLUMN IF NOT EXISTS adjustment_type TEXT")
+        cur.execute("ALTER TABLE payroll_adjustments ADD COLUMN IF NOT EXISTS label TEXT")
+        cur.execute("ALTER TABLE payroll_adjustments ADD COLUMN IF NOT EXISTS amount REAL NOT NULL DEFAULT 0")
+        cur.execute("ALTER TABLE payroll_adjustments ADD COLUMN IF NOT EXISTS notes TEXT")
+        cur.execute("ALTER TABLE payroll_adjustments ADD COLUMN IF NOT EXISTS created_by INTEGER")
+        cur.execute("ALTER TABLE payroll_adjustments ADD COLUMN IF NOT EXISTS created_at TEXT")
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS payroll_runs (
+                id SERIAL PRIMARY KEY,
+                date_from TEXT NOT NULL,
+                date_to TEXT NOT NULL,
+                department_filter TEXT,
+                employee_filter TEXT,
+                status TEXT NOT NULL DEFAULT 'Draft',
+                notes TEXT,
+                created_by INTEGER,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                released_at TEXT
+            )
+        """)
+        cur.execute("ALTER TABLE payroll_runs ADD COLUMN IF NOT EXISTS date_from TEXT")
+        cur.execute("ALTER TABLE payroll_runs ADD COLUMN IF NOT EXISTS date_to TEXT")
+        cur.execute("ALTER TABLE payroll_runs ADD COLUMN IF NOT EXISTS department_filter TEXT")
+        cur.execute("ALTER TABLE payroll_runs ADD COLUMN IF NOT EXISTS employee_filter TEXT")
+        cur.execute("ALTER TABLE payroll_runs ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'Draft'")
+        cur.execute("ALTER TABLE payroll_runs ADD COLUMN IF NOT EXISTS notes TEXT")
+        cur.execute("ALTER TABLE payroll_runs ADD COLUMN IF NOT EXISTS created_by INTEGER")
+        cur.execute("ALTER TABLE payroll_runs ADD COLUMN IF NOT EXISTS created_at TEXT")
+        cur.execute("ALTER TABLE payroll_runs ADD COLUMN IF NOT EXISTS updated_at TEXT")
+        cur.execute("ALTER TABLE payroll_runs ADD COLUMN IF NOT EXISTS released_at TEXT")
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS payroll_run_items (
+                id SERIAL PRIMARY KEY,
+                payroll_run_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                full_name TEXT,
+                department TEXT,
+                position TEXT,
+                hourly_rate REAL NOT NULL DEFAULT 0,
+                days_worked INTEGER NOT NULL DEFAULT 0,
+                total_hours REAL NOT NULL DEFAULT 0,
+                overtime_hours REAL NOT NULL DEFAULT 0,
+                late_minutes INTEGER NOT NULL DEFAULT 0,
+                break_minutes INTEGER NOT NULL DEFAULT 0,
+                suspension_days INTEGER NOT NULL DEFAULT 0,
+                suspension_pay REAL NOT NULL DEFAULT 0,
+                gross_pay REAL NOT NULL DEFAULT 0,
+                overtime_pay REAL NOT NULL DEFAULT 0,
+                allowances REAL NOT NULL DEFAULT 0,
+                deductions REAL NOT NULL DEFAULT 0,
+                final_pay REAL NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            )
+        """)
+        cur.execute("ALTER TABLE payroll_run_items ADD COLUMN IF NOT EXISTS payroll_run_id INTEGER")
+        cur.execute("ALTER TABLE payroll_run_items ADD COLUMN IF NOT EXISTS user_id INTEGER")
+        cur.execute("ALTER TABLE payroll_run_items ADD COLUMN IF NOT EXISTS full_name TEXT")
+        cur.execute("ALTER TABLE payroll_run_items ADD COLUMN IF NOT EXISTS department TEXT")
+        cur.execute("ALTER TABLE payroll_run_items ADD COLUMN IF NOT EXISTS position TEXT")
+        cur.execute("ALTER TABLE payroll_run_items ADD COLUMN IF NOT EXISTS hourly_rate REAL NOT NULL DEFAULT 0")
+        cur.execute("ALTER TABLE payroll_run_items ADD COLUMN IF NOT EXISTS days_worked INTEGER NOT NULL DEFAULT 0")
+        cur.execute("ALTER TABLE payroll_run_items ADD COLUMN IF NOT EXISTS total_hours REAL NOT NULL DEFAULT 0")
+        cur.execute("ALTER TABLE payroll_run_items ADD COLUMN IF NOT EXISTS overtime_hours REAL NOT NULL DEFAULT 0")
+        cur.execute("ALTER TABLE payroll_run_items ADD COLUMN IF NOT EXISTS late_minutes INTEGER NOT NULL DEFAULT 0")
+        cur.execute("ALTER TABLE payroll_run_items ADD COLUMN IF NOT EXISTS break_minutes INTEGER NOT NULL DEFAULT 0")
+        cur.execute("ALTER TABLE payroll_run_items ADD COLUMN IF NOT EXISTS suspension_days INTEGER NOT NULL DEFAULT 0")
+        cur.execute("ALTER TABLE payroll_run_items ADD COLUMN IF NOT EXISTS suspension_pay REAL NOT NULL DEFAULT 0")
+        cur.execute("ALTER TABLE payroll_run_items ADD COLUMN IF NOT EXISTS gross_pay REAL NOT NULL DEFAULT 0")
+        cur.execute("ALTER TABLE payroll_run_items ADD COLUMN IF NOT EXISTS overtime_pay REAL NOT NULL DEFAULT 0")
+        cur.execute("ALTER TABLE payroll_run_items ADD COLUMN IF NOT EXISTS allowances REAL NOT NULL DEFAULT 0")
+        cur.execute("ALTER TABLE payroll_run_items ADD COLUMN IF NOT EXISTS deductions REAL NOT NULL DEFAULT 0")
+        cur.execute("ALTER TABLE payroll_run_items ADD COLUMN IF NOT EXISTS final_pay REAL NOT NULL DEFAULT 0")
+        cur.execute("ALTER TABLE payroll_run_items ADD COLUMN IF NOT EXISTS created_at TEXT")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_login_attempts_ip_attempted_at ON login_attempts(ip_address, attempted_at)")
         try:
             cur.execute("SAVEPOINT attendance_open_index")
@@ -2346,6 +2613,9 @@ def perform_go_live_reset():
                     activity_logs,
                     scanner_logs,
                     overtime_sessions,
+                    payroll_adjustments,
+                    payroll_run_items,
+                    payroll_runs,
                     login_attempts,
                     incident_reports,
                     disciplinary_actions
@@ -2362,6 +2632,9 @@ def perform_go_live_reset():
             "activity_logs",
             "scanner_logs",
             "overtime_sessions",
+            "payroll_adjustments",
+            "payroll_run_items",
+            "payroll_runs",
             "login_attempts",
             "incident_reports",
             "disciplinary_actions",
@@ -2370,7 +2643,7 @@ def perform_go_live_reset():
         try:
             cur.execute("""
                 DELETE FROM sqlite_sequence
-                WHERE name IN ('breaks', 'attendance', 'correction_requests', 'notifications', 'activity_logs', 'scanner_logs', 'overtime_sessions', 'login_attempts', 'incident_reports', 'disciplinary_actions')
+                WHERE name IN ('breaks', 'attendance', 'correction_requests', 'notifications', 'activity_logs', 'scanner_logs', 'overtime_sessions', 'payroll_adjustments', 'payroll_run_items', 'payroll_runs', 'login_attempts', 'incident_reports', 'disciplinary_actions')
             """)
         except sqlite3.OperationalError:
             pass
@@ -2608,7 +2881,7 @@ def get_department_options():
 
 def get_employee_options():
     return fetchall("""
-        SELECT id, full_name
+        SELECT id, full_name, department, position
         FROM users
         WHERE role = 'employee'
         ORDER BY full_name ASC
@@ -3065,6 +3338,224 @@ def get_payroll_period_dates(period, date_from_value="", date_to_value=""):
     return today.replace(day=1), today
 
 
+def payroll_date_text(value):
+    if hasattr(value, "strftime"):
+        return value.strftime("%Y-%m-%d")
+    return str(value or "").strip()
+
+
+def get_payroll_adjustments(date_from, date_to, department_filter="", employee_filter=""):
+    date_from_text = payroll_date_text(date_from)
+    date_to_text = payroll_date_text(date_to)
+    sql = """
+        SELECT
+            pa.*,
+            u.full_name AS employee_name,
+            u.department AS employee_department,
+            u.position AS employee_position,
+            creator.full_name AS created_by_name
+        FROM payroll_adjustments pa
+        JOIN users u ON u.id = pa.user_id
+        LEFT JOIN users creator ON creator.id = pa.created_by
+        WHERE pa.date_from = ?
+          AND pa.date_to = ?
+    """
+    params = [date_from_text, date_to_text]
+    if department_filter:
+        sql += " AND COALESCE(u.department, '') = ?"
+        params.append(department_filter)
+    if employee_filter:
+        sql += " AND pa.user_id = ?"
+        params.append(int(employee_filter))
+    sql += " ORDER BY pa.created_at DESC, pa.id DESC"
+    return fetchall(sql, tuple(params))
+
+
+def get_payroll_run(date_from, date_to, department_filter="", employee_filter=""):
+    return fetchone("""
+        SELECT pr.*, creator.full_name AS created_by_name
+        FROM payroll_runs pr
+        LEFT JOIN users creator ON creator.id = pr.created_by
+        WHERE pr.date_from = ?
+          AND pr.date_to = ?
+          AND COALESCE(pr.department_filter, '') = ?
+          AND COALESCE(pr.employee_filter, '') = ?
+        ORDER BY pr.id DESC
+        LIMIT 1
+    """, (
+        payroll_date_text(date_from),
+        payroll_date_text(date_to),
+        department_filter or "",
+        str(employee_filter or "")
+    ))
+
+
+def get_payroll_run_item_count(payroll_run_id):
+    row = fetchone("SELECT COUNT(*) AS cnt FROM payroll_run_items WHERE payroll_run_id = ?", (payroll_run_id,))
+    return int(row["cnt"] or 0) if row else 0
+
+
+def get_recent_payroll_runs(limit=8):
+    rows = fetchall("""
+        SELECT pr.*, creator.full_name AS created_by_name
+        FROM payroll_runs pr
+        LEFT JOIN users creator ON creator.id = pr.created_by
+        ORDER BY pr.id DESC
+        LIMIT ?
+    """, (limit,))
+    enriched = []
+    for row in rows:
+        item = dict(row)
+        item["item_count"] = get_payroll_run_item_count(item["id"])
+        employee_name = ""
+        if (item.get("employee_filter") or "").isdigit():
+            employee = get_user_by_id(int(item["employee_filter"]))
+            employee_name = employee["full_name"] if employee else ""
+        item["employee_name"] = employee_name
+        enriched.append(item)
+    return enriched
+
+
+def save_payroll_run_snapshot(date_from, date_to, department_filter="", employee_filter="", status="Draft", notes="", actor_id=None):
+    status = status if status in {"Draft", "Released"} else "Draft"
+    date_from_text = payroll_date_text(date_from)
+    date_to_text = payroll_date_text(date_to)
+    rows = build_payroll_rows(date_from, date_to, department_filter=department_filter, employee_filter=employee_filter)
+    timestamp = now_str()
+    released_at = timestamp if status == "Released" else None
+    existing = get_payroll_run(date_from_text, date_to_text, department_filter, employee_filter)
+
+    if existing:
+        execute_db("""
+            UPDATE payroll_runs
+            SET status = ?, notes = ?, updated_at = ?, released_at = ?
+            WHERE id = ?
+        """, (
+            status,
+            notes or None,
+            timestamp,
+            released_at,
+            existing["id"]
+        ), commit=True)
+        payroll_run_id = existing["id"]
+        execute_db("DELETE FROM payroll_run_items WHERE payroll_run_id = ?", (payroll_run_id,), commit=True)
+    else:
+        execute_db("""
+            INSERT INTO payroll_runs (
+                date_from, date_to, department_filter, employee_filter,
+                status, notes, created_by, created_at, updated_at, released_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            date_from_text,
+            date_to_text,
+            department_filter or "",
+            str(employee_filter or ""),
+            status,
+            notes or None,
+            actor_id,
+            timestamp,
+            timestamp,
+            released_at
+        ), commit=True)
+        created = get_payroll_run(date_from_text, date_to_text, department_filter, employee_filter)
+        payroll_run_id = created["id"]
+
+    for row in rows:
+        execute_db("""
+            INSERT INTO payroll_run_items (
+                payroll_run_id, user_id, full_name, department, position,
+                hourly_rate, days_worked, total_hours, overtime_hours,
+                late_minutes, break_minutes, suspension_days, suspension_pay,
+                gross_pay, overtime_pay, allowances, deductions, final_pay, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            payroll_run_id,
+            row["user_id"],
+            row["full_name"],
+            row["department"],
+            row["position"],
+            row["hourly_rate"],
+            row["days_worked"],
+            row["total_hours"],
+            row["overtime_hours"],
+            row["late_minutes"],
+            row["break_minutes"],
+            row["suspension_days"],
+            row["suspension_pay"],
+            row["gross_pay"],
+            row["overtime_pay"],
+            row["allowances"],
+            row["deductions"],
+            row["final_pay"],
+            timestamp
+        ), commit=True)
+
+    return get_payroll_run(date_from_text, date_to_text, department_filter, employee_filter), rows
+
+
+def build_payroll_stats(payroll_rows):
+    return {
+        "employees": len(payroll_rows),
+        "paid_employees": len([row for row in payroll_rows if row["gross_pay"] > 0]),
+        "missing_rates": len([row for row in payroll_rows if row["has_rate"] == 0]),
+        "total_hours": round(sum(row["total_hours"] for row in payroll_rows), 2),
+        "total_overtime_hours": round(sum(row["overtime_hours"] for row in payroll_rows), 2),
+        "total_overtime_pay": round(sum(row["overtime_pay"] for row in payroll_rows), 2),
+        "total_gross": round(sum(row["gross_pay"] for row in payroll_rows), 2),
+        "total_allowances": round(sum(row["allowances"] for row in payroll_rows), 2),
+        "total_deductions": round(sum(row["deductions"] for row in payroll_rows), 2),
+        "total_final_pay": round(sum(row["final_pay"] for row in payroll_rows), 2),
+        "total_net_estimate": round(sum(row["net_pay_estimate"] for row in payroll_rows), 2),
+        "suspension_days": sum(row["suspension_days"] for row in payroll_rows),
+        "suspension_pay": round(sum(row["suspension_pay"] for row in payroll_rows), 2),
+        "overtime_multiplier": get_overtime_multiplier(),
+    }
+
+
+def normalize_payroll_filters(period_value, date_from_value="", date_to_value="", department_filter="", employee_filter=""):
+    period = (period_value or "this_month").strip() or "this_month"
+    department_filter = (department_filter or "").strip()
+    employee_filter = (employee_filter or "").strip()
+    if employee_filter and not employee_filter.isdigit():
+        employee_filter = ""
+    date_from, date_to = get_payroll_period_dates(period, date_from_value, date_to_value)
+    return {
+        "period": period,
+        "department_filter": department_filter,
+        "employee_filter": employee_filter,
+        "date_from": date_from,
+        "date_to": date_to,
+        "date_from_text": payroll_date_text(date_from),
+        "date_to_text": payroll_date_text(date_to),
+    }
+
+
+def payroll_filter_redirect_args(source):
+    normalized = normalize_payroll_filters(
+        source.get("period", "this_month"),
+        source.get("date_from", ""),
+        source.get("date_to", ""),
+        source.get("department", ""),
+        source.get("employee_id", "")
+    )
+    return {
+        "period": normalized["period"],
+        "date_from": normalized["date_from_text"],
+        "date_to": normalized["date_to_text"],
+        "department": normalized["department_filter"],
+        "employee_id": normalized["employee_filter"],
+    }
+
+
+def get_payroll_employee_filter_label(employee_filter):
+    if str(employee_filter or "").isdigit():
+        employee = get_user_by_id(int(employee_filter))
+        return employee["full_name"] if employee else str(employee_filter)
+    return "All Employees"
+
+
 def paginate_items(items, page, page_size):
     total = len(items)
     page_size = page_size if page_size in {10, 25, 50, 100} else 25
@@ -3108,6 +3599,8 @@ def create_admin_alert_once(title, message):
 
 
 def build_payroll_rows(date_from, date_to, department_filter="", employee_filter=""):
+    date_from_text = payroll_date_text(date_from)
+    date_to_text = payroll_date_text(date_to)
     employees_sql = """
         SELECT *
         FROM users
@@ -3140,7 +3633,10 @@ def build_payroll_rows(date_from, date_to, department_filter="", employee_filter
             "overtime_hours": 0,
             "overtime_pay": 0,
             "gross_pay": 0,
+            "allowances": 0,
+            "deductions": 0,
             "net_pay_estimate": 0,
+            "final_pay": 0,
             "suspension_days": 0,
             "suspension_hours": 0,
             "suspension_pay": 0,
@@ -3160,7 +3656,7 @@ def build_payroll_rows(date_from, date_to, department_filter="", employee_filter
           AND a.time_in IS NOT NULL
           AND a.time_out IS NOT NULL
         ORDER BY a.work_date ASC, a.id ASC
-    """, (date_from.strftime("%Y-%m-%d"), date_to.strftime("%Y-%m-%d")))
+    """, (date_from_text, date_to_text))
 
     for attendance in attendance_rows:
         summary = employee_map.get(attendance["user_id"])
@@ -3176,7 +3672,7 @@ def build_payroll_rows(date_from, date_to, department_filter="", employee_filter
         SELECT *
         FROM overtime_sessions
         WHERE work_date BETWEEN ? AND ?
-    """, (date_from.strftime("%Y-%m-%d"), date_to.strftime("%Y-%m-%d")))
+    """, (date_from_text, date_to_text))
     overtime_multiplier = get_overtime_multiplier()
     for overtime in overtime_rows:
         summary = employee_map.get(overtime["user_id"])
@@ -3191,13 +3687,13 @@ def build_payroll_rows(date_from, date_to, department_filter="", employee_filter
         WHERE action_type = 'Suspension'
           AND action_date <= ?
           AND COALESCE(end_date, action_date) >= ?
-    """, (date_to.strftime("%Y-%m-%d"), date_from.strftime("%Y-%m-%d")))
+    """, (date_to_text, date_from_text))
     for suspension in suspension_rows:
         summary = employee_map.get(suspension["user_id"])
         if not summary:
             continue
         for suspension_date in expand_suspension_dates(suspension):
-            if suspension_date < date_from.strftime("%Y-%m-%d") or suspension_date > date_to.strftime("%Y-%m-%d"):
+            if suspension_date < date_from_text or suspension_date > date_to_text:
                 continue
             employee_stub = {
                 "schedule_days": summary["schedule_days"],
@@ -3210,17 +3706,30 @@ def build_payroll_rows(date_from, date_to, department_filter="", employee_filter
             summary["suspension_days"] += 1
             summary["suspension_hours"] += round(shift_minutes / 60, 2)
 
+    adjustment_totals = {}
+    for adjustment in get_payroll_adjustments(date_from_text, date_to_text, department_filter=department_filter, employee_filter=employee_filter):
+        totals = adjustment_totals.setdefault(adjustment["user_id"], {"allowances": 0.0, "deductions": 0.0})
+        amount = round(float(adjustment["amount"] or 0), 2)
+        if adjustment["adjustment_type"] == "Allowance":
+            totals["allowances"] += amount
+        else:
+            totals["deductions"] += amount
+
     for summary in employee_map.values():
         summary["total_hours"] = round(summary["total_minutes"] / 60, 2)
         summary["overtime_hours"] = round(summary["overtime_minutes"] / 60, 2)
         summary["gross_pay"] = round(summary["total_hours"] * summary["hourly_rate"], 2)
         summary["overtime_pay"] = round(summary["overtime_hours"] * summary["hourly_rate"] * overtime_multiplier, 2)
-        summary["net_pay_estimate"] = round(summary["gross_pay"] + summary["overtime_pay"], 2)
+        adjustment_summary = adjustment_totals.get(summary["user_id"], {"allowances": 0.0, "deductions": 0.0})
+        summary["allowances"] = round(adjustment_summary["allowances"], 2)
+        summary["deductions"] = round(adjustment_summary["deductions"], 2)
+        summary["final_pay"] = round(summary["gross_pay"] + summary["overtime_pay"] + summary["allowances"] - summary["deductions"], 2)
+        summary["net_pay_estimate"] = summary["final_pay"]
         summary["suspension_hours"] = round(summary["suspension_hours"], 2)
         summary["suspension_pay"] = round(summary["suspension_hours"] * summary["hourly_rate"], 2)
         summary["status_label"] = "Ready" if summary["has_rate"] else "Missing Rate"
 
-    return sorted(employee_map.values(), key=lambda item: (-item["gross_pay"], item["full_name"].lower()))
+    return sorted(employee_map.values(), key=lambda item: (-item["final_pay"], item["full_name"].lower()))
 
 
 # =========================
@@ -4815,10 +5324,14 @@ def build_admin_history_records(search="", department="", type_filter="", late_o
 
 
 def build_attendance_audit_rows(date_from="", date_to="", employee_id="", source_filter="", limit=250):
+    activity_target_expr = "a.user_id"
+    if column_exists("activity_logs", "target_user_id"):
+        activity_target_expr = "COALESCE(a.target_user_id, a.user_id)"
+
     params = []
     where_employee = ""
     if employee_id.isdigit():
-        where_employee = "AND COALESCE(a.target_user_id, a.user_id) = ?"
+        where_employee = f"AND {activity_target_expr} = ?"
         params.append(int(employee_id))
 
     manual_rows = fetchall(f"""
@@ -4830,12 +5343,12 @@ def build_attendance_audit_rows(date_from="", date_to="", employee_id="", source
             a.details AS event_details,
             actor.full_name AS actor_name,
             actor.username AS actor_username,
-            COALESCE(a.target_user_id, actor.id) AS target_user_id,
+            {activity_target_expr} AS target_user_id,
             employee.full_name AS employee_name,
             employee.department AS employee_department
         FROM activity_logs a
-        JOIN users actor ON actor.id = a.user_id
-        LEFT JOIN users employee ON employee.id = COALESCE(a.target_user_id, actor.id)
+        LEFT JOIN users actor ON actor.id = a.user_id
+        LEFT JOIN users employee ON employee.id = {activity_target_expr}
         WHERE (
             a.action IN ('TIME IN', 'BREAK START', 'BREAK END', 'TIME OUT', 'CORRECTION REQUEST', 'REVIEW CORRECTION')
             OR a.action LIKE 'AUTO CLOSE%'
@@ -4843,54 +5356,58 @@ def build_attendance_audit_rows(date_from="", date_to="", employee_id="", source
         {where_employee}
     """, tuple(params))
 
-    scanner_params = []
-    scanner_where_employee = ""
-    if employee_id.isdigit():
-        scanner_where_employee = "AND sl.employee_user_id = ?"
-        scanner_params.append(int(employee_id))
+    scanner_rows = []
+    if table_exists("scanner_logs"):
+        scanner_params = []
+        scanner_where_employee = ""
+        if employee_id.isdigit():
+            scanner_where_employee = "AND sl.employee_user_id = ?"
+            scanner_params.append(int(employee_id))
 
-    scanner_rows = fetchall(f"""
-        SELECT
-            sl.id,
-            sl.created_at,
-            'scanner' AS source_type,
-            sl.action_type AS event_action,
-            sl.result_message AS event_details,
-            scanner.full_name AS actor_name,
-            scanner.username AS actor_username,
-            sl.employee_user_id AS target_user_id,
-            employee.full_name AS employee_name,
-            employee.department AS employee_department,
-            sl.result_status
-        FROM scanner_logs sl
-        LEFT JOIN users scanner ON scanner.id = sl.scanner_user_id
-        LEFT JOIN users employee ON employee.id = sl.employee_user_id
-        WHERE 1=1
-        {scanner_where_employee}
-    """, tuple(scanner_params))
+        scanner_rows = fetchall(f"""
+            SELECT
+                sl.id,
+                sl.created_at,
+                'scanner' AS source_type,
+                sl.action_type AS event_action,
+                sl.result_message AS event_details,
+                scanner.full_name AS actor_name,
+                scanner.username AS actor_username,
+                sl.employee_user_id AS target_user_id,
+                employee.full_name AS employee_name,
+                employee.department AS employee_department,
+                sl.result_status
+            FROM scanner_logs sl
+            LEFT JOIN users scanner ON scanner.id = sl.scanner_user_id
+            LEFT JOIN users employee ON employee.id = sl.employee_user_id
+            WHERE 1=1
+            {scanner_where_employee}
+        """, tuple(scanner_params))
 
-    overtime_params = []
-    overtime_where_employee = ""
-    if employee_id.isdigit():
-        overtime_where_employee = "AND o.user_id = ?"
-        overtime_params.append(int(employee_id))
+    overtime_rows = []
+    if table_exists("overtime_sessions"):
+        overtime_params = []
+        overtime_where_employee = ""
+        if employee_id.isdigit():
+            overtime_where_employee = "AND o.user_id = ?"
+            overtime_params.append(int(employee_id))
 
-    overtime_rows = fetchall(f"""
-        SELECT
-            o.id,
-            o.overtime_start,
-            o.overtime_end,
-            o.created_at,
-            u.full_name AS actor_name,
-            u.username AS actor_username,
-            o.user_id AS target_user_id,
-            u.full_name AS employee_name,
-            u.department AS employee_department
-        FROM overtime_sessions o
-        JOIN users u ON u.id = o.user_id
-        WHERE 1=1
-        {overtime_where_employee}
-    """, tuple(overtime_params))
+        overtime_rows = fetchall(f"""
+            SELECT
+                o.id,
+                o.overtime_start,
+                o.overtime_end,
+                o.created_at,
+                u.full_name AS actor_name,
+                u.username AS actor_username,
+                o.user_id AS target_user_id,
+                u.full_name AS employee_name,
+                u.department AS employee_department
+            FROM overtime_sessions o
+            JOIN users u ON u.id = o.user_id
+            WHERE 1=1
+            {overtime_where_employee}
+        """, tuple(overtime_params))
 
     combined = []
     for row in manual_rows:
@@ -5198,14 +5715,18 @@ def admin_live_status():
 @app.route("/admin/payroll")
 @login_required(role="admin")
 def admin_payroll():
-    period = request.args.get("period", "this_month").strip() or "this_month"
-    department_filter = request.args.get("department", "").strip()
-    employee_filter = request.args.get("employee_id", "").strip()
-    date_from, date_to = get_payroll_period_dates(
-        period,
+    filters = normalize_payroll_filters(
+        request.args.get("period", "this_month"),
         request.args.get("date_from", "").strip(),
-        request.args.get("date_to", "").strip()
+        request.args.get("date_to", "").strip(),
+        request.args.get("department", "").strip(),
+        request.args.get("employee_id", "").strip()
     )
+    period = filters["period"]
+    department_filter = filters["department_filter"]
+    employee_filter = filters["employee_filter"]
+    date_from = filters["date_from"]
+    date_to = filters["date_to"]
     departments = get_department_options()
     employees = get_employee_options()
     payroll_rows = build_payroll_rows(
@@ -5214,20 +5735,18 @@ def admin_payroll():
         department_filter=department_filter,
         employee_filter=employee_filter
     )
-
-    stats = {
-        "employees": len(payroll_rows),
-        "paid_employees": len([row for row in payroll_rows if row["gross_pay"] > 0]),
-        "missing_rates": len([row for row in payroll_rows if row["has_rate"] == 0]),
-        "total_hours": round(sum(row["total_hours"] for row in payroll_rows), 2),
-        "total_overtime_hours": round(sum(row["overtime_hours"] for row in payroll_rows), 2),
-        "total_overtime_pay": round(sum(row["overtime_pay"] for row in payroll_rows), 2),
-        "total_gross": round(sum(row["gross_pay"] for row in payroll_rows), 2),
-        "total_net_estimate": round(sum(row["net_pay_estimate"] for row in payroll_rows), 2),
-        "suspension_days": sum(row["suspension_days"] for row in payroll_rows),
-        "suspension_pay": round(sum(row["suspension_pay"] for row in payroll_rows), 2),
-        "overtime_multiplier": get_overtime_multiplier(),
-    }
+    stats = build_payroll_stats(payroll_rows)
+    adjustments = get_payroll_adjustments(date_from, date_to, department_filter=department_filter, employee_filter=employee_filter)
+    current_run = get_payroll_run(date_from, date_to, department_filter=department_filter, employee_filter=employee_filter)
+    if current_run:
+        current_run = dict(current_run)
+        current_run["item_count"] = get_payroll_run_item_count(current_run["id"])
+        if (current_run.get("employee_filter") or "").isdigit():
+            employee = get_user_by_id(int(current_run["employee_filter"]))
+            current_run["employee_name"] = employee["full_name"] if employee else ""
+        else:
+            current_run["employee_name"] = ""
+    recent_runs = get_recent_payroll_runs()
 
     return render_template(
         "admin_payroll.html",
@@ -5239,7 +5758,299 @@ def admin_payroll():
         period=period,
         date_from=date_from.strftime("%Y-%m-%d"),
         date_to=date_to.strftime("%Y-%m-%d"),
-        stats=stats
+        stats=stats,
+        adjustments=adjustments,
+        current_run=current_run,
+        recent_runs=recent_runs,
+        employee_filter_label=get_payroll_employee_filter_label(employee_filter)
+    )
+
+
+@app.route("/admin/payroll/adjustments", methods=["POST"])
+@login_required(role="admin")
+def add_payroll_adjustment():
+    redirect_args = payroll_filter_redirect_args(request.form)
+    filters = normalize_payroll_filters(
+        request.form.get("period", "this_month"),
+        request.form.get("date_from", ""),
+        request.form.get("date_to", ""),
+        request.form.get("department", ""),
+        request.form.get("employee_id", "")
+    )
+    user_id_raw = (request.form.get("user_id", "") or "").strip()
+    adjustment_type = (request.form.get("adjustment_type", "") or "").strip()
+    label = (request.form.get("label", "") or "").strip()
+    notes = (request.form.get("notes", "") or "").strip()
+    amount = parse_money_value(request.form.get("amount", "0"))
+
+    if not user_id_raw.isdigit():
+        flash("Please choose an employee for the payroll adjustment.", "danger")
+        return redirect(url_for("admin_payroll", **redirect_args))
+
+    if adjustment_type not in {"Allowance", "Deduction"}:
+        flash("Payroll adjustment type must be Allowance or Deduction.", "danger")
+        return redirect(url_for("admin_payroll", **redirect_args))
+
+    if not label:
+        flash("Payroll adjustment label is required.", "danger")
+        return redirect(url_for("admin_payroll", **redirect_args))
+
+    if amount <= 0:
+        flash("Payroll adjustment amount must be greater than zero.", "danger")
+        return redirect(url_for("admin_payroll", **redirect_args))
+
+    employee = fetchone("""
+        SELECT id, full_name, department
+        FROM users
+        WHERE id = ? AND role = 'employee'
+    """, (int(user_id_raw),))
+    if not employee:
+        flash("Selected employee was not found.", "danger")
+        return redirect(url_for("admin_payroll", **redirect_args))
+
+    execute_db("""
+        INSERT INTO payroll_adjustments (
+            user_id, date_from, date_to, adjustment_type, label,
+            amount, notes, created_by, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        employee["id"],
+        filters["date_from_text"],
+        filters["date_to_text"],
+        adjustment_type,
+        label,
+        amount,
+        notes or None,
+        session["user_id"],
+        now_str()
+    ), commit=True)
+
+    log_activity(
+        session["user_id"],
+        "ADD PAYROLL ADJUSTMENT",
+        f"{adjustment_type} {format_currency(amount)} for {employee['full_name']} ({label})"
+    )
+    flash(f"{adjustment_type} added for {employee['full_name']}.", "success")
+    return redirect(url_for("admin_payroll", **redirect_args))
+
+
+@app.route("/admin/payroll/adjustments/<int:adjustment_id>/delete", methods=["POST"])
+@login_required(role="admin")
+def delete_payroll_adjustment(adjustment_id):
+    redirect_args = payroll_filter_redirect_args(request.form)
+    adjustment = fetchone("""
+        SELECT pa.*, u.full_name AS employee_name
+        FROM payroll_adjustments pa
+        JOIN users u ON u.id = pa.user_id
+        WHERE pa.id = ?
+    """, (adjustment_id,))
+    if not adjustment:
+        flash("Payroll adjustment not found.", "warning")
+        return redirect(url_for("admin_payroll", **redirect_args))
+
+    execute_db("DELETE FROM payroll_adjustments WHERE id = ?", (adjustment_id,), commit=True)
+    log_activity(
+        session["user_id"],
+        "DELETE PAYROLL ADJUSTMENT",
+        f"Removed {adjustment['adjustment_type']} {format_currency(adjustment['amount'])} for {adjustment['employee_name']} ({adjustment['label']})"
+    )
+    flash("Payroll adjustment removed.", "info")
+    return redirect(url_for("admin_payroll", **redirect_args))
+
+
+@app.route("/admin/payroll/run", methods=["POST"])
+@login_required(role="admin")
+def save_payroll_run():
+    redirect_args = payroll_filter_redirect_args(request.form)
+    filters = normalize_payroll_filters(
+        request.form.get("period", "this_month"),
+        request.form.get("date_from", ""),
+        request.form.get("date_to", ""),
+        request.form.get("department", ""),
+        request.form.get("employee_id", "")
+    )
+    action = (request.form.get("run_action", "draft") or "draft").strip().lower()
+    status = "Released" if action == "release" else "Draft"
+    notes = (request.form.get("notes", "") or "").strip()
+    payroll_rows = build_payroll_rows(
+        filters["date_from"],
+        filters["date_to"],
+        department_filter=filters["department_filter"],
+        employee_filter=filters["employee_filter"]
+    )
+
+    if not payroll_rows:
+        flash("There are no payroll rows in this view to save.", "warning")
+        return redirect(url_for("admin_payroll", **redirect_args))
+
+    if status == "Released" and any(row["has_rate"] == 0 for row in payroll_rows):
+        flash("Release is blocked until every employee in view has an hourly rate.", "danger")
+        return redirect(url_for("admin_payroll", **redirect_args))
+
+    payroll_run, _ = save_payroll_run_snapshot(
+        filters["date_from"],
+        filters["date_to"],
+        department_filter=filters["department_filter"],
+        employee_filter=filters["employee_filter"],
+        status=status,
+        notes=notes,
+        actor_id=session["user_id"]
+    )
+    log_activity(
+        session["user_id"],
+        "RELEASE PAYROLL" if status == "Released" else "SAVE PAYROLL DRAFT",
+        f"{status} payroll for {filters['date_from_text']} to {filters['date_to_text']} ({len(payroll_rows)} employee row(s))"
+    )
+    flash(
+        f"Payroll {status.lower()} saved for {filters['date_from_text']} to {filters['date_to_text']}.",
+        "success"
+    )
+    return redirect(url_for("admin_payroll", **redirect_args))
+
+
+@app.route("/admin/payroll/export.xlsx")
+@login_required(role="admin")
+def export_admin_payroll_excel():
+    filters = normalize_payroll_filters(
+        request.args.get("period", "this_month"),
+        request.args.get("date_from", ""),
+        request.args.get("date_to", ""),
+        request.args.get("department", ""),
+        request.args.get("employee_id", "")
+    )
+    payroll_rows = build_payroll_rows(
+        filters["date_from"],
+        filters["date_to"],
+        department_filter=filters["department_filter"],
+        employee_filter=filters["employee_filter"]
+    )
+    adjustments = get_payroll_adjustments(
+        filters["date_from"],
+        filters["date_to"],
+        department_filter=filters["department_filter"],
+        employee_filter=filters["employee_filter"]
+    )
+    current_run = get_payroll_run(
+        filters["date_from"],
+        filters["date_to"],
+        department_filter=filters["department_filter"],
+        employee_filter=filters["employee_filter"]
+    )
+    stats = build_payroll_stats(payroll_rows)
+
+    try:
+        from openpyxl import Workbook
+    except Exception:
+        flash("Excel export requires openpyxl. Install dependencies and try again.", "danger")
+        return redirect(url_for("admin_payroll", **payroll_filter_redirect_args(request.args)))
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Payroll Summary"
+    sheet.append(["Payroll Period", f"{filters['date_from_text']} to {filters['date_to_text']}"])
+    sheet.append(["Department Filter", filters["department_filter"] or "All Departments"])
+    sheet.append(["Employee Filter", get_payroll_employee_filter_label(filters["employee_filter"])])
+    sheet.append(["Run Status", current_run["status"] if current_run else "Not Saved"])
+    sheet.append(["Gross Payroll", stats["total_gross"]])
+    sheet.append(["Overtime Pay", stats["total_overtime_pay"]])
+    sheet.append(["Allowances", stats["total_allowances"]])
+    sheet.append(["Deductions", stats["total_deductions"]])
+    sheet.append(["Final Payroll", stats["total_final_pay"]])
+    sheet.append([])
+    sheet.append([
+        "Employee", "Username", "Department", "Position", "Hourly Rate",
+        "Days Worked", "Total Hours", "Overtime Hours", "Late Minutes",
+        "Break Minutes", "Suspension Days", "Lost Pay Estimate",
+        "Gross Pay", "Overtime Pay", "Allowances", "Deductions", "Final Pay", "Status"
+    ])
+    for row in payroll_rows:
+        sheet.append([
+            row["full_name"],
+            row["username"],
+            row["department"],
+            row["position"],
+            row["hourly_rate"],
+            row["days_worked"],
+            row["total_hours"],
+            row["overtime_hours"],
+            row["late_minutes"],
+            row["break_minutes"],
+            row["suspension_days"],
+            row["suspension_pay"],
+            row["gross_pay"],
+            row["overtime_pay"],
+            row["allowances"],
+            row["deductions"],
+            row["final_pay"],
+            row["status_label"],
+        ])
+
+    adjustment_sheet = workbook.create_sheet(title="Adjustments")
+    adjustment_sheet.append(["Employee", "Type", "Label", "Amount", "Notes", "Created By", "Created At"])
+    for adjustment in adjustments:
+        adjustment_sheet.append([
+            adjustment["employee_name"],
+            adjustment["adjustment_type"],
+            adjustment["label"],
+            adjustment["amount"],
+            adjustment["notes"] or "",
+            adjustment["created_by_name"] or "",
+            adjustment["created_at"],
+        ])
+
+    output = BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    return Response(
+        output.getvalue(),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="payroll-summary-{filters["date_from_text"]}-to-{filters["date_to_text"]}.xlsx"'
+        }
+    )
+
+
+@app.route("/admin/payroll/print")
+@login_required(role="admin")
+def print_admin_payroll():
+    filters = normalize_payroll_filters(
+        request.args.get("period", "this_month"),
+        request.args.get("date_from", ""),
+        request.args.get("date_to", ""),
+        request.args.get("department", ""),
+        request.args.get("employee_id", "")
+    )
+    payroll_rows = build_payroll_rows(
+        filters["date_from"],
+        filters["date_to"],
+        department_filter=filters["department_filter"],
+        employee_filter=filters["employee_filter"]
+    )
+    stats = build_payroll_stats(payroll_rows)
+    adjustments = get_payroll_adjustments(
+        filters["date_from"],
+        filters["date_to"],
+        department_filter=filters["department_filter"],
+        employee_filter=filters["employee_filter"]
+    )
+    current_run = get_payroll_run(
+        filters["date_from"],
+        filters["date_to"],
+        department_filter=filters["department_filter"],
+        employee_filter=filters["employee_filter"]
+    )
+
+    return render_template(
+        "admin_payroll_print.html",
+        payroll_rows=payroll_rows,
+        stats=stats,
+        adjustments=adjustments,
+        current_run=current_run,
+        department_filter=filters["department_filter"],
+        employee_filter_label=get_payroll_employee_filter_label(filters["employee_filter"]),
+        date_from=filters["date_from_text"],
+        date_to=filters["date_to_text"],
     )
 
 
