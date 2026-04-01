@@ -5,19 +5,24 @@
 <div class="hero">
     <div>
         <h1>Data Tools</h1>
-        <p class="muted" style="margin-top:8px;">Review suspicious attendance rows, make a safe SQLite backup, and apply small admin fixes without touching the database manually.</p>
+        <p class="muted" style="margin-top:8px;">Review suspicious attendance rows, manage reset safety, and apply small admin fixes without touching the database manually.</p>
     </div>
 </div>
 
 <div class="grid grid-2" style="align-items:start;">
     <div class="card">
         <h3 style="margin-top:0;">Backup SQLite</h3>
-        <p class="muted">Create a timestamped backup copy in the server or local <code>backups</code> folder before larger cleanup work.</p>
-        <form method="POST">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <input type="hidden" name="action" value="create_backup">
-            <button class="btn btn-primary" type="submit">Create Backup Now</button>
-        </form>
+        {% if using_postgres_reset %}
+            <p class="muted">This service is using Postgres. The in-app SQLite backup button does not create a live production database backup on Render.</p>
+            <div class="small muted" style="margin-top:10px;">Before using Go-Live Reset, create a database backup or snapshot from your provider outside the app.</div>
+        {% else %}
+            <p class="muted">Create a timestamped backup copy in the server or local <code>backups</code> folder before larger cleanup work.</p>
+            <form method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="action" value="create_backup">
+                <button class="btn btn-primary" type="submit">Create Backup Now</button>
+            </form>
+        {% endif %}
 
         <div class="divider"></div>
         <h4 style="margin-top:0;">Recent Backups</h4>
@@ -51,15 +56,35 @@
 
 <div class="card" style="margin-top:18px; border-color:rgba(239,68,68,0.28); background:linear-gradient(180deg, rgba(78, 20, 20, 0.18), rgba(255,255,255,0.04));">
     <h3 style="margin-top:0;">Go-Live Reset</h3>
-    <p class="muted">Use this only when you are ready to start permanent use with clean records. This clears attendance, breaks, corrections, notifications, activity logs, incident reports, and old proof uploads, but keeps employee accounts, admin accounts, schedules, passwords, departments, positions, and profile images.</p>
-    <div class="small muted" style="margin-top:10px;">A SQLite backup is created automatically before the reset runs.</div>
+    <p class="muted">Use this only when you are ready to start permanent use with clean records.</p>
+    <div class="small muted" style="margin-top:10px;">
+        Reset clears:
+        attendance, breaks, correction and leave requests, notifications, activity logs, scanner logs, overtime sessions,
+        payroll adjustments, payroll runs, login attempt history, incident reports, disciplinary actions, and old proof uploads.
+    </div>
+    <div class="small muted" style="margin-top:10px;">
+        Reset keeps:
+        employee accounts, admin/scanner accounts, passwords, schedules, hourly rates, departments, positions, profile images,
+        barcode IDs, company settings, and the uploaded ID signatory file.
+    </div>
+    {% if using_postgres_reset %}
+        <div class="small" style="margin-top:12px;color:#fca5a5;">Warning: this Render/Postgres reset does not create an automatic database backup. Make an external backup first.</div>
+    {% else %}
+        <div class="small muted" style="margin-top:10px;">A SQLite backup is created automatically before the reset runs.</div>
+    {% endif %}
     <form method="POST" style="margin-top:16px;">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="action" value="go_live_reset">
         <label>Type RESET to confirm</label>
         <input class="input" type="text" name="confirmation_text" placeholder="RESET" autocomplete="off">
+        {% if using_postgres_reset %}
+            <label class="admin-filter-check" style="margin-top:14px;">
+                <input type="checkbox" name="confirm_no_backup" value="1">
+                <span>I understand this Postgres reset does not create an automatic database backup.</span>
+            </label>
+        {% endif %}
         <div class="top-actions" style="margin-top:14px;">
-            <button class="btn btn-danger" type="submit" onclick="return confirm('Run the go-live reset? This will clear attendance activity and requests, but keep users and schedules.')">Run Go-Live Reset</button>
+            <button class="btn btn-danger" type="submit" onclick="return confirm('Run the go-live reset? This will clear operational history and payroll activity, but keep users and schedules.')">Run Go-Live Reset</button>
         </div>
     </form>
 </div>

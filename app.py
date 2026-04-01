@@ -2626,6 +2626,10 @@ def remove_orphaned_proof_uploads():
             WHERE profile_image IS NOT NULL AND TRIM(profile_image) != ''
         """)
     }
+    company_settings = get_company_settings()
+    signatory_file = (company_settings.get("id_signature_file") or "").strip() if company_settings else ""
+    if signatory_file:
+        protected_files.add(signatory_file)
     removed = 0
     for name in os.listdir(app.config["UPLOAD_FOLDER"]):
         full_path = os.path.join(app.config["UPLOAD_FOLDER"], name)
@@ -2643,6 +2647,7 @@ def remove_orphaned_proof_uploads():
 
 def perform_go_live_reset():
     backup_path = None
+    backup_supported = not using_postgres()
     if not using_postgres():
         backup_path = create_sqlite_backup()
 
@@ -2697,6 +2702,7 @@ def perform_go_live_reset():
     removed_uploads = remove_orphaned_proof_uploads()
     return {
         "backup_path": backup_path,
+        "backup_supported": backup_supported,
         "removed_uploads": removed_uploads,
     }
 
@@ -6235,9 +6241,14 @@ def admin_data_tools():
             if confirmation != "RESET":
                 flash("Type RESET exactly before running the go-live reset.", "danger")
                 return redirect(url_for("admin_data_tools", search=search))
+            if using_postgres() and request.form.get("confirm_no_backup") != "1":
+                flash("On Postgres/Render, no automatic database backup is created by this reset. Confirm that you understand before continuing.", "danger")
+                return redirect(url_for("admin_data_tools", search=search))
             try:
                 result = perform_go_live_reset()
                 backup_note = f" Backup: {os.path.basename(result['backup_path'])}." if result.get("backup_path") else ""
+                if not result.get("backup_supported"):
+                    backup_note = " No automatic database backup was created for this Postgres reset."
                 upload_note = f" Removed {result['removed_uploads']} orphaned proof uploads." if result.get("removed_uploads") else ""
                 log_activity(session["user_id"], "GO-LIVE RESET", "Cleared operational attendance data for go-live.")
                 flash(f"Go-live reset completed.{backup_note}{upload_note}", "success")
@@ -6273,6 +6284,7 @@ def admin_data_tools():
         candidates=candidates,
         backups=backups,
         search=search,
+        using_postgres_reset=using_postgres(),
         format_datetime_12h=format_datetime_12h,
         minutes_to_hm=minutes_to_hm
     )
