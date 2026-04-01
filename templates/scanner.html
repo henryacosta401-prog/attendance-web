@@ -184,6 +184,18 @@
             background: linear-gradient(135deg, #e0f2fe, #bfdbfe);
         }
 
+        .employee-fallback.is-logo {
+            padding: 18px;
+        }
+
+        .employee-fallback.is-logo img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            display: block;
+            filter: drop-shadow(0 6px 16px rgba(15, 23, 42, 0.18));
+        }
+
         .employee-card.is-success .employee-photo {
             transform: scale(1.04);
             border-color: rgba(134, 239, 172, 0.7);
@@ -587,7 +599,9 @@
 
         <section class="employee-card">
             <div class="employee-photo">
-                <div class="employee-fallback" id="employeeFallback">SS</div>
+                <div class="employee-fallback is-logo" id="employeeFallback">
+                    <img src="{{ url_for('static', filename='stellar-seats-logo.svg') }}" alt="Stellar Seats logo">
+                </div>
                 <img id="employeePhoto" alt="Employee photo" hidden>
             </div>
             <div class="scan-result-chip" id="scanResultChip">Ready for Attendance</div>
@@ -831,7 +845,8 @@
             employeePhoto.hidden = true;
             employeePhoto.removeAttribute("src");
             employeeFallback.hidden = false;
-            employeeFallback.textContent = "SS";
+            employeeFallback.classList.add("is-logo");
+            employeeFallback.innerHTML = '<img src="{{ url_for("static", filename="stellar-seats-logo.svg") }}" alt="Stellar Seats logo">';
             metaStatus.textContent = "Idle";
             metaBarcode.textContent = "-";
             metaEmployee.textContent = "-";
@@ -857,6 +872,7 @@
                 employeePhoto.hidden = true;
                 employeePhoto.removeAttribute("src");
                 employeeFallback.hidden = false;
+                employeeFallback.classList.remove("is-logo");
                 employeeFallback.textContent = payload.avatar_initials || "SS";
             }
 
