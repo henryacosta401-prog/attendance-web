@@ -4,7 +4,7 @@
 {% block extra_head %}
 <style>
 .admin-shell { display: grid; gap: 20px; }
-.admin-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; }
+.admin-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
 .admin-stat-card, .admin-panel, .admin-exception-card {
     border-radius: 22px;
     background: linear-gradient(180deg, rgba(22, 31, 53, 0.98), rgba(15, 23, 42, 0.96));
@@ -17,14 +17,7 @@
 .admin-stat-note, .admin-panel-subtitle, .admin-meta, .admin-subtext, .admin-username { color: #9fb0d4; font-size: 12px; }
 .admin-panel { padding: 20px; }
 .admin-panel h2 { margin: 0; color: #f8fbff; font-size: 24px; }
-.department-tabs, .admin-exception-actions, .admin-flags, .admin-pagination-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.department-tab {
-    padding: 10px 14px; border-radius: 999px; border: 1px solid rgba(148, 163, 184, 0.18);
-    background: rgba(59, 130, 246, 0.08); color: #dbe7ff; font-size: 13px; font-weight: 700;
-}
-.department-tab.active { background: linear-gradient(135deg, rgba(59, 130, 246, 0.32), rgba(96, 165, 250, 0.16)); border-color: rgba(96, 165, 250, 0.45); color: #fff; }
-.admin-exception-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
-.admin-exception-card { padding: 16px; }
+.admin-exception-actions, .admin-flags, .admin-pagination-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .admin-exception-top, .admin-toolbar, .admin-pagination { display: flex; justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap; }
 .admin-exception-count { color: #fff; font-size: 30px; font-weight: 900; }
 .admin-exception-label { color: #dbe7ff; font-weight: 800; }
@@ -53,6 +46,21 @@
 .admin-sidebar, .admin-list { display: grid; gap: 12px; }
 .admin-list-card { padding: 14px 16px; border-radius: 16px; background: rgba(10, 16, 29, 0.34); border: 1px solid rgba(148, 163, 184, 0.12); }
 .admin-empty { margin-top: 16px; padding: 14px 16px; border-radius: 16px; border: 1px dashed rgba(148, 163, 184, 0.2); color: #9fb0d4; text-align: center; }
+.admin-signal-grid { display: grid; gap: 10px; margin-top: 16px; }
+.admin-signal-card {
+    padding: 14px 16px;
+    border-radius: 18px;
+    background: rgba(10, 16, 29, 0.34);
+    border: 1px solid rgba(148, 163, 184, 0.12);
+}
+.admin-signal-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+.admin-signal-count { color: #ffffff; font-size: 26px; font-weight: 900; }
+.admin-signal-copy { color: #cfe0ff; font-size: 13px; line-height: 1.45; margin-top: 8px; }
 @media (max-width: 1200px) {
     .admin-dashboard-grid { grid-template-columns: 1fr; }
     .admin-filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -154,7 +162,7 @@ document.addEventListener("DOMContentLoaded", function () {
     <div class="hero">
         <div>
             <h1>Admin Control Center</h1>
-            <p class="section-subtitle">Track schedules, spot absences and missing time-outs, and focus on exceptions before they become payroll problems.</p>
+            <p class="section-subtitle">Start with the live roster, keep an eye on today's exceptions, and move into deeper history only when you need the full audit trail.</p>
         </div>
         <div class="status status-purple">Operational View</div>
     </div>
@@ -163,37 +171,15 @@ document.addEventListener("DOMContentLoaded", function () {
 <div class="admin-shell">
     <div class="admin-stats" data-tour-id="admin-stats">
         <div class="admin-stat-card"><div class="admin-stat-label">Active Employees</div><div class="admin-stat-value">{{ stats.total_employees }}</div><div class="admin-stat-note">Current active employee accounts</div></div>
-        <div class="admin-stat-card"><div class="admin-stat-label">Scheduled Today</div><div class="admin-stat-value">{{ stats.scheduled_today }}</div><div class="admin-stat-note">Based on each employee's workdays</div></div>
-        <div class="admin-stat-card"><div class="admin-stat-label">Absent Today</div><div class="admin-stat-value">{{ stats.absent_today }}</div><div class="admin-stat-note">Scheduled but not timed in</div></div>
-        <div class="admin-stat-card"><div class="admin-stat-label">Late Today</div><div class="admin-stat-value">{{ stats.late_today }}</div><div class="admin-stat-note">Past shift start plus grace</div></div>
-        <div class="admin-stat-card"><div class="admin-stat-label">Undertime Today</div><div class="admin-stat-value">{{ stats.undertime_today }}</div><div class="admin-stat-note">Timed out before scheduled shift end</div></div>
-        <div class="admin-stat-card"><div class="admin-stat-label">Over Break</div><div class="admin-stat-value">{{ stats.over_break_today }}</div><div class="admin-stat-note">Exceeded break limit</div></div>
-        <div class="admin-stat-card"><div class="admin-stat-label">Missing Time Out</div><div class="admin-stat-value">{{ stats.missing_timeout }}</div><div class="admin-stat-note">Past shift end without time out</div></div>
-    </div>
-
-    <section class="admin-panel">
-        <h2>Department Tabs</h2>
-        <p class="admin-panel-subtitle">Switch departments quickly without rebuilding every filter from scratch.</p>
-        <div class="department-tabs" style="margin-top:16px;">
-            <a class="department-tab {% if not department_filter %}active{% endif %}" href="{{ url_for('admin_dashboard', search=search, status=status_filter, over_break_only=over_break_only, page_size=pagination.page_size) }}">All Departments</a>
-            {% for dept in departments %}
-                <a class="department-tab {% if department_filter == dept.department %}active{% endif %}" href="{{ url_for('admin_dashboard', search=search, status=status_filter, department=dept.department, over_break_only=over_break_only, page_size=pagination.page_size) }}">{{ dept.department }}</a>
-            {% endfor %}
-        </div>
-    </section>
-
-    <div class="admin-exception-grid" data-tour-id="admin-exceptions">
-        <div class="admin-exception-card"><div class="admin-exception-top"><div><div class="admin-exception-label">Absent Today</div><div class="admin-exception-count">{{ exception_groups.absent|length }}</div></div><span class="admin-pill admin-pill-red">Critical</span></div><div class="admin-stat-note">Scheduled staff who passed shift start without time in.</div><div class="admin-exception-actions"><a class="btn btn-primary" href="{{ url_for('export_admin_exceptions_excel', type='absent', department=department_filter) }}">Export</a></div></div>
-        <div class="admin-exception-card"><div class="admin-exception-top"><div><div class="admin-exception-label">Late Today</div><div class="admin-exception-count">{{ exception_groups.late|length }}</div></div><span class="admin-pill admin-pill-yellow">Watch</span></div><div class="admin-stat-note">Employees who timed in after the scheduled start.</div><div class="admin-exception-actions"><a class="btn btn-primary" href="{{ url_for('export_admin_exceptions_excel', type='late', department=department_filter) }}">Export</a></div></div>
-        <div class="admin-exception-card"><div class="admin-exception-top"><div><div class="admin-exception-label">Undertime Today</div><div class="admin-exception-count">{{ exception_groups.undertime|length }}</div></div><span class="admin-pill admin-pill-yellow">Track</span></div><div class="admin-stat-note">Employees who timed out before the scheduled shift end.</div><div class="admin-exception-actions"><a class="btn btn-primary" href="{{ url_for('export_admin_exceptions_excel', type='undertime', department=department_filter) }}">Export</a></div></div>
-        <div class="admin-exception-card"><div class="admin-exception-top"><div><div class="admin-exception-label">Over Break</div><div class="admin-exception-count">{{ exception_groups.over_break|length }}</div></div><span class="admin-pill admin-pill-yellow">Review</span></div><div class="admin-stat-note">Break totals already over each employee's limit.</div><div class="admin-exception-actions"><a class="btn btn-primary" href="{{ url_for('export_admin_exceptions_excel', type='over_break', department=department_filter) }}">Export</a></div></div>
-        <div class="admin-exception-card"><div class="admin-exception-top"><div><div class="admin-exception-label">Missing Time Out</div><div class="admin-exception-count">{{ exception_groups.missing_timeout|length }}</div></div><span class="admin-pill admin-pill-red">Urgent</span></div><div class="admin-stat-note">Shift end passed but no time out was recorded yet.</div><div class="admin-exception-actions"><a class="btn btn-primary" href="{{ url_for('export_admin_exceptions_excel', type='missing_timeout', department=department_filter) }}">Export</a></div></div>
+        <div class="admin-stat-card"><div class="admin-stat-label">Live On Shift</div><div class="admin-stat-value">{{ stats.timed_in + stats.on_break }}</div><div class="admin-stat-note">Currently timed in or on break</div></div>
+        <div class="admin-stat-card"><div class="admin-stat-label">Open Follow-Ups</div><div class="admin-stat-value">{{ stats.absent_today + stats.late_today + stats.undertime_today + stats.over_break_today + stats.missing_timeout }}</div><div class="admin-stat-note">Today's operational items to review</div></div>
+        <div class="admin-stat-card"><div class="admin-stat-label">Missing Time Out</div><div class="admin-stat-value">{{ stats.missing_timeout }}</div><div class="admin-stat-note">Highest-risk issue before payroll</div></div>
     </div>
 
     <div class="admin-dashboard-grid">
         <section class="admin-panel" data-tour-id="admin-live-status">
             <h2>Live Employee Status</h2>
-            <p class="admin-panel-subtitle">Search, filter, and page through the live roster without letting the page get endlessly taller.</p>
+            <p class="admin-panel-subtitle">Search, filter, and page through the live roster from one primary workspace instead of scanning multiple dashboards first.</p>
             <div class="admin-filter-grid">
                 <div><label>Search</label><input id="searchBox" class="input" type="text" value="{{ search }}" placeholder="Search employee"></div>
                 <div><label>Status</label><select id="statusFilter" class="input"><option value="">All</option><option value="Absent" {% if status_filter == 'Absent' %}selected{% endif %}>Absent</option><option value="Suspended" {% if status_filter == 'Suspended' %}selected{% endif %}>Suspended</option><option value="Timed In" {% if status_filter == 'Timed In' %}selected{% endif %}>Timed In</option><option value="On Break" {% if status_filter == 'On Break' %}selected{% endif %}>On Break</option><option value="Timed Out" {% if status_filter == 'Timed Out' %}selected{% endif %}>Timed Out</option><option value="Undertime" {% if status_filter == 'Undertime' %}selected{% endif %}>Undertime</option><option value="Missing Time Out" {% if status_filter == 'Missing Time Out' %}selected{% endif %}>Missing Time Out</option><option value="Offline" {% if status_filter == 'Offline' %}selected{% endif %}>Offline</option><option value="Off Day" {% if status_filter == 'Off Day' %}selected{% endif %}>Off Day</option><option value="Inactive" {% if status_filter == 'Inactive' %}selected{% endif %}>Inactive</option></select></div>
@@ -234,6 +220,37 @@ document.addEventListener("DOMContentLoaded", function () {
         </section>
 
         <aside class="admin-sidebar">
+            <section class="admin-panel" data-tour-id="admin-exceptions">
+                <h2>Today’s Focus</h2>
+                <p class="admin-panel-subtitle">Keep the biggest exception buckets visible here, then dive into the live roster or exports only when you need detail.</p>
+                <div class="admin-signal-grid">
+                    <div class="admin-signal-card">
+                        <div class="admin-signal-top"><div><div class="admin-exception-label">Absent Today</div><div class="admin-signal-count">{{ exception_groups.absent|length }}</div></div><span class="admin-pill admin-pill-red">Critical</span></div>
+                        <div class="admin-signal-copy">Scheduled employees who passed shift start without timing in.</div>
+                        <div class="admin-exception-actions" style="margin-top:10px;"><a class="btn btn-primary" href="{{ url_for('export_admin_exceptions_excel', type='absent', department=department_filter) }}">Export</a></div>
+                    </div>
+                    <div class="admin-signal-card">
+                        <div class="admin-signal-top"><div><div class="admin-exception-label">Late Today</div><div class="admin-signal-count">{{ exception_groups.late|length }}</div></div><span class="admin-pill admin-pill-yellow">Watch</span></div>
+                        <div class="admin-signal-copy">Employees who timed in after their scheduled start window.</div>
+                        <div class="admin-exception-actions" style="margin-top:10px;"><a class="btn btn-primary" href="{{ url_for('export_admin_exceptions_excel', type='late', department=department_filter) }}">Export</a></div>
+                    </div>
+                    <div class="admin-signal-card">
+                        <div class="admin-signal-top"><div><div class="admin-exception-label">Undertime Today</div><div class="admin-signal-count">{{ exception_groups.undertime|length }}</div></div><span class="admin-pill admin-pill-yellow">Track</span></div>
+                        <div class="admin-signal-copy">People who timed out earlier than their scheduled shift end.</div>
+                        <div class="admin-exception-actions" style="margin-top:10px;"><a class="btn btn-primary" href="{{ url_for('export_admin_exceptions_excel', type='undertime', department=department_filter) }}">Export</a></div>
+                    </div>
+                    <div class="admin-signal-card">
+                        <div class="admin-signal-top"><div><div class="admin-exception-label">Over Break</div><div class="admin-signal-count">{{ exception_groups.over_break|length }}</div></div><span class="admin-pill admin-pill-yellow">Review</span></div>
+                        <div class="admin-signal-copy">Break totals already above the employee’s configured limit.</div>
+                        <div class="admin-exception-actions" style="margin-top:10px;"><a class="btn btn-primary" href="{{ url_for('export_admin_exceptions_excel', type='over_break', department=department_filter) }}">Export</a></div>
+                    </div>
+                    <div class="admin-signal-card">
+                        <div class="admin-signal-top"><div><div class="admin-exception-label">Missing Time Out</div><div class="admin-signal-count">{{ exception_groups.missing_timeout|length }}</div></div><span class="admin-pill admin-pill-red">Urgent</span></div>
+                        <div class="admin-signal-copy">Shift end passed, but the attendance row still has no time out.</div>
+                        <div class="admin-exception-actions" style="margin-top:10px;"><a class="btn btn-primary" href="{{ url_for('export_admin_exceptions_excel', type='missing_timeout', department=department_filter) }}">Export</a></div>
+                    </div>
+                </div>
+            </section>
             <section class="admin-panel" data-tour-id="admin-exception-queue">
                 <h2>Exception Queue</h2>
                 <p class="admin-panel-subtitle">The fastest way to review the people who need follow-up right now.</p>

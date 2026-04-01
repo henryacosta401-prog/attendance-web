@@ -137,9 +137,113 @@
         .nav-right {
             display: flex;
             align-items: center;
+            gap: 14px;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            flex: 1 1 auto;
+            min-width: 0;
+        }
+
+        .nav-primary,
+        .nav-utility {
+            display: flex;
+            align-items: center;
             gap: 10px;
             flex-wrap: wrap;
+        }
+
+        .nav-primary {
+            flex: 1 1 720px;
+            min-width: 0;
+        }
+
+        .nav-utility {
             justify-content: flex-end;
+            flex: 0 1 auto;
+        }
+
+        .nav-group {
+            position: relative;
+        }
+
+        .nav-group-toggle {
+            font-family: inherit;
+            appearance: none;
+        }
+
+        .nav-group-toggle .nav-caret {
+            font-size: 11px;
+            opacity: 0.78;
+        }
+
+        .nav-group.open .nav-group-toggle {
+            background: rgba(255,255,255,0.10);
+            border-color: rgba(96,165,250,0.30);
+        }
+
+        .nav-menu {
+            position: absolute;
+            top: calc(100% + 12px);
+            left: 0;
+            min-width: 260px;
+            padding: 14px;
+            border-radius: 20px;
+            background: rgba(15, 23, 42, 0.96);
+            border: 1px solid rgba(255,255,255,0.10);
+            box-shadow: 0 22px 44px rgba(2, 6, 23, 0.45);
+            backdrop-filter: blur(16px);
+            display: none;
+            z-index: 110;
+        }
+
+        .nav-group.open .nav-menu {
+            display: block;
+        }
+
+        .nav-menu-label {
+            color: #93c5fd;
+            font-size: 11px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.10em;
+            margin-bottom: 10px;
+        }
+
+        .nav-menu-list {
+            display: grid;
+            gap: 8px;
+        }
+
+        .nav-menu-link {
+            display: grid;
+            gap: 3px;
+            padding: 10px 12px;
+            border-radius: 14px;
+            border: 1px solid rgba(255,255,255,0.06);
+            background: rgba(255,255,255,0.03);
+            transition: 0.18s ease;
+        }
+
+        .nav-menu-link:hover {
+            background: rgba(255,255,255,0.07);
+            transform: translateY(-1px);
+        }
+
+        .nav-menu-link.active {
+            border-color: rgba(96,165,250,0.32);
+            background: linear-gradient(135deg, rgba(59,130,246,0.20), rgba(96,165,250,0.10));
+        }
+
+        .nav-menu-link strong {
+            color: #eff6ff;
+            font-size: 13px;
+            font-weight: 800;
+        }
+
+        .nav-menu-link span {
+            color: #9fb0d4;
+            font-size: 12px;
+            line-height: 1.35;
         }
 
         .pill-link {
@@ -163,6 +267,11 @@
             border-color: rgba(96,165,250,0.45);
             color: var(--white);
             box-shadow: 0 10px 24px rgba(59,130,246,0.18);
+        }
+
+        .pill-link.utility {
+            background: rgba(255,255,255,0.04);
+            color: #cbd5e1;
         }
 
         .container {
@@ -801,6 +910,28 @@
                 justify-content: flex-start;
             }
 
+            .nav-primary,
+            .nav-utility {
+                width: 100%;
+                justify-content: flex-start;
+            }
+
+            .nav-group {
+                width: 100%;
+            }
+
+            .nav-group-toggle {
+                width: 100%;
+                justify-content: space-between;
+            }
+
+            .nav-menu {
+                position: static;
+                min-width: 0;
+                width: 100%;
+                margin-top: 10px;
+            }
+
             .hero {
                 flex-direction: column;
                 align-items: flex-start;
@@ -830,36 +961,110 @@
 
     <div class="nav-right">
         {% if session.get('role') == 'admin' %}
-            <a class="pill-link {% if request.endpoint == 'admin_dashboard' %}active{% endif %}" data-tour-id="nav-dashboard" href="{{ url_for('admin_dashboard') }}">Dashboard</a>
-            <a class="pill-link {% if request.endpoint == 'admin_payroll' %}active{% endif %}" href="{{ url_for('admin_payroll') }}">Payroll</a>
-            <a class="pill-link {% if request.endpoint == 'admin_leave_dashboard' %}active{% endif %}" href="{{ url_for('admin_leave_dashboard') }}">Leave</a>
-            <a class="pill-link {% if request.endpoint == 'admin_error_reports' %}active{% endif %}" href="{{ url_for('admin_error_reports') }}">Error Reports</a>
-            <a class="pill-link {% if request.endpoint == 'admin_disciplinary_dashboard' %}active{% endif %}" href="{{ url_for('admin_disciplinary_dashboard') }}">Disciplinary</a>
-            <a class="pill-link {% if request.endpoint == 'admin_incident_report' %}active{% endif %}" href="{{ url_for('admin_incident_report') }}">Create Incident</a>
-            <a class="pill-link {% if request.endpoint == 'admin_corrections' %}active{% endif %}" data-tour-id="nav-corrections" href="{{ url_for('admin_corrections') }}">Corrections</a>
-            <a class="pill-link {% if request.endpoint == 'admin_history' %}active{% endif %}" data-tour-id="nav-history" href="{{ url_for('admin_history') }}">History</a>
-            <a class="pill-link {% if request.endpoint == 'admin_attendance_audit' %}active{% endif %}" href="{{ url_for('admin_attendance_audit') }}">Attendance Audit</a>
-            <a class="pill-link {% if request.endpoint == 'admin_scanner_logs' %}active{% endif %}" href="{{ url_for('admin_scanner_logs') }}">Scanner Logs</a>
-            <a class="pill-link {% if request.endpoint == 'admin_data_tools' %}active{% endif %}" href="{{ url_for('admin_data_tools') }}">Data Tools</a>
-            <a class="pill-link {% if request.endpoint == 'manage_employees' or request.endpoint == 'edit_employee' %}active{% endif %}" data-tour-id="nav-employees" href="{{ url_for('manage_employees') }}">Employees</a>
-            <a class="pill-link {% if request.endpoint == 'admin_profile' %}active{% endif %}" data-tour-id="nav-account" href="{{ url_for('admin_profile') }}">Account</a>
+            {% set attendance_endpoints = ['admin_corrections', 'admin_history', 'admin_attendance_audit', 'admin_scanner_logs'] %}
+            {% set workflow_endpoints = ['admin_leave_dashboard', 'admin_error_reports', 'admin_disciplinary_dashboard', 'admin_incident_report'] %}
+            {% set admin_endpoints = ['admin_data_tools', 'admin_profile'] %}
+            <div class="nav-primary">
+                <a class="pill-link {% if request.endpoint == 'admin_dashboard' %}active{% endif %}" data-tour-id="nav-dashboard" href="{{ url_for('admin_dashboard') }}">Dashboard</a>
+                <a class="pill-link {% if request.endpoint == 'manage_employees' or request.endpoint == 'edit_employee' %}active{% endif %}" data-tour-id="nav-employees" href="{{ url_for('manage_employees') }}">Employees</a>
+                <a class="pill-link {% if request.endpoint == 'admin_payroll' %}active{% endif %}" href="{{ url_for('admin_payroll') }}">Payroll</a>
+
+                <div class="nav-group" data-nav-group>
+                    <button class="pill-link nav-group-toggle {% if request.endpoint in attendance_endpoints %}active{% endif %}" data-nav-toggle data-tour-id="nav-attendance" type="button" aria-expanded="false">
+                        Attendance <span class="nav-caret">v</span>
+                    </button>
+                    <div class="nav-menu">
+                        <div class="nav-menu-label">Attendance Review</div>
+                        <div class="nav-menu-list">
+                            <a class="nav-menu-link {% if request.endpoint == 'admin_corrections' %}active{% endif %}" data-tour-id="nav-corrections" href="{{ url_for('admin_corrections') }}">
+                                <strong>Corrections</strong>
+                                <span>Approve missed punches, leave requests, and fixes.</span>
+                            </a>
+                            <a class="nav-menu-link {% if request.endpoint == 'admin_history' %}active{% endif %}" data-tour-id="nav-history" href="{{ url_for('admin_history') }}">
+                                <strong>History</strong>
+                                <span>Review exported attendance records and past entries.</span>
+                            </a>
+                            <a class="nav-menu-link {% if request.endpoint == 'admin_attendance_audit' %}active{% endif %}" href="{{ url_for('admin_attendance_audit') }}">
+                                <strong>Attendance Audit</strong>
+                                <span>Follow scanner, manual, and overtime actions in one timeline.</span>
+                            </a>
+                            <a class="nav-menu-link {% if request.endpoint == 'admin_scanner_logs' %}active{% endif %}" href="{{ url_for('admin_scanner_logs') }}">
+                                <strong>Scanner Logs</strong>
+                                <span>Inspect kiosk scans, failures, and matched employees.</span>
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="nav-group" data-nav-group>
+                    <button class="pill-link nav-group-toggle {% if request.endpoint in workflow_endpoints %}active{% endif %}" data-nav-toggle type="button" aria-expanded="false">
+                        Workflows <span class="nav-caret">v</span>
+                    </button>
+                    <div class="nav-menu">
+                        <div class="nav-menu-label">People Operations</div>
+                        <div class="nav-menu-list">
+                            <a class="nav-menu-link {% if request.endpoint == 'admin_leave_dashboard' %}active{% endif %}" href="{{ url_for('admin_leave_dashboard') }}">
+                                <strong>Leave</strong>
+                                <span>Track balances, pending requests, and exhausted allowances.</span>
+                            </a>
+                            <a class="nav-menu-link {% if request.endpoint == 'admin_error_reports' %}active{% endif %}" href="{{ url_for('admin_error_reports') }}">
+                                <strong>Error Reports</strong>
+                                <span>Review reported issues and operational errors.</span>
+                            </a>
+                            <a class="nav-menu-link {% if request.endpoint == 'admin_disciplinary_dashboard' %}active{% endif %}" href="{{ url_for('admin_disciplinary_dashboard') }}">
+                                <strong>Disciplinary</strong>
+                                <span>Manage coaching, NTE, and suspension actions.</span>
+                            </a>
+                            <a class="nav-menu-link {% if request.endpoint == 'admin_incident_report' %}active{% endif %}" href="{{ url_for('admin_incident_report') }}">
+                                <strong>Create Incident</strong>
+                                <span>Log a new incident or operational concern.</span>
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="nav-group" data-nav-group>
+                    <button class="pill-link nav-group-toggle {% if request.endpoint in admin_endpoints %}active{% endif %}" data-nav-toggle type="button" aria-expanded="false">
+                        Admin <span class="nav-caret">v</span>
+                    </button>
+                    <div class="nav-menu">
+                        <div class="nav-menu-label">Admin Controls</div>
+                        <div class="nav-menu-list">
+                            <a class="nav-menu-link {% if request.endpoint == 'admin_data_tools' %}active{% endif %}" href="{{ url_for('admin_data_tools') }}">
+                                <strong>Data Tools</strong>
+                                <span>Run backups, go-live reset, and suspicious-row repair tools.</span>
+                            </a>
+                            <a class="nav-menu-link {% if request.endpoint == 'admin_profile' %}active{% endif %}" data-tour-id="nav-account" href="{{ url_for('admin_profile') }}">
+                                <strong>Account Settings</strong>
+                                <span>Manage admin profile, scanner mode, and kiosk settings.</span>
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
         {% elif session.get('role') == 'scanner' %}
-            <a class="pill-link {% if request.endpoint == 'scanner_kiosk' %}active{% endif %}" href="{{ url_for('scanner_kiosk') }}">Scanner Kiosk</a>
+            <div class="nav-primary">
+                <a class="pill-link {% if request.endpoint == 'scanner_kiosk' %}active{% endif %}" href="{{ url_for('scanner_kiosk') }}">Scanner Kiosk</a>
+            </div>
         {% else %}
-            <a class="pill-link {% if request.endpoint == 'dashboard' %}active{% endif %}" data-tour-id="nav-dashboard" href="{{ url_for('dashboard') }}">Dashboard</a>
-            <a class="pill-link {% if request.endpoint == 'employee_activity' %}active{% endif %}" href="{{ url_for('employee_activity') }}">Recent Activity</a>
-            <a class="pill-link {% if request.endpoint == 'employee_history' %}active{% endif %}" data-tour-id="nav-history" href="{{ url_for('employee_history') }}">History</a>
-            <a class="pill-link {% if request.endpoint == 'employee_corrections' %}active{% endif %}" data-tour-id="nav-corrections" href="{{ url_for('employee_corrections') }}">Corrections</a>
-            <a class="pill-link {% if request.endpoint == 'employee_profile' %}active{% endif %}" data-tour-id="nav-profile" href="{{ url_for('employee_profile') }}">Profile</a>
+            <div class="nav-primary">
+                <a class="pill-link {% if request.endpoint == 'dashboard' %}active{% endif %}" data-tour-id="nav-dashboard" href="{{ url_for('dashboard') }}">Dashboard</a>
+                <a class="pill-link {% if request.endpoint == 'employee_activity' %}active{% endif %}" href="{{ url_for('employee_activity') }}">Recent Activity</a>
+                <a class="pill-link {% if request.endpoint == 'employee_history' %}active{% endif %}" data-tour-id="nav-history" href="{{ url_for('employee_history') }}">History</a>
+                <a class="pill-link {% if request.endpoint == 'employee_corrections' %}active{% endif %}" data-tour-id="nav-corrections" href="{{ url_for('employee_corrections') }}">Corrections</a>
+                <a class="pill-link {% if request.endpoint == 'employee_profile' %}active{% endif %}" data-tour-id="nav-profile" href="{{ url_for('employee_profile') }}">Profile</a>
+            </div>
         {% endif %}
 
-        <span class="pill-link">👤 {{ session.get('full_name') }}</span>
-        <span class="pill-link">🔔 {{ unread_count }}</span>
-        <button class="pill-link tour-launch" data-tour-launch="manual" type="button">App Tour</button>
-        <form method="POST" action="{{ url_for('logout') }}" style="margin:0;">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <button class="btn btn-danger" data-tour-id="nav-logout" type="submit">Logout</button>
-        </form>
+        <div class="nav-utility">
+            <span class="pill-link utility">👤 {{ session.get('full_name') }}</span>
+            <span class="pill-link utility">🔔 {{ unread_count }}</span>
+            <button class="pill-link tour-launch" data-tour-launch="manual" type="button">App Tour</button>
+            <form method="POST" action="{{ url_for('logout') }}" style="margin:0;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button class="btn btn-danger" data-tour-id="nav-logout" type="submit">Logout</button>
+            </form>
+        </div>
     </div>
 </div>
 {% endif %}
@@ -896,6 +1101,42 @@
 </div>
 
 <script>
+document.addEventListener("DOMContentLoaded", function () {
+    const navGroups = Array.from(document.querySelectorAll("[data-nav-group]"));
+    if (navGroups.length) {
+        function closeNavMenus(exceptGroup) {
+            navGroups.forEach(function (group) {
+                if (group === exceptGroup) return;
+                group.classList.remove("open");
+                const toggle = group.querySelector("[data-nav-toggle]");
+                if (toggle) toggle.setAttribute("aria-expanded", "false");
+            });
+        }
+
+        navGroups.forEach(function (group) {
+            const toggle = group.querySelector("[data-nav-toggle]");
+            const menu = group.querySelector(".nav-menu");
+            if (!toggle || !menu) return;
+
+            toggle.addEventListener("click", function (event) {
+                event.stopPropagation();
+                const willOpen = !group.classList.contains("open");
+                closeNavMenus(group);
+                group.classList.toggle("open", willOpen);
+                toggle.setAttribute("aria-expanded", willOpen ? "true" : "false");
+            });
+
+            menu.addEventListener("click", function (event) {
+                event.stopPropagation();
+            });
+        });
+
+        document.addEventListener("click", function () {
+            closeNavMenus(null);
+        });
+    }
+});
+
 document.addEventListener("DOMContentLoaded", function () {
     const navRight = document.querySelector(".nav-right");
     if (!navRight) return;
@@ -993,7 +1234,7 @@ document.addEventListener("DOMContentLoaded", function () {
             { selector: "[data-tour-id='admin-live-status']", title: "Use the live roster for day-to-day review", body: "Search, filter, and monitor each employee's current shift status here without jumping around the app." },
             { selector: "[data-tour-id='admin-history-link']", title: "History is your detailed audit view", body: "Open full history when you need exports, past records, undertime, leave, and deeper attendance review." },
             { selector: "[data-tour-id='admin-exception-queue']", title: "Keep the queue in sight", body: "This panel keeps urgent people visible so they do not get buried while you review other pages." },
-            { selector: "[data-tour-id='nav-corrections']", title: "Corrections is where approvals happen", body: "Use Corrections for missed punches, undertime approvals, sick leave, and paid leave requests." }
+            { selector: "[data-tour-id='nav-attendance']", title: "Attendance tools are grouped together", body: "Use this menu for corrections, full history, the attendance audit, and scanner logs instead of hunting through a long nav bar." }
         ],
         dashboard: [
             { selector: "[data-tour-id='nav-dashboard']", title: "Your dashboard is home base", body: "This page summarizes your shift, break use, work hours, and recent updates in one place." },
