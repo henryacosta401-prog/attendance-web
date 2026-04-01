@@ -838,6 +838,7 @@
             <a class="pill-link {% if request.endpoint == 'admin_incident_report' %}active{% endif %}" href="{{ url_for('admin_incident_report') }}">Create Incident</a>
             <a class="pill-link {% if request.endpoint == 'admin_corrections' %}active{% endif %}" data-tour-id="nav-corrections" href="{{ url_for('admin_corrections') }}">Corrections</a>
             <a class="pill-link {% if request.endpoint == 'admin_history' %}active{% endif %}" data-tour-id="nav-history" href="{{ url_for('admin_history') }}">History</a>
+            <a class="pill-link {% if request.endpoint == 'admin_attendance_audit' %}active{% endif %}" href="{{ url_for('admin_attendance_audit') }}">Attendance Audit</a>
             <a class="pill-link {% if request.endpoint == 'admin_scanner_logs' %}active{% endif %}" href="{{ url_for('admin_scanner_logs') }}">Scanner Logs</a>
             <a class="pill-link {% if request.endpoint == 'admin_data_tools' %}active{% endif %}" href="{{ url_for('admin_data_tools') }}">Data Tools</a>
             <a class="pill-link {% if request.endpoint == 'manage_employees' or request.endpoint == 'edit_employee' %}active{% endif %}" data-tour-id="nav-employees" href="{{ url_for('manage_employees') }}">Employees</a>
@@ -846,7 +847,9 @@
             <a class="pill-link {% if request.endpoint == 'scanner_kiosk' %}active{% endif %}" href="{{ url_for('scanner_kiosk') }}">Scanner Kiosk</a>
         {% else %}
             <a class="pill-link {% if request.endpoint == 'dashboard' %}active{% endif %}" data-tour-id="nav-dashboard" href="{{ url_for('dashboard') }}">Dashboard</a>
-            <a class="pill-link {% if request.endpoint == 'employee_actions' %}active{% endif %}" data-tour-id="nav-quick-actions" href="{{ url_for('employee_actions') }}">Quick Actions</a>
+            {% if not company_settings.scanner_attendance_mode %}
+                <a class="pill-link {% if request.endpoint == 'employee_actions' %}active{% endif %}" data-tour-id="nav-quick-actions" href="{{ url_for('employee_actions') }}">Quick Actions</a>
+            {% endif %}
             <a class="pill-link {% if request.endpoint == 'employee_activity' %}active{% endif %}" href="{{ url_for('employee_activity') }}">Recent Activity</a>
             <a class="pill-link {% if request.endpoint == 'employee_history' %}active{% endif %}" data-tour-id="nav-history" href="{{ url_for('employee_history') }}">History</a>
             <a class="pill-link {% if request.endpoint == 'employee_corrections' %}active{% endif %}" data-tour-id="nav-corrections" href="{{ url_for('employee_corrections') }}">Corrections</a>

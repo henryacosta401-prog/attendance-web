@@ -50,11 +50,14 @@
     <div class="payroll-stats">
         <div class="payroll-card"><div class="payroll-label">Gross Payroll</div><div class="payroll-value">{{ format_currency(stats.total_gross) }}</div><div class="payroll-note">Hourly pay based on worked hours</div></div>
         <div class="payroll-card"><div class="payroll-label">Paid Hours</div><div class="payroll-value">{{ "%.2f"|format(stats.total_hours) }}</div><div class="payroll-note">Attendance rows with time in and time out</div></div>
+        <div class="payroll-card"><div class="payroll-label">Overtime Hours</div><div class="payroll-value">{{ "%.2f"|format(stats.total_overtime_hours) }}</div><div class="payroll-note">Tracked overtime sessions in this range</div></div>
+        <div class="payroll-card"><div class="payroll-label">Overtime Pay</div><div class="payroll-value">{{ format_currency(stats.total_overtime_pay) }}</div><div class="payroll-note">Using {{ "%.2f"|format(stats.overtime_multiplier) }}x overtime multiplier</div></div>
         <div class="payroll-card"><div class="payroll-label">Employees In View</div><div class="payroll-value">{{ stats.employees }}</div><div class="payroll-note">Current department and date filter</div></div>
         <div class="payroll-card"><div class="payroll-label">Employees With Pay</div><div class="payroll-value">{{ stats.paid_employees }}</div><div class="payroll-note">At least one payable record in range</div></div>
         <div class="payroll-card"><div class="payroll-label">Missing Rates</div><div class="payroll-value">{{ stats.missing_rates }}</div><div class="payroll-note">Needs hourly rate before payroll is final</div></div>
         <div class="payroll-card"><div class="payroll-label">Suspension Days</div><div class="payroll-value">{{ stats.suspension_days }}</div><div class="payroll-note">Scheduled suspension days in range</div></div>
         <div class="payroll-card"><div class="payroll-label">Lost Pay Estimate</div><div class="payroll-value">{{ format_currency(stats.suspension_pay) }}</div><div class="payroll-note">Reference impact from suspensions</div></div>
+        <div class="payroll-card"><div class="payroll-label">Estimated Pay</div><div class="payroll-value">{{ format_currency(stats.total_net_estimate) }}</div><div class="payroll-note">Worked pay plus overtime, before other deductions</div></div>
     </div>
 
     <section class="payroll-panel">
@@ -110,11 +113,14 @@
                         <th>Hourly Rate</th>
                         <th>Days Worked</th>
                         <th>Total Hours</th>
+                        <th>Overtime Hours</th>
                         <th>Late Minutes</th>
                         <th>Break Minutes</th>
                         <th>Suspension Days</th>
                         <th>Lost Pay Estimate</th>
                         <th>Gross Pay</th>
+                        <th>Overtime Pay</th>
+                        <th>Estimated Pay</th>
                         <th>Status</th>
                     </tr>
                 </thead>
@@ -127,11 +133,14 @@
                                 <td>{{ format_currency(row.hourly_rate) }}</td>
                                 <td>{{ row.days_worked }}</td>
                                 <td>{{ "%.2f"|format(row.total_hours) }}</td>
+                                <td>{{ "%.2f"|format(row.overtime_hours) }}</td>
                                 <td>{{ row.late_minutes }}</td>
                                 <td>{{ row.break_minutes }}</td>
                                 <td>{{ row.suspension_days }}</td>
                                 <td>{{ format_currency(row.suspension_pay) }}</td>
                                 <td style="font-weight:800;color:#fff;">{{ format_currency(row.gross_pay) }}</td>
+                                <td>{{ format_currency(row.overtime_pay) }}</td>
+                                <td style="font-weight:800;color:#fff;">{{ format_currency(row.net_pay_estimate) }}</td>
                                 <td>
                                     <span class="payroll-status {% if row.has_rate %}payroll-status-ready{% else %}payroll-status-missing{% endif %}">
                                         {{ row.status_label }}
@@ -140,7 +149,7 @@
                             </tr>
                         {% endfor %}
                     {% else %}
-                        <tr><td colspan="11" class="payroll-empty">No employees matched this payroll filter.</td></tr>
+                        <tr><td colspan="14" class="payroll-empty">No employees matched this payroll filter.</td></tr>
                     {% endif %}
                 </tbody>
             </table>

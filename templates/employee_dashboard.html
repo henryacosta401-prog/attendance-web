@@ -253,11 +253,18 @@
                         <span class="employee-status-badge employee-status-yellow">Live Status: Sick Leave</span>
                     {% elif current_status == "Paid Leave" %}
                         <span class="employee-status-badge employee-status-green">Live Status: Paid Leave</span>
+                    {% elif current_status == "On Overtime" %}
+                        <span class="employee-status-badge employee-status-blue">Live Status: On Overtime</span>
                     {% else %}
                         <span class="employee-status-badge employee-status-gray">Live Status: Offline</span>
                     {% endif %}
                 </div>
             </div>
+            {% if company_settings.scanner_attendance_mode %}
+                <div class="employee-alerts">
+                    <span class="employee-status-badge employee-status-blue">Attendance is recorded through the scanner kiosk.</span>
+                </div>
+            {% endif %}
 
             <div class="employee-glance">
                 <div class="employee-glance-card">
@@ -323,6 +330,9 @@
                     <div style="font-size:24px;font-weight:900;color:#fff;">{{ user.full_name }}</div>
                     <div class="muted" style="margin-top:6px;">@{{ user.username }}</div>
                     <div class="small muted" style="margin-top:10px;">Keep your schedule and profile details up to date.</div>
+                    {% if user.profile_image and not uploaded_file_exists(user.profile_image) %}
+                        <div class="small" style="margin-top:10px;color:#fcd34d;">Profile image file is missing from storage. Re-upload it from your profile page.</div>
+                    {% endif %}
                 </div>
             </div>
 
@@ -344,7 +354,9 @@
                 <div class="employee-panel-subtitle">Your full attendance timeline, proof upload, and schedule reference.</div>
             </div>
             <div style="display:flex;gap:10px;flex-wrap:wrap;">
-                <a class="btn btn-gray" data-tour-id="employee-quick-actions-link" href="{{ url_for('employee_actions') }}">Open Quick Actions</a>
+                {% if not company_settings.scanner_attendance_mode %}
+                    <a class="btn btn-gray" data-tour-id="employee-quick-actions-link" href="{{ url_for('employee_actions') }}">Open Quick Actions</a>
+                {% endif %}
                 <a class="btn btn-gray" href="{{ url_for('employee_activity') }}">Open Recent Activity</a>
             </div>
         </div>

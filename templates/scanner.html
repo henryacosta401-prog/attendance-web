@@ -538,6 +538,68 @@
             color: rgba(226, 232, 240, 0.64);
         }
 
+        .lock-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(2, 6, 23, 0.84);
+            backdrop-filter: blur(12px);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            z-index: 30;
+        }
+
+        .lock-overlay.is-open {
+            display: flex;
+        }
+
+        .lock-panel {
+            width: min(360px, 100%);
+            border-radius: 26px;
+            padding: 22px;
+            background: linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(8, 16, 30, 0.98));
+            border: 1px solid rgba(191, 219, 254, 0.14);
+            box-shadow: 0 26px 48px rgba(2, 6, 23, 0.42);
+            display: grid;
+            gap: 12px;
+            text-align: center;
+        }
+
+        .lock-title {
+            font-size: 24px;
+            font-weight: 900;
+            letter-spacing: -0.04em;
+        }
+
+        .lock-body {
+            color: rgba(226, 232, 240, 0.78);
+            font-size: 14px;
+            line-height: 1.45;
+        }
+
+        .lock-input {
+            width: 100%;
+            border-radius: 16px;
+            border: 1px solid rgba(191, 219, 254, 0.14);
+            background: rgba(15, 23, 42, 0.78);
+            color: #f8fbff;
+            padding: 14px 16px;
+            font-size: 18px;
+            text-align: center;
+            letter-spacing: 0.12em;
+        }
+
+        .lock-actions {
+            display: grid;
+            gap: 10px;
+        }
+
+        .lock-note {
+            color: rgba(148, 163, 184, 0.9);
+            font-size: 12px;
+        }
+
         @keyframes scanLine {
             0%, 100% {
                 transform: translateY(-26px);
@@ -591,7 +653,11 @@
     </style>
 </head>
 <body>
-    <div class="scanner-app">
+    <div
+        class="scanner-app"
+        data-lock-timeout-ms="{{ ((company_settings.scanner_lock_timeout_seconds or 90) | int) * 1000 }}"
+        data-scanner-pin-configured="{{ 1 if company_settings.scanner_exit_pin_hash else 0 }}"
+    >
         <header class="header-card">
             <div class="header-title">Welcome to Stellar Seats</div>
             <div class="header-meta" id="liveDateTime">Loading date and time...</div>
@@ -616,8 +682,8 @@
                 <button class="action-btn action-break-start" type="button" data-action="start_break">Break Start</button>
                 <button class="action-btn action-break-end" type="button" data-action="end_break">Break End</button>
                 <button class="action-btn action-time-out" type="button" data-action="time_out">Time Out</button>
-                <button class="action-btn action-overtime-start is-disabled" type="button" data-action="overtime_start" data-disabled="1">Overtime Start</button>
-                <button class="action-btn action-overtime-end is-disabled" type="button" data-action="overtime_end" data-disabled="1">Overtime End</button>
+                <button class="action-btn action-overtime-start" type="button" data-action="overtime_start">Overtime Start</button>
+                <button class="action-btn action-overtime-end" type="button" data-action="overtime_end">Overtime End</button>
             </div>
         </section>
 
@@ -655,6 +721,22 @@
         </section>
     </div>
 
+    <div class="lock-overlay" id="lockOverlay">
+        <div class="lock-panel">
+            <div class="lock-title">Scanner Locked</div>
+            <div class="lock-body" id="lockMessage">The kiosk locked after inactivity. Enter the kiosk PIN to resume scanning.</div>
+            <input id="lockPinInput" class="lock-input" type="password" inputmode="numeric" autocomplete="off" placeholder="Kiosk PIN">
+            <div class="lock-actions">
+                <button class="action-btn is-active" type="button" id="unlockButton">Unlock Scanner</button>
+                <form method="POST" action="{{ url_for('logout') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button class="action-btn" type="submit">Log Out Scanner</button>
+                </form>
+            </div>
+            <div class="lock-note" id="lockNote">Only scanner-approved staff should unlock this kiosk.</div>
+        </div>
+    </div>
+
     <form id="scanForm" hidden>
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     </form>
@@ -667,9 +749,12 @@
             resetTimer: null,
             soundCtx: null,
             cameraFacingMode: "environment",
-            scanInFlight: false
+            scanInFlight: false,
+            isLocked: false,
+            inactivityTimer: null
         };
 
+        const scannerApp = document.querySelector(".scanner-app");
         const actionButtons = Array.from(document.querySelectorAll("[data-action]"));
         const scannerInput = document.getElementById("scannerInput");
         const statusBanner = document.getElementById("statusBanner");
@@ -688,6 +773,13 @@
         const liveDateTime = document.getElementById("liveDateTime");
         const scanForm = document.getElementById("scanForm");
         const cameraToggles = Array.from(document.querySelectorAll("[data-camera]"));
+        const lockOverlay = document.getElementById("lockOverlay");
+        const lockPinInput = document.getElementById("lockPinInput");
+        const unlockButton = document.getElementById("unlockButton");
+        const lockMessage = document.getElementById("lockMessage");
+        const lockNote = document.getElementById("lockNote");
+        const lockTimeoutMs = parseInt(scannerApp.dataset.lockTimeoutMs || "90000", 10);
+        const scannerPinConfigured = scannerApp.dataset.scannerPinConfigured === "1";
         const supportsBarcodeDetector = "BarcodeDetector" in window;
         let barcodeDetector = null;
         let cameraStream = null;
@@ -704,7 +796,48 @@
         }
 
         function keepScannerFocused() {
+            if (state.isLocked) {
+                return;
+            }
             window.requestAnimationFrame(() => scannerInput.focus());
+        }
+
+        function resetInactivityTimer() {
+            clearTimeout(state.inactivityTimer);
+            if (lockTimeoutMs > 0 && !state.isLocked) {
+                state.inactivityTimer = window.setTimeout(() => {
+                    lockScanner("The kiosk locked after inactivity. Enter the kiosk PIN to resume scanning.");
+                }, lockTimeoutMs);
+            }
+        }
+
+        function lockScanner(message) {
+            state.isLocked = true;
+            state.scanInFlight = false;
+            clearTimeout(state.inactivityTimer);
+            stopCamera();
+            lockOverlay.classList.add("is-open");
+            lockMessage.textContent = message;
+            lockNote.textContent = scannerPinConfigured
+                ? "Only scanner-approved staff should unlock this kiosk."
+                : "No kiosk PIN is configured. Tap unlock to resume.";
+            lockPinInput.value = "";
+            lockPinInput.style.display = scannerPinConfigured ? "block" : "none";
+            window.requestAnimationFrame(() => {
+                if (scannerPinConfigured) {
+                    lockPinInput.focus();
+                } else {
+                    unlockButton.focus();
+                }
+            });
+        }
+
+        function unlockScanner() {
+            state.isLocked = false;
+            lockOverlay.classList.remove("is-open");
+            resetInactivityTimer();
+            keepScannerFocused();
+            startCamera();
         }
 
         function stopCamera() {
@@ -792,7 +925,7 @@
         }
 
         async function runCameraScanLoop() {
-            if (!barcodeDetector || !cameraStream || cameraVideo.readyState < 2) {
+            if (state.isLocked || !barcodeDetector || !cameraStream || cameraVideo.readyState < 2) {
                 scanLoopHandle = requestAnimationFrame(runCameraScanLoop);
                 return;
             }
@@ -822,6 +955,7 @@
             });
             const activeButton = actionButtons.find((button) => button.dataset.action === action);
             metaAction.textContent = activeButton ? activeButton.textContent.trim() : action;
+            resetInactivityTimer();
         }
 
         function getActionDisplay(actionType) {
@@ -852,6 +986,7 @@
             metaEmployee.textContent = "-";
             statusBanner.className = "status-banner";
             statusBanner.textContent = "Waiting for barcode scan...";
+            resetInactivityTimer();
         }
 
         function showEmployee(payload, ok) {
@@ -882,6 +1017,7 @@
                 ? "Scan recorded. Present the next employee barcode when ready."
                 : "Scan failed. Check the message above, then try again.";
             playTone(ok ? "success" : "error");
+            resetInactivityTimer();
 
             clearTimeout(state.resetTimer);
             state.resetTimer = setTimeout(() => {
@@ -893,6 +1029,9 @@
 
         async function submitScan(barcodeValue) {
             if (state.scanInFlight) {
+                return;
+            }
+            if (state.isLocked) {
                 return;
             }
 
@@ -940,10 +1079,7 @@
 
         actionButtons.forEach((button) => {
             button.addEventListener("click", () => {
-                if (button.dataset.disabled === "1") {
-                    statusBanner.className = "status-banner is-error";
-                    statusBanner.textContent = `${button.textContent.trim()} is not enabled yet.`;
-                    keepScannerFocused();
+                if (state.isLocked) {
                     return;
                 }
                 setSelectedAction(button.dataset.action);
@@ -963,7 +1099,7 @@
         scannerInput.addEventListener("keydown", (event) => {
             if (event.key === "Enter") {
                 event.preventDefault();
-                if (state.scanInFlight) {
+                if (state.scanInFlight || state.isLocked) {
                     return;
                 }
                 const value = scannerInput.value.trim();
@@ -976,13 +1112,60 @@
             }
         });
 
-        document.addEventListener("click", keepScannerFocused);
-        document.addEventListener("touchstart", keepScannerFocused, { passive: true });
-        window.addEventListener("focus", keepScannerFocused);
+        unlockButton.addEventListener("click", async () => {
+            if (!scannerPinConfigured) {
+                unlockScanner();
+                return;
+            }
+            const formData = new FormData();
+            formData.append("csrf_token", scanForm.querySelector("[name='csrf_token']").value);
+            formData.append("pin", lockPinInput.value.trim());
+            try {
+                const response = await fetch("{{ url_for('scanner_kiosk_unlock') }}", {
+                    method: "POST",
+                    body: formData,
+                    credentials: "same-origin"
+                });
+                const payload = await response.json();
+                if (payload.ok) {
+                    unlockScanner();
+                } else {
+                    lockNote.textContent = payload.message || "Incorrect kiosk PIN.";
+                    lockPinInput.value = "";
+                    lockPinInput.focus();
+                }
+            } catch (error) {
+                console.error(error);
+                lockNote.textContent = "Unable to verify the kiosk PIN right now.";
+            }
+        });
+
+        lockPinInput.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                unlockButton.click();
+            }
+        });
+
+        document.addEventListener("click", () => {
+            keepScannerFocused();
+            resetInactivityTimer();
+        });
+        document.addEventListener("touchstart", () => {
+            keepScannerFocused();
+            resetInactivityTimer();
+        }, { passive: true });
+        window.addEventListener("focus", () => {
+            keepScannerFocused();
+            resetInactivityTimer();
+        });
         document.addEventListener("visibilitychange", () => {
             if (!document.hidden) {
-                keepScannerFocused();
-                startCamera();
+                if (!state.isLocked) {
+                    keepScannerFocused();
+                    startCamera();
+                    resetInactivityTimer();
+                }
             } else {
                 stopCamera();
             }
@@ -995,6 +1178,7 @@
         resetEmployeeDisplay();
         keepScannerFocused();
         startCamera();
+        resetInactivityTimer();
     });
     </script>
 </body>

@@ -131,6 +131,9 @@
                 <div class="avatar-lg" style="display:inline-flex;align-items:center;justify-content:center;font-weight:800;background:rgba(148,163,184,0.18);color:#dbeafe;">{{ get_avatar_initials(employee.full_name) }}</div>
             </div>
         {% endif %}
+        {% if employee.profile_image and not uploaded_file_exists(employee.profile_image) %}
+            <div class="small" style="margin-top:10px;color:#fcd34d;">Stored profile image file is missing from disk. Re-upload a fresh image to restore it.</div>
+        {% endif %}
 
         <label style="display:block; margin-top:12px;">Account Status</label>
         <select class="input" name="is_active">

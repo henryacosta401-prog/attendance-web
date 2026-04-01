@@ -130,6 +130,9 @@
                                     <div>
                                         <div style="font-weight:800;">{{ emp.full_name }}</div>
                                         <div class="small muted">@{{ emp.username }}</div>
+                                        {% if emp.profile_image and not uploaded_file_exists(emp.profile_image) %}
+                                            <div class="small" style="color:#fcd34d;">Profile image missing</div>
+                                        {% endif %}
                                     </div>
                                 </div>
                             </td>

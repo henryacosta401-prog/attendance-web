@@ -153,7 +153,7 @@ def ensure_csrf_token():
 
 
 def is_scanner_api_request():
-    return request.path == "/scanner/scan"
+    return request.path in {"/scanner/scan", "/scanner/unlock"}
 
 
 @app.context_processor
@@ -461,7 +461,11 @@ def init_sqlite_db():
             id INTEGER PRIMARY KEY CHECK (id = 1),
             id_signatory_name TEXT,
             id_signatory_title TEXT,
-            id_signature_file TEXT
+            id_signature_file TEXT,
+            scanner_attendance_mode INTEGER NOT NULL DEFAULT 0,
+            scanner_lock_timeout_seconds INTEGER NOT NULL DEFAULT 90,
+            scanner_exit_pin_hash TEXT,
+            overtime_multiplier REAL NOT NULL DEFAULT 1.25
         )
     """)
 
@@ -491,10 +495,12 @@ def init_sqlite_db():
         CREATE TABLE IF NOT EXISTS activity_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
+            target_user_id INTEGER,
             action TEXT NOT NULL,
             details TEXT,
             created_at TEXT NOT NULL,
-            FOREIGN KEY (user_id) REFERENCES users (id)
+            FOREIGN KEY (user_id) REFERENCES users (id),
+            FOREIGN KEY (target_user_id) REFERENCES users (id)
         )
     """)
 
@@ -514,6 +520,20 @@ def init_sqlite_db():
             created_at TEXT NOT NULL,
             FOREIGN KEY (scanner_user_id) REFERENCES users (id),
             FOREIGN KEY (employee_user_id) REFERENCES users (id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS overtime_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            attendance_id INTEGER,
+            work_date TEXT NOT NULL,
+            overtime_start TEXT NOT NULL,
+            overtime_end TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users (id),
+            FOREIGN KEY (attendance_id) REFERENCES attendance (id)
         )
     """)
 
@@ -567,7 +587,11 @@ def init_sqlite_db():
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 id_signatory_name TEXT,
                 id_signatory_title TEXT,
-                id_signature_file TEXT
+                id_signature_file TEXT,
+                scanner_attendance_mode INTEGER NOT NULL DEFAULT 0,
+                scanner_lock_timeout_seconds INTEGER NOT NULL DEFAULT 90,
+                scanner_exit_pin_hash TEXT,
+                overtime_multiplier REAL NOT NULL DEFAULT 1.25
             )
         """)
         existing_cols_company_settings = [row[1] for row in cursor.execute("PRAGMA table_info(company_settings)").fetchall()]
@@ -577,9 +601,20 @@ def init_sqlite_db():
         cursor.execute("ALTER TABLE company_settings ADD COLUMN id_signatory_title TEXT")
     if "id_signature_file" not in existing_cols_company_settings:
         cursor.execute("ALTER TABLE company_settings ADD COLUMN id_signature_file TEXT")
+    if "scanner_attendance_mode" not in existing_cols_company_settings:
+        cursor.execute("ALTER TABLE company_settings ADD COLUMN scanner_attendance_mode INTEGER NOT NULL DEFAULT 0")
+    if "scanner_lock_timeout_seconds" not in existing_cols_company_settings:
+        cursor.execute("ALTER TABLE company_settings ADD COLUMN scanner_lock_timeout_seconds INTEGER NOT NULL DEFAULT 90")
+    if "scanner_exit_pin_hash" not in existing_cols_company_settings:
+        cursor.execute("ALTER TABLE company_settings ADD COLUMN scanner_exit_pin_hash TEXT")
+    if "overtime_multiplier" not in existing_cols_company_settings:
+        cursor.execute("ALTER TABLE company_settings ADD COLUMN overtime_multiplier REAL NOT NULL DEFAULT 1.25")
     cursor.execute("""
-        INSERT OR IGNORE INTO company_settings (id, id_signatory_name, id_signatory_title, id_signature_file)
-        VALUES (1, 'Kirk Danny Fernandez', 'Head Of Operations', NULL)
+        INSERT OR IGNORE INTO company_settings (
+            id, id_signatory_name, id_signatory_title, id_signature_file,
+            scanner_attendance_mode, scanner_lock_timeout_seconds, scanner_exit_pin_hash, overtime_multiplier
+        )
+        VALUES (1, 'Kirk Danny Fernandez', 'Head Of Operations', NULL, 0, 90, NULL, 1.25)
     """)
 
     # attendance migration
@@ -596,6 +631,10 @@ def init_sqlite_db():
         pass
     try:
         cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_breaks_one_open_per_attendance ON breaks(attendance_id) WHERE attendance_id IS NOT NULL AND break_end IS NULL")
+    except sqlite3.IntegrityError:
+        pass
+    try:
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_overtime_one_open_per_user ON overtime_sessions(user_id) WHERE overtime_end IS NULL")
     except sqlite3.IntegrityError:
         pass
 
@@ -708,6 +747,40 @@ def init_sqlite_db():
         cursor.execute("ALTER TABLE scanner_logs ADD COLUMN user_agent TEXT")
     if "created_at" not in existing_cols_scanner_logs:
         cursor.execute("ALTER TABLE scanner_logs ADD COLUMN created_at TEXT")
+
+    existing_cols_activity_logs = [row[1] for row in cursor.execute("PRAGMA table_info(activity_logs)").fetchall()]
+    if "target_user_id" not in existing_cols_activity_logs:
+        cursor.execute("ALTER TABLE activity_logs ADD COLUMN target_user_id INTEGER")
+    cursor.execute("UPDATE activity_logs SET target_user_id = user_id WHERE target_user_id IS NULL")
+
+    existing_cols_overtime = [row[1] for row in cursor.execute("PRAGMA table_info(overtime_sessions)").fetchall()]
+    if not existing_cols_overtime:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS overtime_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                attendance_id INTEGER,
+                work_date TEXT NOT NULL,
+                overtime_start TEXT NOT NULL,
+                overtime_end TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users (id),
+                FOREIGN KEY (attendance_id) REFERENCES attendance (id)
+            )
+        """)
+        existing_cols_overtime = [row[1] for row in cursor.execute("PRAGMA table_info(overtime_sessions)").fetchall()]
+    if "user_id" not in existing_cols_overtime:
+        cursor.execute("ALTER TABLE overtime_sessions ADD COLUMN user_id INTEGER")
+    if "attendance_id" not in existing_cols_overtime:
+        cursor.execute("ALTER TABLE overtime_sessions ADD COLUMN attendance_id INTEGER")
+    if "work_date" not in existing_cols_overtime:
+        cursor.execute("ALTER TABLE overtime_sessions ADD COLUMN work_date TEXT")
+    if "overtime_start" not in existing_cols_overtime:
+        cursor.execute("ALTER TABLE overtime_sessions ADD COLUMN overtime_start TEXT")
+    if "overtime_end" not in existing_cols_overtime:
+        cursor.execute("ALTER TABLE overtime_sessions ADD COLUMN overtime_end TEXT")
+    if "created_at" not in existing_cols_overtime:
+        cursor.execute("ALTER TABLE overtime_sessions ADD COLUMN created_at TEXT")
 
     db.commit()
 
@@ -894,11 +967,14 @@ def init_postgres_db():
             CREATE TABLE IF NOT EXISTS activity_logs (
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER NOT NULL,
+                target_user_id INTEGER,
                 action TEXT NOT NULL,
                 details TEXT,
                 created_at TEXT NOT NULL
             )
         """)
+        cur.execute("ALTER TABLE activity_logs ADD COLUMN IF NOT EXISTS target_user_id INTEGER")
+        cur.execute("UPDATE activity_logs SET target_user_id = user_id WHERE target_user_id IS NULL")
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS scanner_logs (
@@ -964,17 +1040,45 @@ def init_postgres_db():
                 id INTEGER PRIMARY KEY,
                 id_signatory_name TEXT,
                 id_signatory_title TEXT,
-                id_signature_file TEXT
+                id_signature_file TEXT,
+                scanner_attendance_mode INTEGER NOT NULL DEFAULT 0,
+                scanner_lock_timeout_seconds INTEGER NOT NULL DEFAULT 90,
+                scanner_exit_pin_hash TEXT,
+                overtime_multiplier REAL NOT NULL DEFAULT 1.25
             )
         """)
         cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS id_signatory_name TEXT")
         cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS id_signatory_title TEXT")
         cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS id_signature_file TEXT")
+        cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS scanner_attendance_mode INTEGER NOT NULL DEFAULT 0")
+        cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS scanner_lock_timeout_seconds INTEGER NOT NULL DEFAULT 90")
+        cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS scanner_exit_pin_hash TEXT")
+        cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS overtime_multiplier REAL NOT NULL DEFAULT 1.25")
         cur.execute("""
-            INSERT INTO company_settings (id, id_signatory_name, id_signatory_title, id_signature_file)
-            VALUES (1, 'Kirk Danny Fernandez', 'Head Of Operations', NULL)
+            INSERT INTO company_settings (
+                id, id_signatory_name, id_signatory_title, id_signature_file,
+                scanner_attendance_mode, scanner_lock_timeout_seconds, scanner_exit_pin_hash, overtime_multiplier
+            )
+            VALUES (1, 'Kirk Danny Fernandez', 'Head Of Operations', NULL, 0, 90, NULL, 1.25)
             ON CONFLICT (id) DO NOTHING
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS overtime_sessions (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                attendance_id INTEGER,
+                work_date TEXT NOT NULL,
+                overtime_start TEXT NOT NULL,
+                overtime_end TEXT,
+                created_at TEXT NOT NULL
+            )
+        """)
+        cur.execute("ALTER TABLE overtime_sessions ADD COLUMN IF NOT EXISTS user_id INTEGER")
+        cur.execute("ALTER TABLE overtime_sessions ADD COLUMN IF NOT EXISTS attendance_id INTEGER")
+        cur.execute("ALTER TABLE overtime_sessions ADD COLUMN IF NOT EXISTS work_date TEXT")
+        cur.execute("ALTER TABLE overtime_sessions ADD COLUMN IF NOT EXISTS overtime_start TEXT")
+        cur.execute("ALTER TABLE overtime_sessions ADD COLUMN IF NOT EXISTS overtime_end TEXT")
+        cur.execute("ALTER TABLE overtime_sessions ADD COLUMN IF NOT EXISTS created_at TEXT")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_login_attempts_ip_attempted_at ON login_attempts(ip_address, attempted_at)")
         try:
             cur.execute("SAVEPOINT attendance_open_index")
@@ -990,6 +1094,13 @@ def init_postgres_db():
         except Exception:
             cur.execute("ROLLBACK TO SAVEPOINT break_open_index")
             cur.execute("RELEASE SAVEPOINT break_open_index")
+        try:
+            cur.execute("SAVEPOINT overtime_open_index")
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_overtime_one_open_per_user ON overtime_sessions(user_id) WHERE overtime_end IS NULL")
+            cur.execute("RELEASE SAVEPOINT overtime_open_index")
+        except Exception:
+            cur.execute("ROLLBACK TO SAVEPOINT overtime_open_index")
+            cur.execute("RELEASE SAVEPOINT overtime_open_index")
 
     db.commit()
 
@@ -1108,11 +1219,12 @@ def get_disciplinary_action_by_id(action_id):
     """, (action_id,))
 
 
-def log_activity(user_id, action, details=""):
+def log_activity(user_id, action, details="", target_user_id=None):
+    target_user_id = target_user_id or user_id
     execute_db("""
-        INSERT INTO activity_logs (user_id, action, details, created_at)
-        VALUES (?, ?, ?, ?)
-    """, (user_id, action, details, now_str()), commit=True)
+        INSERT INTO activity_logs (user_id, target_user_id, action, details, created_at)
+        VALUES (?, ?, ?, ?, ?)
+    """, (user_id, target_user_id, action, details, now_str()), commit=True)
 
 
 def log_scanner_activity(scanner_user_id, action_type, barcode_value, result_status, result_message,
@@ -1171,13 +1283,63 @@ def get_user_by_barcode(barcode_id):
 def get_company_settings():
     settings = fetchone("SELECT * FROM company_settings WHERE id = 1")
     if settings:
-        return settings
+        return dict(settings)
     return {
         "id": 1,
         "id_signatory_name": "Kirk Danny Fernandez",
         "id_signatory_title": "Head Of Operations",
         "id_signature_file": None,
+        "scanner_attendance_mode": 0,
+        "scanner_lock_timeout_seconds": 90,
+        "scanner_exit_pin_hash": None,
+        "overtime_multiplier": 1.25,
     }
+
+
+def is_scanner_attendance_mode_enabled():
+    settings = get_company_settings()
+    return int(settings.get("scanner_attendance_mode") or 0) == 1
+
+
+def get_scanner_lock_timeout_seconds():
+    settings = get_company_settings()
+    raw_value = settings.get("scanner_lock_timeout_seconds", 90)
+    try:
+        timeout = int(raw_value or 90)
+    except (TypeError, ValueError):
+        timeout = 90
+    return max(min(timeout, 900), 15)
+
+
+def get_overtime_multiplier():
+    settings = get_company_settings()
+    raw_value = settings.get("overtime_multiplier", 1.25)
+    try:
+        multiplier = float(raw_value or 1.25)
+    except (TypeError, ValueError):
+        multiplier = 1.25
+    return max(min(multiplier, 5.0), 1.0)
+
+
+def has_scanner_exit_pin():
+    settings = get_company_settings()
+    return bool((settings.get("scanner_exit_pin_hash") or "").strip())
+
+
+def verify_scanner_exit_pin(pin_value):
+    settings = get_company_settings()
+    stored_hash = (settings.get("scanner_exit_pin_hash") or "").strip()
+    if not stored_hash:
+        return True
+    if not pin_value:
+        return False
+    return check_password_hash(stored_hash, pin_value)
+
+
+def get_manual_attendance_block_message():
+    if not is_scanner_attendance_mode_enabled():
+        return ""
+    return "Attendance is recorded through the company scanner kiosk. Please use the scanner station for time in, breaks, and time out."
 
 
 def get_scanner_account():
@@ -1232,6 +1394,85 @@ def get_open_break(user_id, attendance_row=None):
     return get_open_break_for_attendance(attendance["id"])
 
 
+def auto_close_stale_overtime_session(user_id, overtime_row, actor_id=None, source_label="System"):
+    if not overtime_row:
+        return None
+    overtime_row = dict(overtime_row)
+    if overtime_row.get("overtime_end"):
+        return overtime_row
+
+    work_date = ((overtime_row.get("work_date") or "") or (overtime_row.get("overtime_start") or "")[:10]).strip()
+    if not work_date or work_date >= today_str():
+        return overtime_row
+
+    forced_end_dt = datetime.strptime(f"{work_date} 23:59:59", "%Y-%m-%d %H:%M:%S")
+    overtime_start_dt = parse_db_datetime(overtime_row.get("overtime_start"))
+    if overtime_start_dt and forced_end_dt < overtime_start_dt:
+        forced_end_dt = overtime_start_dt
+
+    execute_db("""
+        UPDATE overtime_sessions
+        SET overtime_end = ?
+        WHERE id = ? AND overtime_end IS NULL
+    """, (forced_end_dt.strftime("%Y-%m-%d %H:%M:%S"), overtime_row["id"]), commit=True)
+
+    user = get_user_by_id(user_id)
+    employee_name = user["full_name"] if user else f"User {user_id}"
+    create_notification(
+        user_id,
+        "Overtime Auto-Closed",
+        f"Your previous overtime session from {work_date} was closed automatically."
+    )
+    log_activity(
+        actor_id or user_id,
+        "AUTO CLOSE OVERTIME",
+        f"{source_label} automatically closed stale overtime for {employee_name} from {work_date}.",
+        target_user_id=user_id
+    )
+    return None
+
+
+def get_open_overtime_session(user_id, auto_close_stale=True, actor_id=None, source_label="System"):
+    row = fetchone("""
+        SELECT *
+        FROM overtime_sessions
+        WHERE user_id = ? AND overtime_end IS NULL
+        ORDER BY id DESC
+        LIMIT 1
+    """, (user_id,))
+    if row and auto_close_stale:
+        return auto_close_stale_overtime_session(user_id, row, actor_id=actor_id, source_label=source_label)
+    return row
+
+
+def get_overtime_session_by_id(session_id):
+    return fetchone("SELECT * FROM overtime_sessions WHERE id = ?", (session_id,))
+
+
+def get_overtime_sessions_in_range(user_id, date_from, date_to):
+    return fetchall("""
+        SELECT *
+        FROM overtime_sessions
+        WHERE user_id = ?
+          AND work_date BETWEEN ? AND ?
+        ORDER BY work_date ASC, id ASC
+    """, (user_id, date_from, date_to))
+
+
+def overtime_minutes_for_session(row):
+    if not row:
+        return 0
+    row = dict(row)
+    if not row.get("overtime_start") or not row.get("overtime_end"):
+        return 0
+    try:
+        start = datetime.strptime(row["overtime_start"], "%Y-%m-%d %H:%M:%S")
+        end = datetime.strptime(row["overtime_end"], "%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError):
+        return 0
+    return max(int((end - start).total_seconds() // 60), 0)
+
+
 def auto_close_stale_attendance(user_row, attendance_row, actor_id=None, source_label="System"):
     if not user_row or not attendance_row:
         return attendance_row
@@ -1279,14 +1520,30 @@ def get_attendance_override_block_message(override_status, action_key, attendanc
     if not override_status:
         return None
 
-    has_open_attendance = bool(attendance_row and attendance_row.get("time_in") and not attendance_row.get("time_out"))
+    attendance_time_in = None
+    attendance_time_out = None
+    if attendance_row:
+        if hasattr(attendance_row, "keys"):
+            keys = attendance_row.keys()
+            attendance_time_in = attendance_row["time_in"] if "time_in" in keys else None
+            attendance_time_out = attendance_row["time_out"] if "time_out" in keys else None
+        else:
+            attendance_time_in = attendance_row.get("time_in")
+            attendance_time_out = attendance_row.get("time_out")
+    has_open_attendance = bool(attendance_time_in and not attendance_time_out)
     if has_open_attendance and action_key in {"end_break", "time_out"}:
         return None
 
-    end_date = override_status.get("end_date") or today_str()
-    if override_status["type"] == "Suspension":
+    if hasattr(override_status, "keys"):
+        override_end_date = override_status["end_date"] if "end_date" in override_status.keys() else None
+        override_type = override_status["type"]
+    else:
+        override_end_date = override_status.get("end_date")
+        override_type = override_status["type"]
+    end_date = override_end_date or today_str()
+    if override_type == "Suspension":
         return f"Employee is suspended until {end_date}."
-    return f"Employee is on {override_status['type']} until {end_date}."
+    return f"Employee is on {override_type} until {end_date}."
 
 
 def perform_attendance_action(user_id, action_type, actor_id=None, source_label="System"):
@@ -1429,10 +1686,59 @@ def perform_attendance_action(user_id, action_type, actor_id=None, source_label=
         log_activity(actor_id or user_id, "KIOSK TIME OUT", f"{source_label} time out for {user['full_name']}. Sheets sync: {msg if ok else 'Skipped/Failed'}")
         return True, "Time out successful.", user
 
+    if action_key == "overtime_start":
+        open_overtime = get_open_overtime_session(user_id, actor_id=actor_id, source_label=source_label)
+        if open_overtime:
+            return False, "Employee already has an active overtime session.", user
+
+        latest_today = get_today_attendance(user_id)
+        if not latest_today or not latest_today["time_in"] or not latest_today["time_out"]:
+            return False, "Employee must complete the regular shift before starting overtime.", user
+
+        try:
+            execute_db("""
+                INSERT INTO overtime_sessions (user_id, attendance_id, work_date, overtime_start, created_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                user_id,
+                latest_today["id"],
+                latest_today["work_date"] or today_str(),
+                now_str(),
+                now_str()
+            ), commit=True)
+        except sqlite3.IntegrityError:
+            return False, "Employee already has an active overtime session.", user
+        except Exception as exc:
+            if POSTGRES_ENABLED and exc.__class__.__name__ == "IntegrityError":
+                return False, "Employee already has an active overtime session.", user
+            raise
+        create_notification(user_id, "Overtime Started", f"Overtime started at {now_str()} ET.")
+        log_activity(actor_id or user_id, "KIOSK OVERTIME START", f"{source_label} overtime start for {user['full_name']}", target_user_id=user_id)
+        return True, "Overtime started.", user
+
+    if action_key == "overtime_end":
+        open_overtime = get_open_overtime_session(user_id, actor_id=actor_id, source_label=source_label)
+        if not open_overtime:
+            return False, "No active overtime session found.", user
+
+        execute_db("""
+            UPDATE overtime_sessions
+            SET overtime_end = ?
+            WHERE id = ?
+        """, (now_str(), open_overtime["id"]), commit=True)
+        closed_session = get_overtime_session_by_id(open_overtime["id"])
+        overtime_minutes = overtime_minutes_for_session(closed_session)
+        create_notification(user_id, "Overtime Ended", f"Overtime ended at {now_str()} ET.")
+        log_activity(actor_id or user_id, "KIOSK OVERTIME END", f"{source_label} overtime end for {user['full_name']} ({minutes_to_hm(overtime_minutes)})", target_user_id=user_id)
+        return True, "Overtime ended.", user
+
     return False, "Invalid attendance action.", user
 
 
 def get_user_live_status(user_id):
+    if get_open_overtime_session(user_id):
+        return "On Overtime"
+
     attendance = get_current_attendance(user_id)
     open_break = get_open_break(user_id, attendance)
 
@@ -1548,6 +1854,7 @@ def get_approved_leave_for_date(user_id, work_date):
 def get_employee_override_status_for_date(user_id, work_date):
     suspension = get_suspension_for_date(user_id, work_date)
     if suspension:
+        suspension = dict(suspension)
         return {
             "type": "Suspension",
             "label": "Suspended",
@@ -1556,6 +1863,7 @@ def get_employee_override_status_for_date(user_id, work_date):
         }
     leave = get_approved_leave_for_date(user_id, work_date)
     if leave:
+        leave = dict(leave)
         return {
             "type": leave["request_type"],
             "label": leave["request_type"],
@@ -2482,7 +2790,10 @@ def get_suspension_for_date(user_id, work_date):
 
 
 def expand_suspension_dates(row):
-    if not row or row.get("action_type") != "Suspension":
+    if not row:
+        return []
+    row = dict(row)
+    if row.get("action_type") != "Suspension":
         return []
     try:
         start_date = datetime.strptime(row["action_date"], "%Y-%m-%d").date()
@@ -2817,7 +3128,11 @@ def build_payroll_rows(date_from, date_to, department_filter="", employee_filter
             "total_minutes": 0,
             "late_minutes": 0,
             "break_minutes": 0,
+            "overtime_minutes": 0,
+            "overtime_hours": 0,
+            "overtime_pay": 0,
             "gross_pay": 0,
+            "net_pay_estimate": 0,
             "suspension_days": 0,
             "suspension_hours": 0,
             "suspension_pay": 0,
@@ -2849,6 +3164,19 @@ def build_payroll_rows(date_from, date_to, department_filter="", employee_filter
         summary["late_minutes"] += int(attendance["late_minutes"] or 0)
         summary["break_minutes"] += total_break_minutes(attendance["id"])
 
+    overtime_rows = fetchall("""
+        SELECT *
+        FROM overtime_sessions
+        WHERE work_date BETWEEN ? AND ?
+    """, (date_from.strftime("%Y-%m-%d"), date_to.strftime("%Y-%m-%d")))
+    overtime_multiplier = get_overtime_multiplier()
+    for overtime in overtime_rows:
+        summary = employee_map.get(overtime["user_id"])
+        if not summary:
+            continue
+        overtime_minutes = overtime_minutes_for_session(overtime)
+        summary["overtime_minutes"] += overtime_minutes
+
     suspension_rows = fetchall("""
         SELECT *
         FROM disciplinary_actions
@@ -2876,7 +3204,10 @@ def build_payroll_rows(date_from, date_to, department_filter="", employee_filter
 
     for summary in employee_map.values():
         summary["total_hours"] = round(summary["total_minutes"] / 60, 2)
+        summary["overtime_hours"] = round(summary["overtime_minutes"] / 60, 2)
         summary["gross_pay"] = round(summary["total_hours"] * summary["hourly_rate"], 2)
+        summary["overtime_pay"] = round(summary["overtime_hours"] * summary["hourly_rate"] * overtime_multiplier, 2)
+        summary["net_pay_estimate"] = round(summary["gross_pay"] + summary["overtime_pay"], 2)
         summary["suspension_hours"] = round(summary["suspension_hours"], 2)
         summary["suspension_pay"] = round(summary["suspension_hours"] * summary["hourly_rate"], 2)
         summary["status_label"] = "Ready" if summary["has_rate"] else "Missing Rate"
@@ -2967,6 +3298,7 @@ def inject_globals():
 
     return dict(
         current_user=user,
+        company_settings=get_company_settings(),
         unread_count=unread_count,
         latest_notifications=latest_notifications,
         is_image=is_image,
@@ -3119,7 +3451,11 @@ def employee_actions():
         flash("Your session expired. Please log in again.", "warning")
         return redirect(url_for("login"))
 
-    return render_template("employee_actions.html", user=user)
+    return render_template(
+        "employee_actions.html",
+        user=user,
+        manual_attendance_block_message=get_manual_attendance_block_message()
+    )
 
 
 @app.route("/activity")
@@ -3281,6 +3617,56 @@ def admin_profile():
                 flash("Scanner account created.", "success")
             return redirect(url_for("admin_profile"))
 
+        if form_action == "attendance_settings":
+            scanner_attendance_mode = 1 if request.form.get("scanner_attendance_mode") == "1" else 0
+            scanner_lock_timeout_seconds = parse_positive_int(request.form.get("scanner_lock_timeout_seconds", "90"), 90)
+            scanner_lock_timeout_seconds = max(min(scanner_lock_timeout_seconds, 900), 15)
+            overtime_multiplier_raw = (request.form.get("overtime_multiplier", "") or "").strip()
+            try:
+                overtime_multiplier = float(overtime_multiplier_raw or 1.25)
+            except ValueError:
+                flash("Overtime multiplier must be a valid number.", "danger")
+                return redirect(url_for("admin_profile"))
+            overtime_multiplier = max(min(overtime_multiplier, 5.0), 1.0)
+
+            scanner_exit_pin = (request.form.get("scanner_exit_pin", "") or "").strip()
+            current_settings = get_company_settings()
+            scanner_exit_pin_hash = current_settings.get("scanner_exit_pin_hash")
+            if scanner_exit_pin:
+                if len(scanner_exit_pin) < 4:
+                    flash("Scanner kiosk PIN must be at least 4 characters.", "danger")
+                    return redirect(url_for("admin_profile"))
+                scanner_exit_pin_hash = generate_password_hash(scanner_exit_pin)
+            elif request.form.get("clear_scanner_exit_pin") == "1":
+                scanner_exit_pin_hash = None
+
+            execute_db("""
+                INSERT INTO company_settings (
+                    id, id_signatory_name, id_signatory_title, id_signature_file,
+                    scanner_attendance_mode, scanner_lock_timeout_seconds, scanner_exit_pin_hash, overtime_multiplier
+                )
+                VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    id_signatory_name = excluded.id_signatory_name,
+                    id_signatory_title = excluded.id_signatory_title,
+                    id_signature_file = excluded.id_signature_file,
+                    scanner_attendance_mode = excluded.scanner_attendance_mode,
+                    scanner_lock_timeout_seconds = excluded.scanner_lock_timeout_seconds,
+                    scanner_exit_pin_hash = excluded.scanner_exit_pin_hash,
+                    overtime_multiplier = excluded.overtime_multiplier
+            """, (
+                current_settings.get("id_signatory_name") or "Kirk Danny Fernandez",
+                current_settings.get("id_signatory_title") or "Head Of Operations",
+                current_settings.get("id_signature_file"),
+                scanner_attendance_mode,
+                scanner_lock_timeout_seconds,
+                scanner_exit_pin_hash,
+                overtime_multiplier
+            ), commit=True)
+            log_activity(session["user_id"], "UPDATE ATTENDANCE SETTINGS", f"Scanner mode {'enabled' if scanner_attendance_mode else 'disabled'}, kiosk timeout {scanner_lock_timeout_seconds}s, overtime multiplier {overtime_multiplier:.2f}x")
+            flash("Attendance and kiosk settings updated.", "success")
+            return redirect(url_for("admin_profile"))
+
         full_name = request.form.get("full_name", "").strip()
         if not full_name:
             flash("Full name is required.", "danger")
@@ -3316,7 +3702,13 @@ def admin_profile():
         flash("Admin profile updated successfully.", "success")
         return redirect(url_for("admin_profile"))
 
-    return render_template("admin_profile.html", user=user, scanner_account=get_scanner_account())
+    return render_template(
+        "admin_profile.html",
+        user=user,
+        scanner_account=get_scanner_account(),
+        company_settings=get_company_settings(),
+        scanner_exit_pin_configured=has_scanner_exit_pin()
+    )
 
 
 @app.route("/corrections", methods=["GET", "POST"])
@@ -3426,6 +3818,11 @@ def time_in():
     user_id = session["user_id"]
     user = get_user_by_id(user_id)
 
+    manual_attendance_block_message = get_manual_attendance_block_message()
+    if manual_attendance_block_message:
+        flash(manual_attendance_block_message, "warning")
+        return redirect(url_for("employee_actions"))
+
     if not user:
         session.clear()
         flash("Your session expired. Please log in again.", "warning")
@@ -3492,6 +3889,10 @@ def time_in():
 def start_break():
     user_id = session["user_id"]
     user = get_user_by_id(user_id)
+    manual_attendance_block_message = get_manual_attendance_block_message()
+    if manual_attendance_block_message:
+        flash(manual_attendance_block_message, "warning")
+        return redirect(url_for("employee_actions"))
     attendance = auto_close_stale_attendance(user, get_current_attendance(user_id), actor_id=user_id, source_label="Employee portal")
     override_status = get_employee_override_status_for_date(user_id, today_str())
     override_block_message = get_attendance_override_block_message(override_status, "start_break", attendance)
@@ -3537,6 +3938,10 @@ def start_break():
 def end_break():
     user_id = session["user_id"]
     user = get_user_by_id(user_id)
+    manual_attendance_block_message = get_manual_attendance_block_message()
+    if manual_attendance_block_message:
+        flash(manual_attendance_block_message, "warning")
+        return redirect(url_for("employee_actions"))
     attendance = auto_close_stale_attendance(user, get_current_attendance(user_id), actor_id=user_id, source_label="Employee portal")
     override_status = get_employee_override_status_for_date(user_id, today_str())
     override_block_message = get_attendance_override_block_message(override_status, "end_break", attendance)
@@ -3582,6 +3987,10 @@ def end_break():
 def time_out():
     user_id = session["user_id"]
     user = get_user_by_id(user_id)
+    manual_attendance_block_message = get_manual_attendance_block_message()
+    if manual_attendance_block_message:
+        flash(manual_attendance_block_message, "warning")
+        return redirect(url_for("employee_actions"))
     attendance = auto_close_stale_attendance(user, get_current_attendance(user_id), actor_id=user_id, source_label="Employee portal")
     override_status = get_employee_override_status_for_date(user_id, today_str())
     override_block_message = get_attendance_override_block_message(override_status, "time_out", attendance)
@@ -4026,6 +4435,7 @@ def get_approved_special_requests(user_id=None, search="", department="", date_f
 
 
 def enrich_history_record(row, break_limit_minutes, employee_row=None):
+    row = dict(row)
     record_type = row.get("request_type") or "Attendance"
     is_attendance = row.get("source_type", "attendance") == "attendance"
     break_minutes = total_break_minutes(row["id"]) if is_attendance and row.get("id") else 0
@@ -4396,6 +4806,113 @@ def build_admin_history_records(search="", department="", type_filter="", late_o
     return enriched[:limit]
 
 
+def build_attendance_audit_rows(date_from="", date_to="", employee_id="", source_filter="", limit=250):
+    params = []
+    where_employee = ""
+    if employee_id.isdigit():
+        where_employee = "AND COALESCE(a.target_user_id, a.user_id) = ?"
+        params.append(int(employee_id))
+
+    manual_rows = fetchall(f"""
+        SELECT
+            a.id,
+            a.created_at,
+            'manual' AS source_type,
+            a.action AS event_action,
+            a.details AS event_details,
+            actor.full_name AS actor_name,
+            actor.username AS actor_username,
+            COALESCE(a.target_user_id, actor.id) AS target_user_id,
+            employee.full_name AS employee_name,
+            employee.department AS employee_department
+        FROM activity_logs a
+        JOIN users actor ON actor.id = a.user_id
+        LEFT JOIN users employee ON employee.id = COALESCE(a.target_user_id, actor.id)
+        WHERE (
+            a.action IN ('TIME IN', 'BREAK START', 'BREAK END', 'TIME OUT', 'CORRECTION REQUEST', 'REVIEW CORRECTION')
+            OR a.action LIKE 'AUTO CLOSE%'
+        )
+        {where_employee}
+    """, tuple(params))
+
+    scanner_params = []
+    scanner_where_employee = ""
+    if employee_id.isdigit():
+        scanner_where_employee = "AND sl.employee_user_id = ?"
+        scanner_params.append(int(employee_id))
+
+    scanner_rows = fetchall(f"""
+        SELECT
+            sl.id,
+            sl.created_at,
+            'scanner' AS source_type,
+            sl.action_type AS event_action,
+            sl.result_message AS event_details,
+            scanner.full_name AS actor_name,
+            scanner.username AS actor_username,
+            sl.employee_user_id AS target_user_id,
+            employee.full_name AS employee_name,
+            employee.department AS employee_department,
+            sl.result_status
+        FROM scanner_logs sl
+        LEFT JOIN users scanner ON scanner.id = sl.scanner_user_id
+        LEFT JOIN users employee ON employee.id = sl.employee_user_id
+        WHERE 1=1
+        {scanner_where_employee}
+    """, tuple(scanner_params))
+
+    overtime_params = []
+    overtime_where_employee = ""
+    if employee_id.isdigit():
+        overtime_where_employee = "AND o.user_id = ?"
+        overtime_params.append(int(employee_id))
+
+    overtime_rows = fetchall(f"""
+        SELECT
+            o.id,
+            COALESCE(o.overtime_end, o.overtime_start, o.created_at) AS created_at,
+            'overtime' AS source_type,
+            CASE WHEN o.overtime_end IS NULL THEN 'OVERTIME START' ELSE 'OVERTIME END' END AS event_action,
+            CASE
+                WHEN o.overtime_end IS NULL THEN 'Overtime session started.'
+                ELSE 'Overtime session ended.'
+            END AS event_details,
+            u.full_name AS actor_name,
+            u.username AS actor_username,
+            o.user_id AS target_user_id,
+            u.full_name AS employee_name,
+            u.department AS employee_department
+        FROM overtime_sessions o
+        JOIN users u ON u.id = o.user_id
+        WHERE 1=1
+        {overtime_where_employee}
+    """, tuple(overtime_params))
+
+    combined = []
+    for row in manual_rows:
+        item = dict(row)
+        item["source_label"] = "Manual / Admin"
+        combined.append(item)
+    for row in scanner_rows:
+        item = dict(row)
+        item["source_label"] = "Scanner Kiosk"
+        combined.append(item)
+    for row in overtime_rows:
+        item = dict(row)
+        item["source_label"] = "Overtime"
+        combined.append(item)
+
+    if date_from:
+        combined = [row for row in combined if (row.get("created_at") or "")[:10] >= date_from]
+    if date_to:
+        combined = [row for row in combined if (row.get("created_at") or "")[:10] <= date_to]
+    if source_filter:
+        combined = [row for row in combined if row.get("source_type") == source_filter]
+
+    combined.sort(key=lambda item: ((item.get("created_at") or ""), item.get("id") or 0), reverse=True)
+    return combined[:limit]
+
+
 def apply_attendance_correction(user_id, work_date, time_in_value="", break_start_value="", break_end_value="", time_out_value=""):
     undertime_only_adjustment = bool(time_out_value and not (time_in_value or break_start_value or break_end_value))
     attendance, break_row = get_matching_attendance_context_for_request(
@@ -4666,9 +5183,13 @@ def admin_payroll():
         "paid_employees": len([row for row in payroll_rows if row["gross_pay"] > 0]),
         "missing_rates": len([row for row in payroll_rows if row["has_rate"] == 0]),
         "total_hours": round(sum(row["total_hours"] for row in payroll_rows), 2),
+        "total_overtime_hours": round(sum(row["overtime_hours"] for row in payroll_rows), 2),
+        "total_overtime_pay": round(sum(row["overtime_pay"] for row in payroll_rows), 2),
         "total_gross": round(sum(row["gross_pay"] for row in payroll_rows), 2),
+        "total_net_estimate": round(sum(row["net_pay_estimate"] for row in payroll_rows), 2),
         "suspension_days": sum(row["suspension_days"] for row in payroll_rows),
         "suspension_pay": round(sum(row["suspension_pay"] for row in payroll_rows), 2),
+        "overtime_multiplier": get_overtime_multiplier(),
     }
 
     return render_template(
@@ -5092,7 +5613,7 @@ def update_correction_request(request_id):
     log_details = f"{status} correction request #{request_id} for {correction['full_name']}"
     if status == "Approved" and applied_changes:
         log_details = f"{log_details} | {applied_changes}"
-    log_activity(session["user_id"], "REVIEW CORRECTION", log_details)
+    log_activity(session["user_id"], "REVIEW CORRECTION", log_details, target_user_id=correction["user_id"])
     flash("Correction request updated.", "success")
     return redirect(url_for("admin_corrections"))
 
@@ -5841,6 +6362,17 @@ def scanner_kiosk():
     return render_template("scanner.html")
 
 
+@app.route("/scanner/unlock", methods=["POST"])
+@login_required(role="scanner")
+def scanner_kiosk_unlock():
+    pin_value = (request.form.get("pin", "") or "").strip()
+    if not has_scanner_exit_pin():
+        return jsonify({"ok": True, "message": "Scanner unlocked."})
+    if verify_scanner_exit_pin(pin_value):
+        return jsonify({"ok": True, "message": "Scanner unlocked."})
+    return jsonify({"ok": False, "message": "Incorrect kiosk PIN."}), 403
+
+
 @app.route("/admin/scanner-logs")
 @login_required(role="admin")
 def admin_scanner_logs():
@@ -5926,6 +6458,37 @@ def admin_scanner_logs():
     )
 
 
+@app.route("/admin/attendance-audit")
+@login_required(role="admin")
+def admin_attendance_audit():
+    date_from = (request.args.get("date_from", "") or "").strip()
+    date_to = (request.args.get("date_to", "") or "").strip()
+    employee_id = (request.args.get("employee_id", "") or "").strip()
+    source_filter = (request.args.get("source", "") or "").strip()
+
+    rows = build_attendance_audit_rows(
+        date_from=date_from,
+        date_to=date_to,
+        employee_id=employee_id,
+        source_filter=source_filter
+    )
+    employees = fetchall("""
+        SELECT id, full_name, department
+        FROM users
+        WHERE role = 'employee'
+        ORDER BY full_name
+    """)
+    return render_template(
+        "admin_attendance_audit.html",
+        audit_rows=rows,
+        date_from=date_from,
+        date_to=date_to,
+        employee_id=employee_id,
+        source_filter=source_filter,
+        employees=employees
+    )
+
+
 @app.route("/scanner/scan", methods=["POST"])
 @login_required(role="scanner")
 def scanner_kiosk_scan():
@@ -5957,20 +6520,6 @@ def scanner_kiosk_scan():
         )
         return jsonify({"ok": False, "message": "Scan or enter a barcode first."}), 400
 
-    if action_type in {"overtime_start", "overtime_end"}:
-        log_scanner_activity(
-            scanner_user_id, action_type, barcode_value, "error",
-            "Overtime scanning is not enabled yet in the backend.",
-            source_label=source_label, device_label=device_label,
-            ip_address=ip_address, user_agent=user_agent
-        )
-        return jsonify({
-            "ok": False,
-            "message": "Overtime scanning is not enabled yet in the backend.",
-            "barcode_value": barcode_value,
-            "action_type": action_type
-        }), 400
-
     employee = get_user_by_barcode(barcode_value)
     if not employee:
         log_scanner_activity(
@@ -5989,6 +6538,7 @@ def scanner_kiosk_scan():
     )
     employee_for_payload = employee_row or employee
     attendance = get_current_attendance(employee["id"])
+    overtime_session = get_open_overtime_session(employee["id"])
     break_minutes = total_break_minutes(attendance["id"], include_open=True) if attendance else 0
     log_scanner_activity(
         scanner_user_id,
@@ -6012,7 +6562,7 @@ def scanner_kiosk_scan():
         "avatar_initials": get_avatar_initials(employee_for_payload["full_name"]),
         "profile_image_url": url_for("uploaded_file", filename=employee_for_payload["profile_image"]) if employee_for_payload["profile_image"] and uploaded_file_exists(employee_for_payload["profile_image"]) else None,
         "barcode_value": barcode_value,
-        "status": attendance["status"] if attendance else "Offline",
+        "status": "On Overtime" if overtime_session else (attendance["status"] if attendance else "Offline"),
         "time_in": attendance["time_in"] if attendance else None,
         "time_out": attendance["time_out"] if attendance else None,
         "break_minutes": break_minutes,
@@ -6085,6 +6635,7 @@ def delete_employee(user_id):
         execute_db("DELETE FROM notifications WHERE user_id = ?", (user_id,))
         execute_db("DELETE FROM breaks WHERE user_id = ?", (user_id,))
         execute_db("DELETE FROM attendance WHERE user_id = ?", (user_id,))
+        execute_db("DELETE FROM overtime_sessions WHERE user_id = ?", (user_id,))
         execute_db("DELETE FROM activity_logs WHERE user_id = ?", (user_id,))
         execute_db("DELETE FROM correction_requests WHERE user_id = ?", (user_id,))
         execute_db("DELETE FROM scanner_logs WHERE employee_user_id = ? OR scanner_user_id = ?", (user_id, user_id))

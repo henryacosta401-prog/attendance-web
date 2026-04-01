@@ -27,6 +27,16 @@ document.addEventListener("DOMContentLoaded", function () {
     </div>
 </div>
 
+{% if manual_attendance_block_message %}
+<div class="card" style="max-width:860px;">
+    <div class="section-title">Scanner Attendance Mode</div>
+    <p class="section-subtitle" style="margin-top:8px;">{{ manual_attendance_block_message }}</p>
+    <div class="top-actions" style="margin-top:16px;">
+        <a class="btn btn-primary" href="{{ url_for('dashboard') }}">Back to Dashboard</a>
+        <a class="btn btn-gray" href="{{ url_for('employee_corrections') }}">Request Attendance Correction</a>
+    </div>
+</div>
+{% else %}
 <div class="grid grid-2">
     <div class="card">
         <div class="section-title">Time In</div>
@@ -63,4 +73,5 @@ document.addEventListener("DOMContentLoaded", function () {
         </div>
     </div>
 </div>
+{% endif %}
 {% endblock %}

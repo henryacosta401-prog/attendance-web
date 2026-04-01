@@ -31,6 +31,9 @@
                 <div class="avatar-lg" style="display:inline-flex;align-items:center;justify-content:center;font-weight:800;background:rgba(148,163,184,0.18);color:#dbeafe;">{{ get_avatar_initials(user.full_name) }}</div>
             </div>
         {% endif %}
+        {% if user.profile_image and not uploaded_file_exists(user.profile_image) %}
+            <div class="small" style="margin-top:10px;color:#fcd34d;">Your saved profile image file is missing from storage. Please upload it again.</div>
+        {% endif %}
 
         <div class="top-actions" style="margin-top:16px;">
             <button class="btn btn-success" type="submit">Save Profile</button>

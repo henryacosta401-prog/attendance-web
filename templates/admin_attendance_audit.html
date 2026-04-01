@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}Attendance Audit{% endblock %}
+
+{% block extra_head %}
+<style>
+.audit-shell { display: grid; gap: 20px; }
+.audit-panel {
+    border-radius: 24px;
+    background: linear-gradient(180deg, rgba(22, 31, 53, 0.98), rgba(15, 23, 42, 0.96));
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    box-shadow: 0 22px 34px rgba(15, 23, 42, 0.22);
+    padding: 20px;
+}
+.audit-toolbar { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) auto; gap: 12px; margin-top: 16px; }
+.audit-table-wrap { overflow-x: auto; margin-top: 18px; border-radius: 18px; border: 1px solid rgba(148, 163, 184, 0.14); }
+.audit-table { width: 100%; border-collapse: collapse; }
+.audit-table th, .audit-table td { padding: 14px 16px; border-bottom: 1px solid rgba(148, 163, 184, 0.12); vertical-align: top; }
+.audit-table th { background: rgba(59, 130, 246, 0.08); color: #bad0ff; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+.audit-table td { color: #ecf3ff; font-size: 14px; }
+.audit-pill { display: inline-flex; align-items: center; padding: 6px 10px; border-radius: 999px; font-size: 12px; font-weight: 800; }
+.audit-pill-scanner { background: rgba(59, 130, 246, 0.18); color: #bfdbfe; }
+.audit-pill-manual { background: rgba(16, 185, 129, 0.18); color: #a7f3d0; }
+.audit-pill-overtime { background: rgba(245, 158, 11, 0.18); color: #fde68a; }
+@media (max-width: 1100px) {
+    .audit-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 700px) {
+    .audit-toolbar { grid-template-columns: 1fr; }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="hero-card" style="margin-bottom:20px;">
+    <div class="hero">
+        <div>
+            <h1>Attendance Audit</h1>
+            <p class="section-subtitle">One timeline for manual attendance actions, scanner events, correction activity, and overtime sessions.</p>
+        </div>
+        <div class="status status-blue">Unified Audit</div>
+    </div>
+</div>
+
+<div class="audit-shell">
+    <section class="audit-panel">
+        <h2 style="margin:0;color:#f8fbff;">Audit Filters</h2>
+        <p class="section-subtitle" style="margin-top:6px;">Review attendance changes across all sources without switching between history modules.</p>
+        <form method="GET" class="audit-toolbar">
+            <div>
+                <label>Date From</label>
+                <input class="input" type="date" name="date_from" value="{{ date_from }}">
+            </div>
+            <div>
+                <label>Date To</label>
+                <input class="input" type="date" name="date_to" value="{{ date_to }}">
+            </div>
+            <div>
+                <label>Employee</label>
+                <select class="input" name="employee_id">
+                    <option value="">All Employees</option>
+                    {% for employee in employees %}
+                        <option value="{{ employee.id }}" {% if employee_id == employee.id|string %}selected{% endif %}>{{ employee.full_name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label>Source</label>
+                <select class="input" name="source">
+                    <option value="">All Sources</option>
+                    <option value="scanner" {% if source_filter == 'scanner' %}selected{% endif %}>Scanner Kiosk</option>
+                    <option value="manual" {% if source_filter == 'manual' %}selected{% endif %}>Manual / Admin</option>
+                    <option value="overtime" {% if source_filter == 'overtime' %}selected{% endif %}>Overtime</option>
+                </select>
+            </div>
+            <div style="display:flex;align-items:end;">
+                <button class="btn btn-primary" type="submit" style="width:100%;">Apply</button>
+            </div>
+        </form>
+
+        <div class="audit-table-wrap">
+            <table class="audit-table">
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Source</th>
+                        <th>Action</th>
+                        <th>Employee</th>
+                        <th>Actor</th>
+                        <th>Details</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if audit_rows %}
+                        {% for row in audit_rows %}
+                            <tr>
+                                <td>{{ row.created_at }}</td>
+                                <td>
+                                    <span class="audit-pill {% if row.source_type == 'scanner' %}audit-pill-scanner{% elif row.source_type == 'overtime' %}audit-pill-overtime{% else %}audit-pill-manual{% endif %}">
+                                        {{ row.source_label }}
+                                    </span>
+                                </td>
+                                <td>{{ (row.event_action or '-')|replace('_', ' ')|title }}</td>
+                                <td>
+                                    <div style="font-weight:800;color:#fff;">{{ row.employee_name or '-' }}</div>
+                                    <div class="small muted">{{ row.employee_department or '' }}</div>
+                                </td>
+                                <td>
+                                    <div style="font-weight:800;color:#fff;">{{ row.actor_name or '-' }}</div>
+                                    <div class="small muted">@{{ row.actor_username or '-' }}</div>
+                                </td>
+                                <td>{{ row.event_details or '-' }}</td>
+                            </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr><td colspan="6" class="muted" style="padding:18px;">No attendance audit rows matched this filter.</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</div>
+{% endblock %}
