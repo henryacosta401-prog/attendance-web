@@ -5628,6 +5628,15 @@ def admin_scanner_logs():
     result_status = (request.args.get("result_status", "") or "").strip()
     employee_id = (request.args.get("employee_id", "") or "").strip()
 
+    if date_from and date_to:
+        try:
+            start_date = datetime.strptime(date_from, "%Y-%m-%d").date()
+            end_date = datetime.strptime(date_to, "%Y-%m-%d").date()
+            if start_date > end_date:
+                date_from, date_to = date_to, date_from
+        except ValueError:
+            pass
+
     where_clauses = []
     params = []
 
@@ -5841,6 +5850,8 @@ def delete_employee(user_id):
     execute_db("DELETE FROM breaks WHERE user_id = ?", (user_id,), commit=True)
     execute_db("DELETE FROM attendance WHERE user_id = ?", (user_id,), commit=True)
     execute_db("DELETE FROM activity_logs WHERE user_id = ?", (user_id,), commit=True)
+    execute_db("DELETE FROM correction_requests WHERE user_id = ?", (user_id,), commit=True)
+    execute_db("DELETE FROM scanner_logs WHERE employee_user_id = ? OR scanner_user_id = ?", (user_id, user_id), commit=True)
     execute_db("DELETE FROM incident_reports WHERE user_id = ?", (user_id,), commit=True)
     execute_db("DELETE FROM disciplinary_actions WHERE user_id = ?", (user_id,), commit=True)
     execute_db("DELETE FROM users WHERE id = ?", (user_id,), commit=True)

@@ -541,7 +541,8 @@
             action: "time_in",
             resetTimer: null,
             soundCtx: null,
-            cameraFacingMode: "environment"
+            cameraFacingMode: "environment",
+            scanInFlight: false
         };
 
         const actionButtons = Array.from(document.querySelectorAll("[data-action]"));
@@ -676,7 +677,7 @@
                 if (results.length > 0) {
                     const rawValue = (results[0].rawValue || "").trim();
                     const now = Date.now();
-                    if (rawValue && (rawValue !== lastCameraScan || now - lastCameraScanAt > 2200)) {
+                    if (!state.scanInFlight && rawValue && (rawValue !== lastCameraScan || now - lastCameraScanAt > 2200)) {
                         lastCameraScan = rawValue;
                         lastCameraScanAt = now;
                         submitScan(rawValue);
@@ -711,6 +712,7 @@
         }
 
         function resetEmployeeDisplay() {
+            state.scanInFlight = false;
             employeeCard.classList.remove("is-success", "is-error");
             employeeName.textContent = "Ready for Attendance";
             employeeStatus.textContent = "Scan your ID to begin.";
@@ -763,6 +765,11 @@
         }
 
         async function submitScan(barcodeValue) {
+            if (state.scanInFlight) {
+                return;
+            }
+
+            state.scanInFlight = true;
             const formData = new FormData(scanForm);
             formData.append("action_type", state.action);
             formData.append("barcode_value", barcodeValue);
@@ -815,6 +822,9 @@
         scannerInput.addEventListener("keydown", (event) => {
             if (event.key === "Enter") {
                 event.preventDefault();
+                if (state.scanInFlight) {
+                    return;
+                }
                 const value = scannerInput.value.trim();
                 scannerInput.value = "";
                 if (value) {
