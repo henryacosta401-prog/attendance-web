@@ -6,19 +6,22 @@
     <title>Scanner Kiosk | Stellar Seats</title>
     <style>
         :root {
-            --bg-1: #081528;
-            --bg-2: #0f2745;
-            --bg-3: #17365f;
-            --panel: rgba(255, 255, 255, 0.1);
-            --panel-strong: rgba(11, 23, 41, 0.42);
-            --panel-border: rgba(191, 219, 254, 0.16);
+            --bg-1: #05101f;
+            --bg-2: #0a1c34;
+            --bg-3: #12345e;
+            --panel: rgba(10, 20, 37, 0.64);
+            --panel-strong: rgba(8, 16, 30, 0.82);
+            --panel-soft: rgba(255, 255, 255, 0.05);
+            --panel-border: rgba(191, 219, 254, 0.14);
             --text: #f8fbff;
-            --muted: rgba(226, 232, 240, 0.74);
-            --accent: #60a5fa;
-            --accent-strong: #2563eb;
+            --muted: rgba(226, 232, 240, 0.72);
+            --accent: #7dd3fc;
+            --accent-strong: #38bdf8;
+            --accent-deep: #2563eb;
             --success: #16a34a;
             --danger: #dc2626;
-            --shadow: 0 18px 40px rgba(2, 8, 23, 0.34);
+            --shadow: 0 20px 44px rgba(2, 8, 23, 0.38);
+            --inner-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
         }
 
         html, body {
@@ -27,9 +30,10 @@
             overflow: hidden;
             font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
             background:
-                radial-gradient(circle at 50% -8%, rgba(96, 165, 250, 0.24), transparent 28%),
-                radial-gradient(circle at 90% 10%, rgba(56, 189, 248, 0.16), transparent 22%),
-                linear-gradient(180deg, var(--bg-3) 0%, var(--bg-2) 38%, var(--bg-1) 100%);
+                radial-gradient(circle at 50% -8%, rgba(96, 165, 250, 0.16), transparent 24%),
+                radial-gradient(circle at 88% 12%, rgba(125, 211, 252, 0.12), transparent 18%),
+                radial-gradient(circle at 12% 100%, rgba(59, 130, 246, 0.14), transparent 20%),
+                linear-gradient(180deg, var(--bg-3) 0%, var(--bg-2) 40%, var(--bg-1) 100%);
             color: var(--text);
         }
 
@@ -41,8 +45,19 @@
             height: 100vh;
             display: grid;
             grid-template-rows: auto minmax(0, 0.92fr) minmax(0, 1fr) minmax(0, 0.98fr);
-            gap: 8px;
+            gap: 10px;
             padding: 10px 10px calc(10px + env(safe-area-inset-bottom, 0px));
+            position: relative;
+        }
+
+        .scanner-app::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            background:
+                linear-gradient(135deg, rgba(255, 255, 255, 0.04) 0%, transparent 24%),
+                linear-gradient(180deg, transparent 0%, rgba(125, 211, 252, 0.05) 100%);
+            pointer-events: none;
         }
 
         .header-card,
@@ -54,48 +69,71 @@
             border-radius: 26px;
             box-shadow: var(--shadow);
             backdrop-filter: blur(16px);
+            box-shadow: var(--shadow), var(--inner-shadow);
         }
 
         .header-card {
-            padding: 10px 14px;
+            padding: 12px 14px 10px;
             display: grid;
-            gap: 2px;
+            gap: 4px;
             text-align: center;
-            background: linear-gradient(180deg, rgba(96, 165, 250, 0.12), rgba(15, 23, 42, 0.16));
+            background:
+                linear-gradient(180deg, rgba(96, 165, 250, 0.14), rgba(15, 23, 42, 0.14)),
+                linear-gradient(135deg, rgba(255, 255, 255, 0.03), transparent 65%);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .header-card::after {
+            content: "";
+            position: absolute;
+            inset: auto 18px -40px 18px;
+            height: 70px;
+            background: radial-gradient(circle, rgba(125, 211, 252, 0.15), transparent 70%);
+            pointer-events: none;
         }
 
         .header-title {
-            font-size: 22px;
+            font-size: 23px;
             font-weight: 900;
-            letter-spacing: -0.04em;
+            letter-spacing: -0.045em;
             line-height: 1;
+            position: relative;
+            z-index: 1;
         }
 
         .header-meta {
             font-size: 12px;
             color: var(--muted);
             line-height: 1.3;
+            position: relative;
+            z-index: 1;
         }
 
         .employee-card {
-            padding: 10px 12px;
+            padding: 12px 12px 10px;
             display: grid;
             justify-items: center;
             align-items: center;
-            gap: 6px;
+            gap: 8px;
             min-height: 0;
             position: relative;
             overflow: hidden;
+            background:
+                linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(15, 23, 42, 0.16)),
+                linear-gradient(135deg, rgba(125, 211, 252, 0.08), transparent 52%);
         }
 
         .employee-card::after {
             content: "";
             position: absolute;
             inset: 0;
-            background: radial-gradient(circle at 50% 14%, rgba(96, 165, 250, 0.2), transparent 42%);
-            opacity: 0.9;
+            background:
+                radial-gradient(circle at 50% 14%, rgba(96, 165, 250, 0.18), transparent 42%),
+                linear-gradient(180deg, transparent 0%, rgba(255, 255, 255, 0.02) 100%);
+            opacity: 0.95;
             pointer-events: none;
-            transition: opacity 0.25s ease;
+            transition: opacity 0.25s ease, background 0.25s ease;
         }
 
         .employee-card.is-success::after {
@@ -113,7 +151,8 @@
             overflow: hidden;
             border: 4px solid rgba(255, 255, 255, 0.22);
             box-shadow: 0 10px 24px rgba(2, 6, 23, 0.24);
-            background: linear-gradient(180deg, rgba(255,255,255,0.9), rgba(226, 232, 240, 0.88));
+            background:
+                linear-gradient(180deg, rgba(255,255,255,0.94), rgba(226, 232, 240, 0.9));
             display: grid;
             place-items: center;
             position: relative;
@@ -173,8 +212,8 @@
         }
 
         .employee-status {
-            font-size: 14px;
-            line-height: 1.25;
+            font-size: 13px;
+            line-height: 1.3;
             color: var(--muted);
             text-align: center;
             min-height: 30px;
@@ -197,15 +236,15 @@
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            min-height: 28px;
-            padding: 6px 12px;
+            min-height: 30px;
+            padding: 7px 14px;
             border-radius: 999px;
-            background: rgba(15, 23, 42, 0.52);
-            border: 1px solid rgba(191, 219, 254, 0.12);
+            background: rgba(15, 23, 42, 0.58);
+            border: 1px solid rgba(191, 219, 254, 0.14);
             color: rgba(226, 232, 240, 0.72);
             font-size: 11px;
             font-weight: 900;
-            letter-spacing: 0.08em;
+            letter-spacing: 0.12em;
             text-transform: uppercase;
             position: relative;
             z-index: 1;
@@ -231,42 +270,57 @@
             padding: 10px;
             display: grid;
             grid-template-rows: auto 1fr;
-            gap: 6px;
+            gap: 8px;
             overflow: hidden;
+            background:
+                linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(8, 16, 30, 0.1)),
+                linear-gradient(135deg, rgba(59, 130, 246, 0.06), transparent 52%);
         }
 
         .actions-title {
             font-size: 11px;
             text-transform: uppercase;
-            letter-spacing: 0.12em;
-            color: rgba(241, 245, 249, 0.74);
+            letter-spacing: 0.18em;
+            color: rgba(241, 245, 249, 0.7);
             text-align: center;
         }
 
         .actions-list {
             display: grid;
             grid-template-rows: repeat(6, minmax(0, 1fr));
-            gap: 8px;
+            gap: 7px;
             min-height: 0;
         }
 
         .action-btn {
             width: 100%;
             min-height: 0;
-            border: 1px solid rgba(191, 219, 254, 0.14);
-            border-radius: 14px;
+            border: 1px solid rgba(191, 219, 254, 0.12);
+            border-radius: 16px;
             color: white;
-            font-size: 16px;
+            font-size: 15px;
             font-weight: 900;
-            letter-spacing: -0.02em;
+            letter-spacing: -0.01em;
             display: flex;
             align-items: center;
             justify-content: center;
             text-align: center;
-            background: linear-gradient(180deg, rgba(30, 41, 59, 0.94), rgba(15, 23, 42, 0.94));
-            box-shadow: 0 8px 18px rgba(2, 6, 23, 0.16);
-            transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+            background:
+                linear-gradient(180deg, rgba(30, 41, 59, 0.95), rgba(12, 20, 34, 0.96));
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), 0 10px 18px rgba(2, 6, 23, 0.14);
+            transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease, border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
             padding: 0 10px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .action-btn::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(90deg, rgba(255,255,255,0.05), transparent 45%, rgba(125, 211, 252, 0.08));
+            opacity: 0.55;
+            pointer-events: none;
         }
 
         .action-btn:active {
@@ -274,14 +328,25 @@
         }
 
         .action-btn.is-active {
-            background: linear-gradient(180deg, rgba(59, 130, 246, 0.92), rgba(29, 78, 216, 0.96));
-            border-color: rgba(191, 219, 254, 0.46);
-            box-shadow: 0 0 0 2px rgba(191, 219, 254, 0.22), 0 14px 24px rgba(2, 6, 23, 0.24);
+            background: linear-gradient(180deg, rgba(37, 99, 235, 0.92), rgba(29, 78, 216, 0.97));
+            border-color: rgba(191, 219, 254, 0.42);
+            box-shadow: 0 0 0 2px rgba(125, 211, 252, 0.18), 0 14px 26px rgba(2, 6, 23, 0.24);
+            color: #f8fbff;
+        }
+
+        .action-btn.is-active::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            background: linear-gradient(90deg, rgba(255,255,255,0.08), transparent 35%, rgba(125, 211, 252, 0.2));
+            pointer-events: none;
         }
 
         .action-btn.is-disabled {
-            opacity: 0.42;
-            box-shadow: none;
+            opacity: 0.38;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.02);
+            color: rgba(226, 232, 240, 0.54);
         }
 
         .status-card {
@@ -289,6 +354,9 @@
             display: grid;
             gap: 8px;
             min-height: 0;
+            background:
+                linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(8, 16, 30, 0.14)),
+                linear-gradient(135deg, rgba(125, 211, 252, 0.06), transparent 58%);
         }
 
         .status-topbar {
@@ -301,10 +369,12 @@
         .camera-card {
             position: relative;
             overflow: hidden;
-            border-radius: 16px;
-            height: 92px;
-            background: rgba(2, 6, 23, 0.72);
-            border: 1px solid rgba(255,255,255,0.14);
+            border-radius: 20px;
+            height: 104px;
+            background:
+                linear-gradient(180deg, rgba(2, 6, 23, 0.84), rgba(15, 23, 42, 0.74));
+            border: 1px solid rgba(255,255,255,0.12);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
         }
 
         .camera-card video {
@@ -318,11 +388,27 @@
         .camera-card::after {
             content: "";
             position: absolute;
-            inset: 16% 12%;
+            inset: 16% 10%;
             border: 2px solid rgba(125, 211, 252, 0.82);
-            border-radius: 14px;
-            box-shadow: 0 0 0 999px rgba(2, 6, 23, 0.2);
+            border-radius: 18px;
+            box-shadow: 0 0 0 999px rgba(2, 6, 23, 0.18);
             pointer-events: none;
+            animation: scanPulse 2.3s ease-in-out infinite;
+        }
+
+        .camera-card::before {
+            content: "";
+            position: absolute;
+            left: 14%;
+            right: 14%;
+            top: 50%;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, rgba(125, 211, 252, 0.95), transparent);
+            box-shadow: 0 0 18px rgba(125, 211, 252, 0.45);
+            transform: translateY(-50%);
+            pointer-events: none;
+            opacity: 0.82;
+            animation: scanLine 2.3s ease-in-out infinite;
         }
 
         .camera-controls {
@@ -333,6 +419,7 @@
             border-radius: 999px;
             background: rgba(15, 23, 42, 0.55);
             border: 1px solid rgba(191, 219, 254, 0.12);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
         }
 
         .camera-toggle {
@@ -343,7 +430,7 @@
             color: rgba(226, 232, 240, 0.72);
             font-size: 11px;
             font-weight: 800;
-            letter-spacing: 0.02em;
+            letter-spacing: 0.04em;
             min-width: 74px;
         }
 
@@ -355,31 +442,32 @@
 
         .camera-overlay {
             position: absolute;
-            inset: auto 8px 8px 8px;
-            padding: 6px 8px;
+            inset: auto 10px 10px 10px;
+            padding: 8px 10px;
             border-radius: 12px;
             background: rgba(15, 23, 42, 0.72);
             border: 1px solid rgba(255,255,255,0.1);
             font-size: 10px;
-            line-height: 1.2;
+            line-height: 1.25;
             color: rgba(241, 245, 249, 0.86);
             text-align: center;
             backdrop-filter: blur(10px);
         }
 
         .status-banner {
-            min-height: 42px;
-            border-radius: 14px;
-            background: rgba(15, 23, 42, 0.5);
+            min-height: 44px;
+            border-radius: 16px;
+            background: rgba(15, 23, 42, 0.54);
             border: 1px solid rgba(255,255,255,0.1);
             display: flex;
             align-items: center;
             justify-content: center;
             text-align: center;
-            padding: 8px 10px;
+            padding: 8px 12px;
             font-size: 14px;
             font-weight: 800;
-            line-height: 1.2;
+            line-height: 1.25;
+            transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
         }
 
         .status-banner.is-success {
@@ -400,16 +488,17 @@
 
         .meta-item {
             border-radius: 14px;
-            padding: 8px 10px;
-            background: rgba(15, 23, 42, 0.4);
+            padding: 9px 10px;
+            background: rgba(15, 23, 42, 0.42);
             border: 1px solid rgba(255,255,255,0.1);
             min-height: 52px;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
         }
 
         .meta-label {
             font-size: 10px;
             text-transform: uppercase;
-            letter-spacing: 0.08em;
+            letter-spacing: 0.1em;
             color: rgba(226, 232, 240, 0.72);
             margin-bottom: 3px;
         }
@@ -437,6 +526,28 @@
             color: rgba(226, 232, 240, 0.64);
         }
 
+        @keyframes scanLine {
+            0%, 100% {
+                transform: translateY(-26px);
+                opacity: 0.36;
+            }
+            50% {
+                transform: translateY(26px);
+                opacity: 0.95;
+            }
+        }
+
+        @keyframes scanPulse {
+            0%, 100% {
+                border-color: rgba(125, 211, 252, 0.52);
+                box-shadow: 0 0 0 999px rgba(2, 6, 23, 0.18), 0 0 0 rgba(125, 211, 252, 0);
+            }
+            50% {
+                border-color: rgba(186, 230, 253, 0.92);
+                box-shadow: 0 0 0 999px rgba(2, 6, 23, 0.18), 0 0 22px rgba(125, 211, 252, 0.22);
+            }
+        }
+
         @media (max-width: 800px) {
             .employee-photo {
                 width: 96px;
@@ -454,7 +565,7 @@
             }
 
             .action-btn {
-                font-size: 15px;
+                font-size: 14px;
             }
 
             .status-topbar {
@@ -752,7 +863,7 @@
             statusBanner.className = `status-banner ${ok ? "is-success" : "is-error"}`;
             statusBanner.textContent = payload.message || (ok ? "Attendance recorded." : "Unable to record attendance.");
             cameraOverlay.textContent = ok
-                ? "Scan recorded. Ready for the next barcode."
+                ? "Scan recorded. Present the next employee barcode when ready."
                 : "Scan failed. Check the message above, then try again.";
             playTone(ok ? "success" : "error");
 
@@ -783,7 +894,21 @@
                     body: formData,
                     credentials: "same-origin"
                 });
-                const payload = await response.json();
+                let payload = null;
+                try {
+                    payload = await response.json();
+                } catch (parseError) {
+                    payload = {
+                        ok: false,
+                        employee_name: response.status === 401 || response.status === 403 ? "Session Expired" : "Scanner Error",
+                        message: response.status === 401 || response.status === 403
+                            ? "The scanner session expired. Please log in again."
+                            : "The kiosk received an unexpected server response.",
+                        barcode_value: barcodeValue,
+                        avatar_initials: response.status === 401 || response.status === 403 ? "SE" : "ER",
+                        status: response.status === 401 || response.status === 403 ? "Signed Out" : "Error"
+                    };
+                }
                 showEmployee(payload, !!payload.ok);
             } catch (error) {
                 console.error(error);

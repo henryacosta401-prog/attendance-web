@@ -96,7 +96,6 @@ DEFAULT_PAID_LEAVE_DAYS = 7
 DEFAULT_SECRET_KEY = "dev-secret-key"
 LOGIN_WINDOW_MINUTES = 15
 LOGIN_MAX_ATTEMPTS = 10
-LOGIN_ATTEMPTS = {}
 
 
 def is_production_environment():
@@ -153,6 +152,10 @@ def ensure_csrf_token():
     return token
 
 
+def is_scanner_api_request():
+    return request.path == "/scanner/scan"
+
+
 @app.context_processor
 def inject_csrf_token():
     return {"csrf_token": ensure_csrf_token()}
@@ -166,6 +169,8 @@ def verify_csrf_token():
     session_token = session.get("_csrf_token")
     form_token = request.form.get("csrf_token", "")
     if not session_token or not form_token or not secrets.compare_digest(session_token, form_token):
+        if is_scanner_api_request():
+            return jsonify({"ok": False, "message": "Scanner session expired. Please log in again."}), 403
         flash("Your session expired or the form is no longer valid. Please try again.", "danger")
         return redirect(request.referrer or url_for("login"))
 
@@ -252,18 +257,18 @@ def is_image(filename):
 
 
 def get_client_ip():
-    ip_address = request.headers.get("X-Forwarded-For", request.remote_addr or "")
-    if ip_address and "," in ip_address:
-        ip_address = ip_address.split(",", 1)[0].strip()
-    return ip_address or "unknown"
+    return (request.remote_addr or "").strip() or "unknown"
 
 
 def get_recent_login_attempts(ip_address):
-    cutoff = now_dt() - timedelta(minutes=LOGIN_WINDOW_MINUTES)
-    attempts = LOGIN_ATTEMPTS.get(ip_address, [])
-    fresh_attempts = [stamp for stamp in attempts if stamp >= cutoff]
-    LOGIN_ATTEMPTS[ip_address] = fresh_attempts
-    return fresh_attempts
+    cutoff = (now_dt() - timedelta(minutes=LOGIN_WINDOW_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
+    execute_db("DELETE FROM login_attempts WHERE attempted_at < ?", (cutoff,), commit=True)
+    return fetchall("""
+        SELECT attempted_at
+        FROM login_attempts
+        WHERE ip_address = ?
+        ORDER BY attempted_at DESC
+    """, (ip_address,))
 
 
 def is_login_rate_limited(ip_address):
@@ -271,13 +276,14 @@ def is_login_rate_limited(ip_address):
 
 
 def register_login_failure(ip_address):
-    attempts = get_recent_login_attempts(ip_address)
-    attempts.append(now_dt())
-    LOGIN_ATTEMPTS[ip_address] = attempts
+    execute_db("""
+        INSERT INTO login_attempts (ip_address, attempted_at)
+        VALUES (?, ?)
+    """, (ip_address, now_str()), commit=True)
 
 
 def clear_login_failures(ip_address):
-    LOGIN_ATTEMPTS.pop(ip_address, None)
+    execute_db("DELETE FROM login_attempts WHERE ip_address = ?", (ip_address,), commit=True)
 
 
 def login_required(role=None):
@@ -285,16 +291,22 @@ def login_required(role=None):
         @wraps(f)
         def wrapped(*args, **kwargs):
             if "user_id" not in session:
+                if is_scanner_api_request():
+                    return jsonify({"ok": False, "message": "Scanner session expired. Please log in again."}), 401
                 flash("Please log in first.", "warning")
                 return redirect(url_for("login"))
 
             user = get_user_by_id(session["user_id"])
             if not user:
                 session.clear()
+                if is_scanner_api_request():
+                    return jsonify({"ok": False, "message": "Scanner session expired. Please log in again."}), 401
                 flash("Your session expired. Please log in again.", "warning")
                 return redirect(url_for("login"))
 
             if role and session.get("role") != role:
+                if is_scanner_api_request():
+                    return jsonify({"ok": False, "message": "Scanner access denied."}), 403
                 flash("Access denied.", "danger")
                 return redirect(get_home_route_for_role(session.get("role")))
             return f(*args, **kwargs)
@@ -418,6 +430,14 @@ def init_sqlite_db():
             created_at TEXT NOT NULL,
             is_read INTEGER NOT NULL DEFAULT 0,
             FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS login_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ip_address TEXT NOT NULL,
+            attempted_at TEXT NOT NULL
         )
     """)
 
@@ -568,6 +588,16 @@ def init_sqlite_db():
         cursor.execute("ALTER TABLE attendance ADD COLUMN late_flag INTEGER NOT NULL DEFAULT 0")
     if "late_minutes" not in existing_cols_att:
         cursor.execute("ALTER TABLE attendance ADD COLUMN late_minutes INTEGER NOT NULL DEFAULT 0")
+
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_login_attempts_ip_attempted_at ON login_attempts(ip_address, attempted_at)")
+    try:
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_one_open_per_user ON attendance(user_id) WHERE time_in IS NOT NULL AND time_out IS NULL")
+    except sqlite3.IntegrityError:
+        pass
+    try:
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_breaks_one_open_per_attendance ON breaks(attendance_id) WHERE attendance_id IS NOT NULL AND break_end IS NULL")
+    except sqlite3.IntegrityError:
+        pass
 
     # incident reports migration (this fixes your current error)
     existing_cols_incident = [row[1] for row in cursor.execute("PRAGMA table_info(incident_reports)").fetchall()]
@@ -853,6 +883,14 @@ def init_postgres_db():
         """)
 
         cur.execute("""
+            CREATE TABLE IF NOT EXISTS login_attempts (
+                id SERIAL PRIMARY KEY,
+                ip_address TEXT NOT NULL,
+                attempted_at TEXT NOT NULL
+            )
+        """)
+
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS activity_logs (
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER NOT NULL,
@@ -937,6 +975,21 @@ def init_postgres_db():
             VALUES (1, 'Kirk Danny Fernandez', 'Head Of Operations', NULL)
             ON CONFLICT (id) DO NOTHING
         """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_login_attempts_ip_attempted_at ON login_attempts(ip_address, attempted_at)")
+        try:
+            cur.execute("SAVEPOINT attendance_open_index")
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_one_open_per_user ON attendance(user_id) WHERE time_in IS NOT NULL AND time_out IS NULL")
+            cur.execute("RELEASE SAVEPOINT attendance_open_index")
+        except Exception:
+            cur.execute("ROLLBACK TO SAVEPOINT attendance_open_index")
+            cur.execute("RELEASE SAVEPOINT attendance_open_index")
+        try:
+            cur.execute("SAVEPOINT break_open_index")
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_breaks_one_open_per_attendance ON breaks(attendance_id) WHERE attendance_id IS NOT NULL AND break_end IS NULL")
+            cur.execute("RELEASE SAVEPOINT break_open_index")
+        except Exception:
+            cur.execute("ROLLBACK TO SAVEPOINT break_open_index")
+            cur.execute("RELEASE SAVEPOINT break_open_index")
 
     db.commit()
 
@@ -2098,6 +2151,33 @@ def uploaded_file_exists(filename):
     if not filename:
         return False
     return os.path.exists(os.path.join(app.config["UPLOAD_FOLDER"], filename))
+
+
+def delete_uploaded_file_if_unused(filename):
+    cleaned = (filename or "").strip()
+    if not cleaned:
+        return
+    if fetchone("""
+        SELECT id
+        FROM users
+        WHERE profile_image = ?
+        ORDER BY id DESC LIMIT 1
+    """, (cleaned,)):
+        return
+    if fetchone("""
+        SELECT id
+        FROM attendance
+        WHERE proof_file = ?
+        ORDER BY id DESC LIMIT 1
+    """, (cleaned,)):
+        return
+
+    file_path = os.path.join(app.config["UPLOAD_FOLDER"], cleaned)
+    if os.path.isfile(file_path):
+        try:
+            os.remove(file_path)
+        except OSError:
+            pass
 
 
 def static_file_exists(filename):
@@ -3600,8 +3680,9 @@ def get_admin_employee_rows(status_filter="", search="", department_filter="", o
         live_status = get_user_live_status(user["id"])
         attendance = get_current_attendance(user["id"])
         scheduled_today = is_scheduled_today(user)
-        suspension_today = get_suspension_for_date(user["id"], today_str())
-        leave_today = get_approved_leave_for_date(user["id"], today_str())
+        override_status = get_employee_override_status_for_date(user["id"], today_str())
+        suspension_today = override_status if override_status and override_status["type"] == "Suspension" else None
+        leave_today = override_status if override_status and override_status["type"] in LEAVE_REQUEST_TYPES else None
         absent_today = is_absent_today(user, attendance)
         missing_timeout_today = is_missing_timeout_today(user, attendance)
         undertime_today = 1 if is_undertime_record(
@@ -3612,10 +3693,8 @@ def get_admin_employee_rows(status_filter="", search="", department_filter="", o
 
         if user["is_active"] != 1:
             status_display = "Inactive"
-        elif suspension_today:
-            status_display = "Suspended"
-        elif leave_today and live_status == "Offline":
-            status_display = leave_today["request_type"]
+        elif override_status:
+            status_display = override_status["label"]
         elif absent_today:
             status_display = "Absent"
         elif missing_timeout_today:
@@ -5989,6 +6068,18 @@ def delete_employee(user_id):
         flash("Employee not found.", "danger")
         return redirect(url_for("manage_employees"))
 
+    upload_filenames = []
+    if user["profile_image"]:
+        upload_filenames.append(user["profile_image"])
+    upload_filenames.extend([
+        row["proof_file"]
+        for row in fetchall("""
+            SELECT proof_file
+            FROM attendance
+            WHERE user_id = ? AND proof_file IS NOT NULL AND TRIM(proof_file) != ''
+        """, (user_id,))
+    ])
+
     db = get_db()
     try:
         execute_db("DELETE FROM notifications WHERE user_id = ?", (user_id,))
@@ -6004,6 +6095,9 @@ def delete_employee(user_id):
     except Exception:
         db.rollback()
         raise
+
+    for filename in upload_filenames:
+        delete_uploaded_file_if_unused(filename)
 
     log_activity(session["user_id"], "DELETE EMPLOYEE", f"Deleted employee: {user['full_name']}")
     flash("Employee deleted successfully.", "info")
