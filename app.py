@@ -5328,7 +5328,7 @@ def build_attendance_audit_rows(date_from="", date_to="", employee_id="", source
     if column_exists("activity_logs", "target_user_id"):
         activity_target_expr = "COALESCE(a.target_user_id, a.user_id)"
 
-    params = []
+    params = ["AUTO CLOSE%"]
     where_employee = ""
     if employee_id.isdigit():
         where_employee = f"AND {activity_target_expr} = ?"
@@ -5351,7 +5351,7 @@ def build_attendance_audit_rows(date_from="", date_to="", employee_id="", source
         LEFT JOIN users employee ON employee.id = {activity_target_expr}
         WHERE (
             a.action IN ('TIME IN', 'BREAK START', 'BREAK END', 'TIME OUT', 'CORRECTION REQUEST', 'REVIEW CORRECTION')
-            OR a.action LIKE 'AUTO CLOSE%'
+            OR a.action LIKE ?
         )
         {where_employee}
     """, tuple(params))
