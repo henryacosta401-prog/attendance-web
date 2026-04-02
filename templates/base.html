@@ -1364,6 +1364,117 @@ document.addEventListener("DOMContentLoaded", function () {
         }, 450);
     }
 });
+
+document.addEventListener("DOMContentLoaded", function () {
+    const storageKey = "attendance-scroll-restore";
+    const restoreMaxAgeMs = 10 * 60 * 1000;
+
+    function findScrollTarget(element) {
+        if (!element) return "";
+        if (element.dataset && element.dataset.scrollTarget) {
+            return element.dataset.scrollTarget;
+        }
+
+        if (element instanceof HTMLAnchorElement && element.hash) {
+            return element.hash;
+        }
+
+        const targetContainer = element.closest("[data-scroll-section], section[id], [id]");
+        if (!targetContainer) return "";
+        if (targetContainer.dataset && targetContainer.dataset.scrollSection) {
+            return targetContainer.dataset.scrollSection;
+        }
+        return targetContainer.id ? `#${targetContainer.id}` : "";
+    }
+
+    function storeScrollState(element, options) {
+        const config = options || {};
+        const payload = {
+            path: window.location.pathname,
+            search: window.location.search,
+            scrollY: window.scrollY,
+            target: findScrollTarget(element),
+            mode: config.mode || "path",
+            savedAt: Date.now(),
+        };
+        sessionStorage.setItem(storageKey, JSON.stringify(payload));
+    }
+
+    const savedRaw = sessionStorage.getItem(storageKey);
+    if (savedRaw) {
+        try {
+            const saved = JSON.parse(savedRaw);
+            const isFresh = saved && saved.savedAt && (Date.now() - saved.savedAt) <= restoreMaxAgeMs;
+            const pathMatches = saved && saved.path === window.location.pathname;
+            const searchMatches = saved && saved.search === window.location.search;
+            const canRestore = saved && isFresh && pathMatches && (saved.mode === "path" || searchMatches);
+
+            if (canRestore) {
+                sessionStorage.removeItem(storageKey);
+                requestAnimationFrame(function () {
+                    const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+                    const desiredY = Math.min(Math.max(Number(saved.scrollY) || 0, 0), maxScroll);
+                    window.scrollTo({ top: desiredY, behavior: "auto" });
+
+                    if (saved.target) {
+                        const target = document.querySelector(saved.target);
+                        if (target && Math.abs(target.getBoundingClientRect().top) > window.innerHeight * 0.8) {
+                            target.scrollIntoView({ block: "start", behavior: "auto" });
+                        }
+                    }
+                });
+            } else {
+                sessionStorage.removeItem(storageKey);
+            }
+        } catch (error) {
+            sessionStorage.removeItem(storageKey);
+        }
+    }
+
+    document.querySelectorAll("form").forEach(function (form) {
+        form.addEventListener("submit", function () {
+            if (form.dataset.preserveScroll === "off") {
+                return;
+            }
+            const method = (form.getAttribute("method") || "get").toLowerCase();
+            if (method === "post" || form.dataset.preserveScroll === "on") {
+                storeScrollState(form, { mode: "path" });
+            }
+        });
+    });
+
+    document.querySelectorAll("a[href]").forEach(function (anchor) {
+        anchor.addEventListener("click", function () {
+            if (anchor.dataset.preserveScroll === "off") {
+                return;
+            }
+            if (anchor.target && anchor.target !== "_self") {
+                return;
+            }
+
+            let resolvedUrl;
+            try {
+                resolvedUrl = new URL(anchor.href, window.location.href);
+            } catch (error) {
+                return;
+            }
+
+            if (resolvedUrl.origin !== window.location.origin) {
+                return;
+            }
+
+            if (anchor.dataset.preserveScroll === "on" || resolvedUrl.pathname === window.location.pathname) {
+                storeScrollState(anchor, { mode: "path" });
+            }
+        });
+    });
+
+    document.querySelectorAll("button[data-preserve-scroll][type='button']").forEach(function (element) {
+        element.addEventListener("click", function () {
+            storeScrollState(element, { mode: "path" });
+        });
+    });
+});
 </script>
 </body>
 </html>

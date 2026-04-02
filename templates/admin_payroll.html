@@ -12,6 +12,23 @@
 {% block extra_head %}
 <style>
 .payroll-shell { display: grid; gap: 20px; }
+.payroll-jump-links { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 4px; }
+.payroll-jump-link {
+    display: inline-flex;
+    align-items: center;
+    padding: 10px 14px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    color: #dbeafe;
+    font-size: 13px;
+    font-weight: 800;
+    transition: 0.18s ease;
+}
+.payroll-jump-link:hover {
+    transform: translateY(-1px);
+    background: rgba(255,255,255,0.10);
+}
 .payroll-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
 .payroll-card,
 .payroll-panel,
@@ -126,6 +143,13 @@
 .payroll-pill-active { background: rgba(16, 185, 129, 0.18); color: #86efac; }
 .payroll-pill-paused { background: rgba(148, 163, 184, 0.18); color: #cbd5e1; }
 .payroll-pill-recurring { background: rgba(59, 130, 246, 0.16); color: #bfdbfe; }
+#payroll-build,
+#payroll-current-run,
+#payroll-table-section,
+#payroll-recurring-rules,
+#payroll-one-time-adjustments {
+    scroll-margin-top: 110px;
+}
 @media (max-width: 1240px) {
     .payroll-grid { grid-template-columns: 1fr; }
 }
@@ -152,6 +176,14 @@
 </div>
 
 <div class="payroll-shell">
+    <div class="payroll-jump-links">
+        <a class="payroll-jump-link" href="#payroll-build">Build Payroll</a>
+        <a class="payroll-jump-link" href="#payroll-current-run">Current Run</a>
+        <a class="payroll-jump-link" href="#payroll-table-section">Payroll Table</a>
+        <a class="payroll-jump-link" href="#payroll-recurring-rules">Recurring Rules</a>
+        <a class="payroll-jump-link" href="#payroll-one-time-adjustments">One-Time Adjustments</a>
+    </div>
+
     <div class="payroll-stats">
         <div class="payroll-card"><div class="payroll-label">Final Payroll</div><div class="payroll-value">{{ format_currency(stats.total_final_pay) }}</div><div class="payroll-note">Gross + overtime + allowances - deductions</div></div>
         <div class="payroll-card"><div class="payroll-label">Gross Payroll</div><div class="payroll-value">{{ format_currency(stats.total_gross) }}</div><div class="payroll-note">Base pay from recorded worked hours</div></div>
@@ -162,7 +194,7 @@
     </div>
 
     <div class="payroll-grid">
-        <section class="payroll-panel">
+        <section class="payroll-panel" id="payroll-build">
             <h2 style="margin:0;color:#f8fbff;">Build Payroll View</h2>
             <p class="payroll-subtitle" style="margin-top:6px;">Pick the period and scope first, then save or release exactly the payroll view you are looking at.</p>
             <form method="GET" class="payroll-toolbar">
@@ -234,7 +266,7 @@
                 </div>
             </div>
 
-            <form method="POST" action="{{ url_for('save_payroll_run') }}" style="margin-top:18px;">
+            <form method="POST" action="{{ url_for('save_payroll_run') }}" style="margin-top:18px;" data-preserve-scroll data-scroll-target="#payroll-build">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 {{ payroll_hidden_filters() }}
                 <label>Snapshot Notes</label>
@@ -247,7 +279,7 @@
             </form>
         </section>
 
-        <section class="payroll-run-card">
+        <section class="payroll-run-card" id="payroll-current-run">
             <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
                 <div>
                     <h2 style="margin:0;color:#f8fbff;">Current Payroll Run</h2>
@@ -296,7 +328,7 @@
                 </div>
                 {% if current_run.status == 'Draft' %}
                     <div class="payroll-actions" style="margin-top:16px;">
-                        <form method="POST" action="{{ url_for('delete_payroll_run', payroll_run_id=current_run.id) }}" class="payroll-inline-form" onsubmit="return confirm('Delete this draft payroll snapshot? This cannot be undone.');">
+                        <form method="POST" action="{{ url_for('delete_payroll_run', payroll_run_id=current_run.id) }}" class="payroll-inline-form" onsubmit="return confirm('Delete this draft payroll snapshot? This cannot be undone.');" data-preserve-scroll data-scroll-target="#payroll-current-run">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                             {{ payroll_hidden_filters() }}
                             <button class="btn btn-danger" type="submit">Delete Draft</button>
@@ -314,7 +346,7 @@
                         <p class="payroll-subtitle" style="margin-top:6px;">Quick jump list for draft and released payroll snapshots, plus bulk release for saved draft runs.</p>
                     </div>
                 </div>
-                <form method="POST" action="{{ url_for('bulk_release_payroll_runs') }}">
+                <form method="POST" action="{{ url_for('bulk_release_payroll_runs') }}" data-preserve-scroll data-scroll-target="#payroll-current-run">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     {{ payroll_hidden_filters() }}
                     <div class="payroll-actions" style="margin-top:14px;">
@@ -350,9 +382,9 @@
                                         <div class="payroll-run-helper ready">Released {{ run.released_display }}.</div>
                                     {% endif %}
                                     <div class="payroll-actions" style="margin-top:10px;">
-                                        <a class="btn btn-secondary" href="{{ url_for('admin_payroll', period='custom', date_from=run.date_from, date_to=run.date_to, department=run.department_filter or '', employee_id=run.employee_filter or '') }}">Open Run</a>
+                                        <a class="btn btn-secondary" href="{{ url_for('admin_payroll', period='custom', date_from=run.date_from, date_to=run.date_to, department=run.department_filter or '', employee_id=run.employee_filter or '') }}#payroll-current-run">Open Run</a>
                                         {% if run.status == 'Draft' %}
-                                            <form method="POST" action="{{ url_for('delete_payroll_run', payroll_run_id=run.id) }}" class="payroll-inline-form" onsubmit="return confirm('Delete this draft payroll snapshot? This cannot be undone.');">
+                                            <form method="POST" action="{{ url_for('delete_payroll_run', payroll_run_id=run.id) }}" class="payroll-inline-form" onsubmit="return confirm('Delete this draft payroll snapshot? This cannot be undone.');" data-preserve-scroll data-scroll-target="#payroll-current-run">
                                                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                                 {{ payroll_hidden_filters() }}
                                                 <button class="btn btn-danger" type="submit">Delete Draft</button>
@@ -370,7 +402,7 @@
         </section>
     </div>
 
-    <section class="payroll-panel">
+    <section class="payroll-panel" id="payroll-table-section">
         <h2 style="margin:0;color:#f8fbff;">Payroll Table</h2>
         <p class="payroll-subtitle" style="margin-top:6px;">Final pay is the amount currently ready for export or release in this payroll view.</p>
         <div class="payroll-table-wrap">
@@ -432,18 +464,18 @@
         </div>
     </section>
 
-    <section class="payroll-adjustment-card">
+    <section class="payroll-adjustment-card" id="payroll-recurring-rules">
         <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
             <div>
                 <h2 style="margin:0;color:#f8fbff;">Recurring Payroll Rules</h2>
                 <p class="payroll-subtitle" style="margin-top:6px;">Use recurring rules for deductions or allowances that should be applied automatically. Monthly rules apply once when the payroll period includes the rule start-day anchor.</p>
             </div>
             {% if editing_recurring_rule %}
-                <a class="btn btn-gray" href="{{ url_for('admin_payroll', period=period, date_from=date_from, date_to=date_to, department=department_filter, employee_id=employee_filter) }}">Cancel Edit</a>
+                <a class="btn btn-gray" href="{{ url_for('admin_payroll', period=period, date_from=date_from, date_to=date_to, department=department_filter, employee_id=employee_filter) }}#payroll-recurring-rules">Cancel Edit</a>
             {% endif %}
         </div>
 
-        <form method="POST" action="{{ url_for('save_payroll_recurring_rule') }}" class="payroll-toolbar">
+        <form method="POST" action="{{ url_for('save_payroll_recurring_rule') }}" class="payroll-toolbar" data-preserve-scroll data-scroll-target="#payroll-recurring-rules">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <input type="hidden" name="rule_id" value="{{ editing_recurring_rule.id if editing_recurring_rule else '' }}">
             {{ payroll_hidden_filters() }}
@@ -539,13 +571,13 @@
                                 </td>
                                 <td style="text-align:right;">
                                     <div class="payroll-actions" style="justify-content:flex-end;">
-                                        <a class="btn btn-secondary" href="{{ url_for('admin_payroll', period=period, date_from=date_from, date_to=date_to, department=department_filter, employee_id=employee_filter, edit_recurring_rule=rule.id) }}">Edit</a>
-                                        <form method="POST" action="{{ url_for('toggle_payroll_recurring_rule', rule_id=rule.id) }}" class="payroll-inline-form">
+                                        <a class="btn btn-secondary" href="{{ url_for('admin_payroll', period=period, date_from=date_from, date_to=date_to, department=department_filter, employee_id=employee_filter, edit_recurring_rule=rule.id) }}#payroll-recurring-rules">Edit</a>
+                                        <form method="POST" action="{{ url_for('toggle_payroll_recurring_rule', rule_id=rule.id) }}" class="payroll-inline-form" data-preserve-scroll data-scroll-target="#payroll-recurring-rules">
                                             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                             {{ payroll_hidden_filters() }}
                                             <button class="btn btn-gray" type="submit">{{ 'Pause' if rule.is_active else 'Activate' }}</button>
                                         </form>
-                                        <form method="POST" action="{{ url_for('delete_payroll_recurring_rule', rule_id=rule.id) }}" class="payroll-inline-form" onsubmit="return confirm('Delete this recurring payroll rule?');">
+                                        <form method="POST" action="{{ url_for('delete_payroll_recurring_rule', rule_id=rule.id) }}" class="payroll-inline-form" onsubmit="return confirm('Delete this recurring payroll rule?');" data-preserve-scroll data-scroll-target="#payroll-recurring-rules">
                                             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                             {{ payroll_hidden_filters() }}
                                             <button class="btn btn-danger" type="submit">Delete</button>
@@ -562,7 +594,7 @@
         </div>
     </section>
 
-    <section class="payroll-adjustment-card">
+    <section class="payroll-adjustment-card" id="payroll-one-time-adjustments">
         <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
             <div>
                 <h2 style="margin:0;color:#f8fbff;">One-Time Adjustments</h2>
@@ -570,7 +602,7 @@
             </div>
         </div>
 
-        <form method="POST" action="{{ url_for('add_payroll_adjustment') }}" class="payroll-toolbar">
+        <form method="POST" action="{{ url_for('add_payroll_adjustment') }}" class="payroll-toolbar" data-preserve-scroll data-scroll-target="#payroll-one-time-adjustments">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             {{ payroll_hidden_filters() }}
             <div>
@@ -637,7 +669,7 @@
                                 <td>{{ adjustment.notes or '-' }}</td>
                                 <td>{{ adjustment.created_at }}{% if adjustment.created_by_name %}<div class="payroll-subtext">{{ adjustment.created_by_name }}</div>{% endif %}</td>
                                 <td style="text-align:right;">
-                                    <form method="POST" action="{{ url_for('delete_payroll_adjustment', adjustment_id=adjustment.id) }}" class="payroll-inline-form" onsubmit="return confirm('Remove this payroll adjustment?');">
+                                    <form method="POST" action="{{ url_for('delete_payroll_adjustment', adjustment_id=adjustment.id) }}" class="payroll-inline-form" onsubmit="return confirm('Remove this payroll adjustment?');" data-preserve-scroll data-scroll-target="#payroll-one-time-adjustments">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                         {{ payroll_hidden_filters() }}
                                         <button class="btn btn-danger" type="submit">Delete</button>
