@@ -68,6 +68,33 @@
     background: rgba(15, 23, 42, 0.56);
     border: 1px solid rgba(148, 163, 184, 0.12);
 }
+.payroll-run-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: flex-start;
+}
+.payroll-run-select {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.payroll-run-select input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    accent-color: #3b82f6;
+}
+.payroll-run-helper {
+    margin-top: 8px;
+    color: #9fb0d4;
+    font-size: 12px;
+}
+.payroll-run-helper.ready {
+    color: #86efac;
+}
+.payroll-run-helper.blocked {
+    color: #fca5a5;
+}
 .payroll-summary-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
 .payroll-mini-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }
 .payroll-summary-item {
@@ -231,7 +258,7 @@
                     <div class="payroll-summary-item">
                         <div class="payroll-label">Created By</div>
                         <div class="payroll-highlight" style="margin-top:6px;">{{ current_run.created_by_name or 'Administrator' }}</div>
-                        <div class="payroll-meta" style="margin-top:6px;">Updated {{ current_run.updated_at }}</div>
+                        <div class="payroll-meta" style="margin-top:6px;">Updated {{ current_run.updated_display or current_run.updated_at }}</div>
                     </div>
                     <div class="payroll-summary-item">
                         <div class="payroll-label">Department Scope</div>
@@ -240,8 +267,17 @@
                     </div>
                     <div class="payroll-summary-item">
                         <div class="payroll-label">Release Time</div>
-                        <div class="payroll-highlight" style="margin-top:6px;">{{ current_run.released_at or 'Not released yet' }}</div>
+                        <div class="payroll-highlight" style="margin-top:6px;">{{ current_run.released_display or 'Not released yet' }}</div>
                         <div class="payroll-meta" style="margin-top:6px;">Notes: {{ current_run.notes or 'None' }}</div>
+                        {% if current_run.status != 'Released' %}
+                            <div class="payroll-run-helper {% if current_run.can_release %}ready{% else %}blocked{% endif %}">
+                                {% if current_run.can_release %}
+                                    Ready to release.
+                                {% else %}
+                                    {{ current_run.release_block_reason }}
+                                {% endif %}
+                            </div>
+                        {% endif %}
                     </div>
                 </div>
             {% else %}
@@ -252,30 +288,54 @@
                 <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
                     <div>
                         <h3 style="margin:0;color:#f8fbff;">Recent Payroll Runs</h3>
-                        <p class="payroll-subtitle" style="margin-top:6px;">Quick jump list for draft and released payroll snapshots.</p>
+                        <p class="payroll-subtitle" style="margin-top:6px;">Quick jump list for draft and released payroll snapshots, plus bulk release for saved draft runs.</p>
                     </div>
                 </div>
-                <div class="payroll-run-list">
-                    {% if recent_runs %}
-                        {% for run in recent_runs %}
-                            <div class="payroll-run-entry">
-                                <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;">
-                                    <div>
-                                        <div class="payroll-highlight">{{ run.date_from }} to {{ run.date_to }}</div>
-                                        <div class="payroll-meta" style="margin-top:4px;">{{ run.department_filter or 'All Departments' }} | {{ run.employee_name or run.employee_filter or 'All Employees' }}</div>
+                <form method="POST" action="{{ url_for('bulk_release_payroll_runs') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    {{ payroll_hidden_filters() }}
+                    <div class="payroll-actions" style="margin-top:14px;">
+                        <button class="btn btn-primary" type="submit">Release Selected Drafts</button>
+                    </div>
+                    <div class="payroll-run-helper">Only saved draft snapshots with employee rows and complete hourly rates can be bulk released.</div>
+                    <div class="payroll-run-list">
+                        {% if recent_runs %}
+                            {% for run in recent_runs %}
+                                <div class="payroll-run-entry">
+                                    <div class="payroll-run-header">
+                                        <div class="payroll-run-select">
+                                            {% if run.status != 'Released' %}
+                                                <input type="checkbox" name="payroll_run_ids" value="{{ run.id }}" {% if not run.can_release %}disabled{% endif %}>
+                                            {% endif %}
+                                            <div>
+                                                <div class="payroll-highlight">{{ run.period_label }}</div>
+                                                <div class="payroll-meta" style="margin-top:4px;">{{ run.department_filter or 'All Departments' }} | {{ run.employee_name or run.employee_filter or 'All Employees' }}</div>
+                                            </div>
+                                        </div>
+                                        <span class="payroll-run-status {% if run.status == 'Released' %}payroll-run-status-released{% else %}payroll-run-status-draft{% endif %}">{{ run.status }}</span>
                                     </div>
-                                    <span class="payroll-run-status {% if run.status == 'Released' %}payroll-run-status-released{% else %}payroll-run-status-draft{% endif %}">{{ run.status }}</span>
+                                    <div class="payroll-meta" style="margin-top:10px;">{{ run.item_count }} item(s) | Updated {{ run.updated_display or run.updated_at }}{% if run.created_by_name %} | {{ run.created_by_name }}{% endif %}</div>
+                                    {% if run.status != 'Released' %}
+                                        <div class="payroll-run-helper {% if run.can_release %}ready{% else %}blocked{% endif %}">
+                                            {% if run.can_release %}
+                                                Ready for release.
+                                            {% else %}
+                                                {{ run.release_block_reason }}
+                                            {% endif %}
+                                        </div>
+                                    {% elif run.released_display %}
+                                        <div class="payroll-run-helper ready">Released {{ run.released_display }}.</div>
+                                    {% endif %}
+                                    <div class="payroll-actions" style="margin-top:10px;">
+                                        <a class="btn btn-secondary" href="{{ url_for('admin_payroll', period='custom', date_from=run.date_from, date_to=run.date_to, department=run.department_filter or '', employee_id=run.employee_filter or '') }}">Open Run</a>
+                                    </div>
                                 </div>
-                                <div class="payroll-meta" style="margin-top:10px;">{{ run.item_count }} item(s) | Updated {{ run.updated_at }}{% if run.created_by_name %} | {{ run.created_by_name }}{% endif %}</div>
-                                <div class="payroll-actions" style="margin-top:10px;">
-                                    <a class="btn btn-secondary" href="{{ url_for('admin_payroll', period='custom', date_from=run.date_from, date_to=run.date_to, department=run.department_filter or '', employee_id=run.employee_filter or '') }}">Open Run</a>
-                                </div>
-                            </div>
-                        {% endfor %}
-                    {% else %}
-                        <div class="payroll-empty">No payroll runs have been saved yet.</div>
-                    {% endif %}
-                </div>
+                            {% endfor %}
+                        {% else %}
+                            <div class="payroll-empty">No payroll runs have been saved yet.</div>
+                        {% endif %}
+                    </div>
+                </form>
             </div>
         </section>
     </div>

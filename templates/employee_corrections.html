@@ -1,126 +1,430 @@
 {% extends "base.html" %}
 {% block title %}Correction Requests{% endblock %}
 
+{% block extra_head %}
+<style>
+.correction-shell {
+    display: grid;
+    gap: 20px;
+}
+
+.correction-stats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.correction-stat-card,
+.correction-panel,
+.correction-request-card,
+.correction-balance-card {
+    border-radius: 24px;
+    background: linear-gradient(180deg, rgba(20, 31, 52, 0.96), rgba(13, 21, 38, 0.94));
+    border: 1px solid rgba(255,255,255,0.10);
+    box-shadow: 0 20px 38px rgba(0,0,0,0.24);
+}
+
+.correction-stat-card,
+.correction-panel,
+.correction-request-card,
+.correction-balance-card {
+    padding: 20px;
+}
+
+.correction-stat-label,
+.correction-kicker,
+.correction-meta-label {
+    color: #9fb0d4;
+    font-size: 12px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.correction-stat-value {
+    margin-top: 8px;
+    color: #ffffff;
+    font-size: 30px;
+    font-weight: 900;
+}
+
+.correction-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+    gap: 20px;
+    align-items: start;
+}
+
+.correction-balance-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.correction-balance-card .stat-number {
+    margin-top: 8px;
+    color: #ffffff;
+    font-size: 28px;
+    font-weight: 900;
+}
+
+.correction-form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.correction-request-list {
+    display: grid;
+    gap: 16px;
+}
+
+.correction-request-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+}
+
+.correction-request-title {
+    color: #ffffff;
+    font-size: 24px;
+    font-weight: 900;
+    line-height: 1.05;
+}
+
+.correction-request-subtitle {
+    margin-top: 6px;
+    color: #9fb0d4;
+    font-size: 13px;
+}
+
+.correction-request-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+    margin-top: 16px;
+}
+
+.correction-block {
+    padding: 14px 16px;
+    border-radius: 18px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+}
+
+.correction-detail-list {
+    display: grid;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.correction-detail-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+}
+
+.correction-detail-row span:first-child {
+    color: #9fb0d4;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.correction-detail-row span:last-child {
+    color: #ffffff;
+    font-weight: 800;
+    text-align: right;
+}
+
+.correction-timeline {
+    display: grid;
+    gap: 12px;
+    margin-top: 16px;
+}
+
+.correction-step {
+    display: grid;
+    grid-template-columns: 14px minmax(0, 1fr);
+    gap: 12px;
+    align-items: start;
+}
+
+.correction-step-dot {
+    width: 14px;
+    height: 14px;
+    border-radius: 999px;
+    margin-top: 4px;
+    background: rgba(148,163,184,0.45);
+    box-shadow: 0 0 0 4px rgba(148,163,184,0.10);
+}
+
+.correction-step-dot.done { background: #60a5fa; box-shadow: 0 0 0 4px rgba(96,165,250,0.14); }
+.correction-step-dot.current { background: #fbbf24; box-shadow: 0 0 0 4px rgba(251,191,36,0.14); }
+.correction-step-dot.approved { background: #34d399; box-shadow: 0 0 0 4px rgba(52,211,153,0.14); }
+.correction-step-dot.rejected { background: #f87171; box-shadow: 0 0 0 4px rgba(248,113,113,0.14); }
+
+.correction-step-label {
+    color: #ffffff;
+    font-weight: 800;
+}
+
+.correction-step-detail {
+    margin-top: 4px;
+    color: #9fb0d4;
+    font-size: 13px;
+    line-height: 1.45;
+}
+
+.correction-response {
+    margin-top: 16px;
+    padding: 16px;
+    border-radius: 18px;
+    border: 1px solid rgba(255,255,255,0.08);
+}
+
+.correction-response.yellow { background: rgba(245, 158, 11, 0.10); }
+.correction-response.green { background: rgba(16, 185, 129, 0.10); }
+.correction-response.red { background: rgba(239, 68, 68, 0.10); }
+.correction-response.gray { background: rgba(148, 163, 184, 0.10); }
+
+.correction-response-title {
+    color: #ffffff;
+    font-weight: 900;
+}
+
+.correction-response-copy {
+    margin-top: 6px;
+    color: #dbeafe;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.correction-note-box {
+    margin-top: 10px;
+    color: #9fb0d4;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+@media (max-width: 1180px) {
+    .correction-layout,
+    .correction-stats {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 760px) {
+    .correction-form-grid,
+    .correction-balance-grid,
+    .correction-request-grid {
+        grid-template-columns: 1fr;
+    }
+}
+</style>
+{% endblock %}
+
 {% block content %}
-<div class="hero-card" style="margin-bottom:20px;">
-    <div class="hero">
-        <div>
-            <h1>Correction Requests</h1>
-            <p class="section-subtitle">Submit attendance corrections, undertime requests, sick leave, or paid leave for a specific date.</p>
+<div class="correction-shell">
+    <div class="hero-card">
+        <div class="hero">
+            <div>
+                <h1>Correction Tracker</h1>
+                <p class="section-subtitle">Submit attendance corrections, leave requests, and undertime requests, then track each one from submission through final review.</p>
+            </div>
+            <div class="status status-purple">Employee Requests</div>
         </div>
-        <div class="status status-purple">Employee Requests</div>
-    </div>
-</div>
-
-<div class="grid grid-2">
-    <div class="card">
-        <div class="section-title">Submit Request</div>
-        <div class="grid grid-2" style="margin-bottom:14px; gap:12px;">
-            <div class="stat-box">
-                <div class="stat-label">Sick Leave Balance</div>
-                <div class="stat-number">{{ leave_summary.sick_remaining }}/{{ leave_summary.sick_total }}</div>
-                <div class="small muted">{{ leave_summary.sick_used }} used in {{ leave_summary.year }}</div>
-            </div>
-            <div class="stat-box">
-                <div class="stat-label">Paid Leave Balance</div>
-                <div class="stat-number">{{ leave_summary.paid_remaining }}/{{ leave_summary.paid_total }}</div>
-                <div class="small muted">{{ leave_summary.paid_used }} used in {{ leave_summary.year }}</div>
-            </div>
-        </div>
-        <form method="POST">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <label>Request Type</label>
-            <select name="request_type" class="input" required>
-                <option value="">Select type</option>
-                <option>Missed Time In</option>
-                <option>Missed Time Out</option>
-                <option>Wrong Break</option>
-                <option>Wrong Proof</option>
-                <option>Undertime</option>
-                <option>Sick Leave</option>
-                <option>Paid Leave</option>
-                <option>Other</option>
-            </select>
-
-            <label style="display:block; margin-top:12px;">Work Date / Leave Start</label>
-            <input type="date" name="work_date" class="input" required>
-
-            <div id="leave-end-wrap" style="margin-top:12px; display:none;">
-                <label>Leave End Date</label>
-                <input type="date" name="end_work_date" class="input">
-                <div class="small muted" style="margin-top:6px;">Leave requests can cover multiple days.</div>
-            </div>
-
-            <div class="grid grid-2" style="margin-top:12px; gap:12px;">
-                <div>
-                    <label>Requested Time In</label>
-                    <input type="time" name="requested_time_in" class="input">
-                </div>
-                <div>
-                    <label>Requested Time Out</label>
-                    <input type="time" name="requested_time_out" class="input">
-                </div>
-                <div>
-                    <label>Requested Break Start</label>
-                    <input type="time" name="requested_break_start" class="input">
-                </div>
-                <div>
-                    <label>Requested Break End</label>
-                    <input type="time" name="requested_break_end" class="input">
-                </div>
-            </div>
-
-            <label style="display:block; margin-top:12px;">Details</label>
-            <textarea name="message" class="textarea" rows="5" placeholder="Explain the correction, undertime reason, or leave details..." required></textarea>
-
-            <button class="btn btn-primary" type="submit" style="width:100%; margin-top:16px;">Submit Request</button>
-        </form>
     </div>
 
-    <div class="card soft">
-        <div class="section-title">My Requests</div>
-        {% if requests %}
-            <div class="table-wrap">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Type</th>
-                            <th>Date</th>
-                            <th>Requested Times</th>
-                            <th>Status</th>
-                            <th>Applied</th>
-                            <th>Admin Note</th>
-                            <th>Created</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for item in requests %}
-                        <tr>
-                            <td>{{ item.request_type }}</td>
-                            <td>{{ item.display_date_range }}{% if item.requested_days > 1 %}<div class="small muted">{{ item.requested_days }} days</div>{% endif %}</td>
-                            <td>
-                                {% if item.requested_time_in or item.requested_break_start or item.requested_break_end or item.requested_time_out %}
-                                    <div class="small">In: {{ item.requested_time_in and format_time_12h(item.requested_time_in) or '-' }}</div>
-                                    <div class="small">Break: {{ item.requested_break_start and format_time_12h(item.requested_break_start) or '-' }} to {{ item.requested_break_end and format_time_12h(item.requested_break_end) or '-' }}</div>
-                                    <div class="small">Out: {{ item.requested_time_out and format_time_12h(item.requested_time_out) or '-' }}</div>
-                                {% else %}
-                                    -
+    <section class="correction-stats">
+        <div class="correction-stat-card">
+            <div class="correction-stat-label">Total Requests</div>
+            <div class="correction-stat-value">{{ request_summary.total }}</div>
+        </div>
+        <div class="correction-stat-card">
+            <div class="correction-stat-label">Pending</div>
+            <div class="correction-stat-value">{{ request_summary.pending }}</div>
+        </div>
+        <div class="correction-stat-card">
+            <div class="correction-stat-label">Approved</div>
+            <div class="correction-stat-value">{{ request_summary.approved }}</div>
+        </div>
+        <div class="correction-stat-card">
+            <div class="correction-stat-label">Rejected</div>
+            <div class="correction-stat-value">{{ request_summary.rejected }}</div>
+        </div>
+    </section>
+
+    <div class="correction-layout">
+        <section class="correction-panel">
+            <div class="section-title" style="margin-bottom:10px;">Submit Request</div>
+            <div class="section-subtitle" style="margin-bottom:16px;">Use this form for missed attendance, wrong break times, undertime, or leave requests. Leave requests can cover multiple days.</div>
+
+            <div class="correction-balance-grid">
+                <div class="correction-balance-card">
+                    <div class="correction-kicker">Sick Leave Balance</div>
+                    <div class="stat-number">{{ leave_summary.sick_remaining }}/{{ leave_summary.sick_total }}</div>
+                    <div class="small muted" style="margin-top:6px;">{{ leave_summary.sick_used }} used in {{ leave_summary.year }}</div>
+                </div>
+                <div class="correction-balance-card">
+                    <div class="correction-kicker">Paid Leave Balance</div>
+                    <div class="stat-number">{{ leave_summary.paid_remaining }}/{{ leave_summary.paid_total }}</div>
+                    <div class="small muted" style="margin-top:6px;">{{ leave_summary.paid_used }} used in {{ leave_summary.year }}</div>
+                </div>
+            </div>
+
+            <form method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+                <label>Request Type</label>
+                <select name="request_type" class="input" required>
+                    <option value="">Select type</option>
+                    <option>Missed Time In</option>
+                    <option>Missed Time Out</option>
+                    <option>Wrong Break</option>
+                    <option>Wrong Proof</option>
+                    <option>Undertime</option>
+                    <option>Sick Leave</option>
+                    <option>Paid Leave</option>
+                    <option>Other</option>
+                </select>
+
+                <label style="display:block; margin-top:12px;">Work Date / Leave Start</label>
+                <input type="date" name="work_date" class="input" required>
+
+                <div id="leave-end-wrap" style="margin-top:12px; display:none;">
+                    <label>Leave End Date</label>
+                    <input type="date" name="end_work_date" class="input">
+                    <div class="small muted" style="margin-top:6px;">Leave requests can cover multiple days and will be counted against your balance after approval.</div>
+                </div>
+
+                <div class="correction-form-grid" style="margin-top:12px;">
+                    <div>
+                        <label>Requested Time In</label>
+                        <input type="time" name="requested_time_in" class="input">
+                    </div>
+                    <div>
+                        <label>Requested Time Out</label>
+                        <input type="time" name="requested_time_out" class="input">
+                    </div>
+                    <div>
+                        <label>Requested Break Start</label>
+                        <input type="time" name="requested_break_start" class="input">
+                    </div>
+                    <div>
+                        <label>Requested Break End</label>
+                        <input type="time" name="requested_break_end" class="input">
+                    </div>
+                </div>
+
+                <label style="display:block; margin-top:12px;">Details</label>
+                <textarea name="message" class="textarea" rows="5" placeholder="Explain the issue, the correct timestamps, or the leave reason..." required></textarea>
+
+                <button class="btn btn-primary" type="submit" style="width:100%; margin-top:16px;">Submit Request</button>
+            </form>
+        </section>
+
+        <section class="correction-panel">
+            <div class="section-title" style="margin-bottom:10px;">My Requests</div>
+            <div class="section-subtitle" style="margin-bottom:16px;">Each request shows what you submitted, what is currently on record, and where the review stands.</div>
+
+            {% if requests %}
+                <div class="correction-request-list">
+                    {% for item in requests %}
+                        <article class="correction-request-card">
+                            <div class="correction-request-header">
+                                <div>
+                                    <div class="correction-request-title">{{ item.request_type }}</div>
+                                    <div class="correction-request-subtitle">
+                                        {{ item.display_date_range }}
+                                        {% if item.requested_days > 1 %}
+                                            | {{ item.requested_days }} day(s)
+                                        {% endif %}
+                                        | Submitted {{ item.submitted_display }}
+                                    </div>
+                                </div>
+                                <span class="{{ item.status_chip_class }}">{{ item.status }}</span>
+                            </div>
+
+                            <div class="correction-request-grid">
+                                <div class="correction-block">
+                                    <div class="correction-meta-label">Requested Update</div>
+                                    {% if item.has_requested_time_details %}
+                                        <div class="correction-detail-list">
+                                            {% for detail in item.requested_time_details %}
+                                                <div class="correction-detail-row">
+                                                    <span>{{ detail.label }}</span>
+                                                    <span>{{ detail.value }}</span>
+                                                </div>
+                                            {% endfor %}
+                                        </div>
+                                    {% elif item.is_leave_request %}
+                                        <div class="correction-note-box">This request covers approved leave dates rather than timestamp changes.</div>
+                                    {% else %}
+                                        <div class="correction-note-box">No specific timestamp changes were entered. Admin will review your details note.</div>
+                                    {% endif %}
+                                </div>
+
+                                <div class="correction-block">
+                                    <div class="correction-meta-label">Current Record</div>
+                                    {% if item.has_current_time_details %}
+                                        <div class="correction-detail-list">
+                                            {% for detail in item.current_time_details %}
+                                                <div class="correction-detail-row">
+                                                    <span>{{ detail.label }}</span>
+                                                    <span>{{ detail.value }}</span>
+                                                </div>
+                                            {% endfor %}
+                                        </div>
+                                    {% else %}
+                                        <div class="correction-note-box">No attendance timestamps are currently stored for this date yet.</div>
+                                    {% endif %}
+                                </div>
+                            </div>
+
+                            <div class="correction-block" style="margin-top:14px;">
+                                <div class="correction-meta-label">Your Details</div>
+                                <div class="correction-note-box" style="margin-top:10px;color:#dbeafe;">{{ item.message }}</div>
+                            </div>
+
+                            <div class="correction-timeline">
+                                {% for step in item.timeline_steps %}
+                                    <div class="correction-step">
+                                        <div class="correction-step-dot {{ step.state }}"></div>
+                                        <div>
+                                            <div class="correction-step-label">{{ step.label }}</div>
+                                            <div class="correction-step-detail">{{ step.detail }}</div>
+                                        </div>
+                                    </div>
+                                {% endfor %}
+                            </div>
+
+                            <div class="correction-response {{ item.status_tone }}">
+                                <div class="correction-response-title">{{ item.status_headline }}</div>
+                                <div class="correction-response-copy">{{ item.status_detail }}</div>
+                                {% if item.admin_note %}
+                                    <div class="correction-note-box">Admin note: {{ item.admin_note }}</div>
                                 {% endif %}
-                            </td>
-                            <td>{{ item.status }}</td>
-                            <td>{{ item.applied_changes if item.applied_changes else '-' }}</td>
-                            <td>{{ item.admin_note if item.admin_note else '-' }}</td>
-                            <td>{{ format_datetime_12h(item.created_at) }}</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        {% else %}
-            <p class="muted">No attendance, sick leave, or paid leave requests yet.</p>
-        {% endif %}
+                                {% if item.applied_changes and item.status == 'Approved' %}
+                                    <div class="correction-note-box">Applied changes: {{ item.applied_changes }}</div>
+                                {% endif %}
+                            </div>
+                        </article>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div class="empty-state">
+                    <div class="section-title" style="margin-bottom:8px;">No requests yet</div>
+                    <p class="muted">Your submitted corrections, undertime requests, and leave requests will appear here once you start using the tracker.</p>
+                </div>
+            {% endif %}
+        </section>
     </div>
 </div>
+
 <script>
 (() => {
     const requestType = document.querySelector('select[name="request_type"]');

@@ -3447,6 +3447,49 @@ def get_payroll_run_item_count(payroll_run_id):
     return int(row["cnt"] or 0) if row else 0
 
 
+def get_payroll_run_release_check(payroll_run_id):
+    row = fetchone("""
+        SELECT
+            COUNT(*) AS item_count,
+            SUM(CASE WHEN COALESCE(hourly_rate, 0) <= 0 THEN 1 ELSE 0 END) AS missing_rates
+        FROM payroll_run_items
+        WHERE payroll_run_id = ?
+    """, (payroll_run_id,))
+    row_data = dict(row) if row else {}
+    item_count = int(row_data.get("item_count") or 0)
+    missing_rates = int(row_data.get("missing_rates") or 0)
+    can_release = item_count > 0 and missing_rates == 0
+    blocked_reason = ""
+    if item_count <= 0:
+        blocked_reason = "No employee rows were saved in this snapshot."
+    elif missing_rates > 0:
+        blocked_reason = f"{missing_rates} employee row(s) are still missing hourly rates."
+    return {
+        "item_count": item_count,
+        "missing_rates": missing_rates,
+        "can_release": can_release,
+        "release_block_reason": blocked_reason,
+    }
+
+
+def enrich_admin_payroll_run(row):
+    if not row:
+        return None
+
+    item = dict(row)
+    item.update(get_payroll_run_release_check(item["id"]))
+    item["period_label"] = format_payroll_period_label(item.get("date_from"), item.get("date_to"))
+    item["released_display"] = format_datetime_12h(item.get("released_at")) if item.get("released_at") else ""
+    item["updated_display"] = format_datetime_12h(item.get("updated_at")) if item.get("updated_at") else ""
+
+    employee_name = ""
+    if (item.get("employee_filter") or "").isdigit():
+        employee = get_user_by_id(int(item["employee_filter"]))
+        employee_name = employee["full_name"] if employee else ""
+    item["employee_name"] = employee_name
+    return item
+
+
 def get_recent_payroll_runs(limit=8):
     rows = fetchall("""
         SELECT pr.*, creator.full_name AS created_by_name
@@ -3457,14 +3500,7 @@ def get_recent_payroll_runs(limit=8):
     """, (limit,))
     enriched = []
     for row in rows:
-        item = dict(row)
-        item["item_count"] = get_payroll_run_item_count(item["id"])
-        employee_name = ""
-        if (item.get("employee_filter") or "").isdigit():
-            employee = get_user_by_id(int(item["employee_filter"]))
-            employee_name = employee["full_name"] if employee else ""
-        item["employee_name"] = employee_name
-        enriched.append(item)
+        enriched.append(enrich_admin_payroll_run(row))
     return enriched
 
 
@@ -4879,7 +4915,14 @@ def employee_corrections():
 
     requests = get_correction_requests(user_id=user["id"])
     leave_summary = get_leave_balance_summary(user)
-    return render_template("employee_corrections.html", requests=requests, leave_summary=leave_summary)
+    request_summary = build_correction_request_summary(requests)
+    return render_template(
+        "employee_corrections.html",
+        user=user,
+        requests=requests,
+        leave_summary=leave_summary,
+        request_summary=request_summary
+    )
 
 
 @app.route("/time-in", methods=["POST"])
@@ -5403,6 +5446,91 @@ def notify_admins_for_exceptions(exception_groups):
         )
 
 
+def build_correction_time_details(item, current=False):
+    prefix = "current_" if current else "requested_"
+    entries = []
+
+    field_specs = [
+        ("time_in", "Time In"),
+        ("break_start", "Break Start"),
+        ("break_end", "Break End"),
+        ("time_out", "Time Out"),
+    ]
+    for field_name, label in field_specs:
+        raw_value = item.get(f"{prefix}{field_name}")
+        if not raw_value:
+            continue
+        entries.append({
+            "label": label,
+            "value": format_time_12h(raw_value),
+        })
+
+    return entries
+
+
+def build_correction_request_summary(rows):
+    return {
+        "total": len(rows),
+        "pending": len([row for row in rows if row.get("status") == "Pending"]),
+        "approved": len([row for row in rows if row.get("status") == "Approved"]),
+        "rejected": len([row for row in rows if row.get("status") == "Rejected"]),
+        "leave": len([row for row in rows if row.get("request_type") in LEAVE_REQUEST_TYPES]),
+    }
+
+
+def enrich_correction_request_tracking(item):
+    item["submitted_display"] = format_datetime_12h(item.get("created_at")) if item.get("created_at") else ""
+    item["reviewed_display"] = format_datetime_12h(item.get("reviewed_at")) if item.get("reviewed_at") else ""
+    item["requested_time_details"] = build_correction_time_details(item, current=False)
+    item["current_time_details"] = build_correction_time_details(item, current=True)
+    item["has_requested_time_details"] = bool(item["requested_time_details"])
+    item["has_current_time_details"] = bool(item["current_time_details"])
+    item["is_leave_request"] = item.get("request_type") in LEAVE_REQUEST_TYPES
+    item["status_tone"] = {
+        "Pending": "yellow",
+        "Approved": "green",
+        "Rejected": "red",
+    }.get(item.get("status"), "gray")
+    item["status_chip_class"] = {
+        "Pending": "status status-yellow",
+        "Approved": "status status-green",
+        "Rejected": "status status-red",
+    }.get(item.get("status"), "status status-gray")
+    item["status_headline"] = {
+        "Pending": "Waiting for admin review",
+        "Approved": "Approved and recorded",
+        "Rejected": "Reviewed and declined",
+    }.get(item.get("status"), "Request status unavailable")
+
+    if item["status"] == "Approved":
+        status_detail = item.get("applied_changes") or item.get("admin_note") or "Your request was approved."
+    elif item["status"] == "Rejected":
+        status_detail = item.get("admin_note") or "Admin rejected this request."
+    else:
+        status_detail = "Your request is queued for review."
+    item["status_detail"] = status_detail
+
+    review_actor = item.get("reviewed_by_name") or "Admin"
+    item["timeline_steps"] = [
+        {
+            "label": "Submitted",
+            "state": "done",
+            "detail": item["submitted_display"] or "Request created",
+        },
+        {
+            "label": "Under Review",
+            "state": "current" if item.get("status") == "Pending" else "done",
+            "detail": "Waiting for admin review" if item.get("status") == "Pending" else f"{review_actor} on {item['reviewed_display'] or 'reviewed'}",
+        },
+        {
+            "label": "Final Decision",
+            "state": "pending" if item.get("status") == "Pending" else ("approved" if item.get("status") == "Approved" else "rejected"),
+            "detail": status_detail if item.get("status") != "Pending" else "No final decision yet.",
+        },
+    ]
+    return item
+
+
 def get_correction_requests(user_id=None, status="", date_from="", date_to=""):
     sql = """
         SELECT c.*, u.full_name, u.username, reviewer.full_name AS reviewed_by_name
@@ -5465,6 +5593,7 @@ def get_correction_requests(user_id=None, status="", date_from="", date_to=""):
         item["current_break_start_input"] = split_datetime_to_time(item.get("current_break_start"))
         item["current_break_end_input"] = split_datetime_to_time(item.get("current_break_end"))
         item["current_time_out_input"] = split_datetime_to_time(item.get("current_time_out"))
+        enrich_correction_request_tracking(item)
         enriched_rows.append(item)
 
     return enriched_rows
@@ -6292,13 +6421,7 @@ def admin_payroll():
     adjustments = get_payroll_adjustments(date_from, date_to, department_filter=department_filter, employee_filter=employee_filter)
     current_run = get_payroll_run(date_from, date_to, department_filter=department_filter, employee_filter=employee_filter)
     if current_run:
-        current_run = dict(current_run)
-        current_run["item_count"] = get_payroll_run_item_count(current_run["id"])
-        if (current_run.get("employee_filter") or "").isdigit():
-            employee = get_user_by_id(int(current_run["employee_filter"]))
-            current_run["employee_name"] = employee["full_name"] if employee else ""
-        else:
-            current_run["employee_name"] = ""
+        current_run = enrich_admin_payroll_run(current_run)
     recent_runs = get_recent_payroll_runs()
 
     return render_template(
@@ -6459,6 +6582,91 @@ def save_payroll_run():
         f"Payroll {status.lower()} saved for {filters['date_from_text']} to {filters['date_to_text']}.",
         "success"
     )
+    return redirect(url_for("admin_payroll", **redirect_args))
+
+
+@app.route("/admin/payroll/bulk-release", methods=["POST"])
+@login_required(role="admin")
+def bulk_release_payroll_runs():
+    redirect_args = payroll_filter_redirect_args(request.form)
+    raw_ids = request.form.getlist("payroll_run_ids")
+    payroll_run_ids = []
+    seen_ids = set()
+    for raw_id in raw_ids:
+        raw_text = str(raw_id or "").strip()
+        if not raw_text.isdigit():
+            continue
+        run_id = int(raw_text)
+        if run_id in seen_ids:
+            continue
+        seen_ids.add(run_id)
+        payroll_run_ids.append(run_id)
+
+    if not payroll_run_ids:
+        flash("Select at least one draft payroll run to bulk release.", "warning")
+        return redirect(url_for("admin_payroll", **redirect_args))
+
+    placeholders = ", ".join(["?"] * len(payroll_run_ids))
+    runs = [
+        enrich_admin_payroll_run(row)
+        for row in fetchall(f"""
+            SELECT pr.*, creator.full_name AS created_by_name
+            FROM payroll_runs pr
+            LEFT JOIN users creator ON creator.id = pr.created_by
+            WHERE pr.id IN ({placeholders})
+            ORDER BY pr.id DESC
+        """, tuple(payroll_run_ids))
+    ]
+    run_map = {int(run["id"]): run for run in runs}
+
+    releasable_runs = []
+    skipped_messages = []
+    for requested_run_id in payroll_run_ids:
+        run = run_map.get(requested_run_id)
+        if not run:
+            skipped_messages.append(f"Run #{requested_run_id} was not found.")
+            continue
+        if run["status"] == "Released":
+            skipped_messages.append(f"{run['period_label']} was already released.")
+            continue
+        if not run["can_release"]:
+            skipped_messages.append(f"{run['period_label']} was skipped: {run['release_block_reason']}")
+            continue
+        releasable_runs.append(run)
+
+    if not releasable_runs:
+        flash("None of the selected payroll runs were eligible for release.", "warning")
+        for message in skipped_messages[:4]:
+            flash(message, "info")
+        return redirect(url_for("admin_payroll", **redirect_args))
+
+    timestamp = now_str()
+    db = get_db()
+    try:
+        for run in releasable_runs:
+            execute_db("""
+                UPDATE payroll_runs
+                SET status = 'Released',
+                    updated_at = ?,
+                    released_at = ?
+                WHERE id = ?
+            """, (timestamp, timestamp, run["id"]))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    released_labels = ", ".join(run["period_label"] for run in releasable_runs[:3])
+    if len(releasable_runs) > 3:
+        released_labels += f", and {len(releasable_runs) - 3} more"
+    log_activity(
+        session["user_id"],
+        "BULK RELEASE PAYROLL",
+        f"Released {len(releasable_runs)} payroll run(s): {released_labels}"
+    )
+    flash(f"Released {len(releasable_runs)} payroll run(s).", "success")
+    for message in skipped_messages[:4]:
+        flash(message, "info")
     return redirect(url_for("admin_payroll", **redirect_args))
 
 
