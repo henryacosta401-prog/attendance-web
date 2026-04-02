@@ -54,6 +54,49 @@
     </div>
 </div>
 
+<div class="card" style="margin-top:18px;">
+    <h3 style="margin-top:0;">Log Cleanup</h3>
+    <p class="muted">Use this to reduce old operational logs without deleting important business records like attendance, payroll, employee accounts, incidents, or disciplinary history.</p>
+
+    <div class="grid grid-4" style="margin-top:16px;">
+        <div class="stat-box">
+            <div class="stat-label">Activity Logs</div>
+            <div class="stat-number">{{ cleanup_summary.activity_logs }}</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Scanner Logs</div>
+            <div class="stat-number">{{ cleanup_summary.scanner_logs }}</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Login Attempts</div>
+            <div class="stat-number">{{ cleanup_summary.login_attempts }}</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Read Notifications</div>
+            <div class="stat-number">{{ cleanup_summary.read_notifications }}</div>
+        </div>
+    </div>
+
+    <div class="small muted" style="margin-top:14px;">
+        Cleanup removes only:
+        activity logs, scanner logs, login attempts, and notifications that are already marked as read.
+        Unread notifications and core payroll/attendance data are kept.
+    </div>
+
+    <div class="top-actions" style="margin-top:16px; gap:12px; flex-wrap:wrap;">
+        <form method="POST" style="margin:0;" onsubmit="return confirm('Delete old logs and read notifications older than 7 days? Core attendance and payroll data will be kept.');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="action" value="cleanup_logs_weekly">
+            <button class="btn btn-warning" type="submit">Weekly Cleanup</button>
+        </form>
+        <form method="POST" style="margin:0;" onsubmit="return confirm('Delete old logs and read notifications older than 30 days? Core attendance and payroll data will be kept.');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="action" value="cleanup_logs_monthly">
+            <button class="btn btn-primary" type="submit">Monthly Cleanup</button>
+        </form>
+    </div>
+</div>
+
 <div class="card" style="margin-top:18px; border-color:rgba(239,68,68,0.28); background:linear-gradient(180deg, rgba(78, 20, 20, 0.18), rgba(255,255,255,0.04));">
     <h3 style="margin-top:0;">Go-Live Reset</h3>
     <p class="muted">Use this only when you are ready to start permanent use with clean records.</p>

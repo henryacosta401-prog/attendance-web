@@ -2885,6 +2885,80 @@ def perform_go_live_reset():
     }
 
 
+def get_log_cleanup_summary():
+    summary = {
+        "activity_logs": 0,
+        "scanner_logs": 0,
+        "login_attempts": 0,
+        "read_notifications": 0,
+    }
+    count_queries = {
+        "activity_logs": "SELECT COUNT(*) AS cnt FROM activity_logs",
+        "scanner_logs": "SELECT COUNT(*) AS cnt FROM scanner_logs",
+        "login_attempts": "SELECT COUNT(*) AS cnt FROM login_attempts",
+        "read_notifications": "SELECT COUNT(*) AS cnt FROM notifications WHERE COALESCE(is_read, 0) = 1",
+    }
+    for key, query in count_queries.items():
+        row = fetchone(query)
+        summary[key] = int((dict(row)["cnt"] if row else 0) or 0)
+    summary["total_cleanup_targets"] = (
+        summary["activity_logs"]
+        + summary["scanner_logs"]
+        + summary["login_attempts"]
+        + summary["read_notifications"]
+    )
+    return summary
+
+
+def perform_log_retention_cleanup(retention_days):
+    retention_days = int(retention_days or 0)
+    if retention_days <= 0:
+        raise ValueError("Retention days must be greater than zero.")
+
+    cutoff_dt = now_dt() - timedelta(days=retention_days)
+    cutoff_text = cutoff_dt.strftime("%Y-%m-%d %H:%M:%S")
+    db = get_db()
+    removed_counts = {
+        "activity_logs": 0,
+        "scanner_logs": 0,
+        "login_attempts": 0,
+        "read_notifications": 0,
+    }
+
+    delete_specs = [
+        ("activity_logs", "DELETE FROM activity_logs WHERE created_at < ?"),
+        ("scanner_logs", "DELETE FROM scanner_logs WHERE created_at < ?"),
+        ("login_attempts", "DELETE FROM login_attempts WHERE attempted_at < ?"),
+        ("read_notifications", "DELETE FROM notifications WHERE COALESCE(is_read, 0) = 1 AND created_at < ?"),
+    ]
+
+    try:
+        if using_postgres():
+            with db.cursor() as cur:
+                for key, query in delete_specs:
+                    cur.execute(convert_query(query), (cutoff_text,))
+                    removed_counts[key] = max(cur.rowcount or 0, 0)
+            db.commit()
+        else:
+            for key, query in delete_specs:
+                cur = db.execute(query, (cutoff_text,))
+                removed_counts[key] = max(cur.rowcount or 0, 0)
+            db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    removed_counts["cutoff_text"] = cutoff_text
+    removed_counts["retention_days"] = retention_days
+    removed_counts["total_removed"] = (
+        removed_counts["activity_logs"]
+        + removed_counts["scanner_logs"]
+        + removed_counts["login_attempts"]
+        + removed_counts["read_notifications"]
+    )
+    return removed_counts
+
+
 def get_employee_break_limit(user_row):
     if not user_row:
         return BREAK_LIMIT_MINUTES
@@ -7818,6 +7892,26 @@ def admin_data_tools():
             except ValueError as exc:
                 flash(str(exc), "danger")
             return redirect(url_for("admin_data_tools", search=search))
+        if action in {"cleanup_logs_weekly", "cleanup_logs_monthly"}:
+            retention_days = 7 if action == "cleanup_logs_weekly" else 30
+            try:
+                result = perform_log_retention_cleanup(retention_days)
+                log_activity(
+                    session["user_id"],
+                    "CLEANUP LOGS",
+                    f"Removed {result['total_removed']} old log row(s) older than {retention_days} day(s)."
+                )
+                flash(
+                    "Cleanup completed. Removed "
+                    f"{result['activity_logs']} activity log(s), "
+                    f"{result['scanner_logs']} scanner log(s), "
+                    f"{result['login_attempts']} login attempt row(s), and "
+                    f"{result['read_notifications']} read notification(s) older than {retention_days} day(s).",
+                    "success"
+                )
+            except ValueError as exc:
+                flash(str(exc), "danger")
+            return redirect(url_for("admin_data_tools", search=search))
         if action == "go_live_reset":
             confirmation = request.form.get("confirmation_text", "").strip().upper()
             if confirmation != "RESET":
@@ -7861,11 +7955,13 @@ def admin_data_tools():
 
     candidates = get_suspicious_attendance_records(search=search, limit=60)
     backups = get_backup_files(limit=12)
+    cleanup_summary = get_log_cleanup_summary()
     return render_template(
         "admin_data_tools.html",
         candidates=candidates,
         backups=backups,
         search=search,
+        cleanup_summary=cleanup_summary,
         using_postgres_reset=using_postgres(),
         format_datetime_12h=format_datetime_12h,
         minutes_to_hm=minutes_to_hm
