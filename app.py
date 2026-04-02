@@ -4,6 +4,7 @@ import os
 import secrets
 import shutil
 import sqlite3
+import textwrap
 from io import BytesIO
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -3540,6 +3541,211 @@ def enrich_employee_payroll_item(row, current_user_id=None):
     return item
 
 
+def pdf_escape_text(value):
+    text = str(value or "")
+    text = text.replace("\r", " ").replace("\n", " ")
+    text = text.encode("latin-1", "replace").decode("latin-1")
+    return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+def pdf_wrap_lines(value, width):
+    text = str(value or "").strip()
+    if not text:
+        return [""]
+    return textwrap.wrap(text, width=width) or [text]
+
+
+def build_employee_payslip_pdf_filename(payslip):
+    base_name = secure_filename(
+        f"{payslip.get('full_name', 'employee')}_{payslip.get('date_from', '')}_{payslip.get('date_to', '')}_payslip.pdf"
+    )
+    return base_name or "employee_payslip.pdf"
+
+
+def build_employee_payslip_pdf_bytes(payslip):
+    page_width = 612
+    page_height = 792
+    margin = 42
+    content_width = page_width - (margin * 2)
+
+    commands = []
+
+    def add_fill_color(r, g, b):
+        commands.append(f"{r:.3f} {g:.3f} {b:.3f} rg")
+
+    def add_stroke_color(r, g, b):
+        commands.append(f"{r:.3f} {g:.3f} {b:.3f} RG")
+
+    def add_rect(x, y, width, height, fill_rgb=None, stroke_rgb=None, line_width=1):
+        if fill_rgb:
+            add_fill_color(*fill_rgb)
+        if stroke_rgb:
+            add_stroke_color(*stroke_rgb)
+            commands.append(f"{line_width:.2f} w")
+        commands.append(f"{x:.2f} {y:.2f} {width:.2f} {height:.2f} re")
+        if fill_rgb and stroke_rgb:
+            commands.append("B")
+        elif fill_rgb:
+            commands.append("f")
+        else:
+            commands.append("S")
+
+    def add_text(x, y, text, size=11, font="F1", rgb=(0.12, 0.16, 0.25)):
+        safe_text = pdf_escape_text(text)
+        add_fill_color(*rgb)
+        commands.append(f"BT /{font} {size:.2f} Tf 1 0 0 1 {x:.2f} {y:.2f} Tm ({safe_text}) Tj ET")
+
+    def add_wrapped_text(x, y, text, width_chars, size=10, font="F1", rgb=(0.12, 0.16, 0.25), leading=13, max_lines=None):
+        lines = pdf_wrap_lines(text, width_chars)
+        if max_lines and len(lines) > max_lines:
+            lines = lines[:max_lines]
+            lines[-1] = lines[-1].rstrip(". ") + "..."
+        current_y = y
+        for line in lines:
+            add_text(x, current_y, line, size=size, font=font, rgb=rgb)
+            current_y -= leading
+        return current_y
+
+    brand_blue = (0.10, 0.20, 0.42)
+    panel_fill = (0.95, 0.97, 0.99)
+    panel_border = (0.83, 0.87, 0.93)
+    label_color = (0.37, 0.47, 0.62)
+    body_color = (0.12, 0.16, 0.25)
+
+    # Header
+    add_rect(margin, page_height - 92, content_width, 50, fill_rgb=brand_blue)
+    add_text(margin + 16, page_height - 64, "STELLAR SEATS", size=20, font="F2", rgb=(1, 1, 1))
+    add_text(margin + 16, page_height - 80, "Employee Payslip", size=10, font="F1", rgb=(0.87, 0.92, 1))
+    add_text(margin + content_width - 190, page_height - 64, payslip.get("period_label", "Payroll Period"), size=11, font="F2", rgb=(1, 0.93, 0.55))
+    add_text(margin + content_width - 190, page_height - 80, f"{payslip.get('date_from', '')} to {payslip.get('date_to', '')}", size=9, font="F1", rgb=(0.87, 0.92, 1))
+
+    # Summary cards
+    card_gap = 10
+    card_width = (content_width - (card_gap * 3)) / 4
+    card_y = page_height - 180
+    summary_cards = [
+        ("Final Pay", format_currency(payslip.get("final_pay"))),
+        ("Regular Pay", format_currency(payslip.get("gross_pay"))),
+        ("Overtime Pay", format_currency(payslip.get("overtime_pay"))),
+        ("Adjustments", format_currency(payslip.get("adjustment_balance"))),
+    ]
+    for index, (label, value) in enumerate(summary_cards):
+        card_x = margin + index * (card_width + card_gap)
+        add_rect(card_x, card_y, card_width, 64, fill_rgb=panel_fill, stroke_rgb=panel_border)
+        add_text(card_x + 12, card_y + 45, label.upper(), size=8.5, font="F2", rgb=label_color)
+        add_text(card_x + 12, card_y + 20, value, size=16, font="F2", rgb=body_color)
+
+    left_x = margin
+    left_width = 326
+    gap = 14
+    right_x = left_x + left_width + gap
+    right_width = content_width - left_width - gap
+    panel_top = card_y - 18
+    left_height = 290
+    right_height = 230
+
+    add_rect(left_x, panel_top - left_height, left_width, left_height, fill_rgb=panel_fill, stroke_rgb=panel_border)
+    add_rect(right_x, panel_top - right_height, right_width, right_height, fill_rgb=panel_fill, stroke_rgb=panel_border)
+
+    add_text(left_x + 16, panel_top - 24, "Payroll Details", size=13, font="F2", rgb=body_color)
+    add_text(right_x + 16, panel_top - 24, "Pay Breakdown", size=13, font="F2", rgb=body_color)
+
+    detail_rows = [
+        ("Employee", payslip.get("full_name")),
+        ("Department / Position", f"{payslip.get('department', '')} | {payslip.get('position', '')}".strip(" |")),
+        ("Hourly Rate", format_currency(payslip.get("hourly_rate"))),
+        ("Days Worked", payslip.get("days_worked", 0)),
+        ("Regular Hours", f"{float(payslip.get('total_hours') or 0):.2f}"),
+        ("Overtime Hours", f"{float(payslip.get('overtime_hours') or 0):.2f}"),
+        ("Late Minutes", payslip.get("late_minutes", 0)),
+        ("Break Minutes", payslip.get("break_minutes", 0)),
+        ("Suspension Days", payslip.get("suspension_days", 0)),
+        ("Suspension Loss", format_currency(payslip.get("suspension_pay"))),
+        ("Release Scope", payslip.get("scope_label")),
+        ("Released", payslip.get("released_display") or "Released"),
+        ("Prepared By", payslip.get("created_by_name")),
+    ]
+
+    current_y = panel_top - 48
+    for label, value in detail_rows:
+        add_text(left_x + 16, current_y, label.upper(), size=8, font="F2", rgb=label_color)
+        lines = pdf_wrap_lines(value, 30)
+        add_text(left_x + 145, current_y, lines[0], size=9.5, font="F1", rgb=body_color)
+        extra_y = current_y
+        for extra_line in lines[1:2]:
+            extra_y -= 11
+            add_text(left_x + 145, extra_y, extra_line, size=9.5, font="F1", rgb=body_color)
+        current_y -= 19 if len(lines) == 1 else 28
+
+    breakdown_rows = [
+        ("Regular Pay", "Base pay from recorded shift hours", format_currency(payslip.get("gross_pay"))),
+        ("Overtime Pay", f"{float(payslip.get('overtime_hours') or 0):.2f} overtime hours included", format_currency(payslip.get("overtime_pay"))),
+        ("Allowances", "Manual additions saved in payroll", format_currency(payslip.get("allowances"))),
+        ("Deductions", "Manual deductions saved in payroll", format_currency(payslip.get("deductions"))),
+        ("Final Pay", "Released total for this pay period", format_currency(payslip.get("final_pay"))),
+    ]
+    current_y = panel_top - 52
+    for index, (label, sub_label, value) in enumerate(breakdown_rows):
+        add_text(right_x + 16, current_y, label, size=10.5, font="F2", rgb=body_color)
+        add_wrapped_text(right_x + 16, current_y - 12, sub_label, width_chars=26, size=8, font="F1", rgb=label_color, leading=10, max_lines=2)
+        add_text(right_x + right_width - 100, current_y - 2, value, size=10.5 if index < len(breakdown_rows) - 1 else 12.5, font="F2", rgb=body_color)
+        current_y -= 42
+
+    notes_y = panel_top - left_height - 18
+    add_rect(margin, notes_y - 98, content_width, 98, fill_rgb=panel_fill, stroke_rgb=panel_border)
+    add_text(margin + 16, notes_y - 22, "Notes", size=12, font="F2", rgb=body_color)
+    notes_text = payslip.get("notes") or "This downloadable copy reflects the released payroll snapshot stored by Stellar Seats for your account."
+    add_wrapped_text(margin + 16, notes_y - 42, notes_text, width_chars=92, size=9.5, font="F1", rgb=body_color, leading=12, max_lines=4)
+
+    footer_y = 56
+    add_text(margin, footer_y, "Generated by Stellar Seats Attendance Dashboard", size=8.5, font="F1", rgb=label_color)
+    add_text(page_width - 190, footer_y, f"Printed {format_datetime_12h(now_str())}", size=8.5, font="F1", rgb=label_color)
+
+    content_stream = "\n".join(commands).encode("latin-1", "replace")
+
+    objects = []
+
+    def add_object(payload):
+        objects.append(payload)
+        return len(objects)
+
+    font_regular_id = add_object("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    font_bold_id = add_object("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>")
+    content_id = add_object(
+        f"<< /Length {len(content_stream)} >>\nstream\n".encode("latin-1") + content_stream + b"\nendstream"
+    )
+    page_id = add_object(
+        f"<< /Type /Page /Parent 5 0 R /MediaBox [0 0 {page_width} {page_height}] "
+        f"/Resources << /Font << /F1 {font_regular_id} 0 R /F2 {font_bold_id} 0 R >> >> "
+        f"/Contents {content_id} 0 R >>"
+    )
+    pages_id = add_object(f"<< /Type /Pages /Kids [{page_id} 0 R] /Count 1 >>")
+    catalog_id = add_object(f"<< /Type /Catalog /Pages {pages_id} 0 R >>")
+
+    pdf = BytesIO()
+    pdf.write(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    offsets = [0]
+    for obj_id, payload in enumerate(objects, start=1):
+        offsets.append(pdf.tell())
+        pdf.write(f"{obj_id} 0 obj\n".encode("latin-1"))
+        if isinstance(payload, bytes):
+            pdf.write(payload)
+        else:
+            pdf.write(str(payload).encode("latin-1"))
+        pdf.write(b"\nendobj\n")
+    xref_offset = pdf.tell()
+    pdf.write(f"xref\n0 {len(objects) + 1}\n".encode("latin-1"))
+    pdf.write(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        pdf.write(f"{offset:010d} 00000 n \n".encode("latin-1"))
+    pdf.write(
+        f"trailer\n<< /Size {len(objects) + 1} /Root {catalog_id} 0 R >>\nstartxref\n{xref_offset}\n%%EOF".encode(
+            "latin-1"
+        )
+    )
+    return pdf.getvalue()
+
+
 def get_employee_released_payroll_runs(user_id, limit=24):
     rows = [
         enrich_employee_payroll_item(row, current_user_id=user_id)
@@ -4586,6 +4792,32 @@ def employee_payslip(payroll_run_id):
         "employee_payslip.html",
         user=user,
         payslip=payslip
+    )
+
+
+@app.route("/my-payroll/<int:payroll_run_id>/download.pdf")
+@login_required(role="employee")
+def download_employee_payslip_pdf(payroll_run_id):
+    user = get_user_by_id(session["user_id"])
+    if not user:
+        session.clear()
+        flash("Your session expired. Please log in again.", "warning")
+        return redirect(url_for("login"))
+
+    payslip = get_employee_released_payroll_item(user["id"], payroll_run_id)
+    if not payslip:
+        flash("Released payslip not found for your account.", "warning")
+        return redirect(url_for("employee_payroll_history"))
+
+    pdf_bytes = build_employee_payslip_pdf_bytes(payslip)
+    filename = build_employee_payslip_pdf_filename(payslip)
+    return Response(
+        pdf_bytes,
+        mimetype="application/pdf",
+        headers={
+            "Content-Disposition": f"attachment; filename=\"{filename}\"; filename*=UTF-8''{quote(filename)}",
+            "Cache-Control": "no-store",
+        },
     )
 
 

@@ -186,6 +186,7 @@
             </div>
             <div style="display:flex;gap:10px;flex-wrap:wrap;">
                 <a class="btn btn-gray" href="{{ url_for('employee_payroll_history') }}">Back to Payslips</a>
+                <a class="btn btn-gray" href="{{ url_for('download_employee_payslip_pdf', payroll_run_id=payslip.payroll_run_id) }}">Download PDF</a>
                 <button class="btn btn-primary" type="button" onclick="window.print()">Print Payslip</button>
             </div>
         </div>
