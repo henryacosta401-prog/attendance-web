@@ -113,6 +113,66 @@
     text-align: right;
 }
 
+.payslip-breakdown-entry-list {
+    margin-top: 10px;
+    display: grid;
+    gap: 8px;
+}
+
+.payslip-breakdown-entry {
+    display: flex;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 10px 12px;
+    border-radius: 14px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+}
+
+.payslip-breakdown-entry-title {
+    color: #ffffff;
+    font-size: 13px;
+    font-weight: 800;
+}
+
+.payslip-breakdown-entry-note {
+    margin-top: 4px;
+    color: #cdd8ee;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.payslip-breakdown-entry-meta {
+    margin-top: 6px;
+    color: #94a3b8;
+    font-size: 11px;
+}
+
+.payslip-breakdown-entry-amount {
+    white-space: nowrap;
+    font-size: 13px;
+    font-weight: 900;
+}
+
+.payslip-breakdown-entry-amount-positive {
+    color: #86efac;
+}
+
+.payslip-breakdown-entry-amount-negative {
+    color: #fda4af;
+}
+
+.payslip-breakdown-warning {
+    margin-top: 10px;
+    padding: 10px 12px;
+    border-radius: 14px;
+    background: rgba(245, 158, 11, 0.10);
+    border: 1px solid rgba(245, 158, 11, 0.28);
+    color: #fde68a;
+    font-size: 12px;
+    line-height: 1.45;
+}
+
 .payslip-final-row {
     margin-top: 8px;
     padding-top: 14px;
@@ -218,6 +278,8 @@
     .payslip-list-value,
     .payslip-breakdown-label,
     .payslip-breakdown-value,
+    .payslip-breakdown-entry-title,
+    .payslip-breakdown-entry-amount,
     .payslip-adjustment-title,
     .payslip-adjustment-amount,
     h1,
@@ -231,6 +293,8 @@
     .payslip-stat-label,
     .payslip-list-label,
     .payslip-breakdown-sub,
+    .payslip-breakdown-entry-note,
+    .payslip-breakdown-entry-meta,
     .payslip-adjustment-type,
     .payslip-adjustment-note,
     .payslip-adjustment-meta {
@@ -344,7 +408,7 @@
 
         <aside class="payslip-breakdown-card">
             <div class="section-title" style="margin-bottom:12px;">Pay Breakdown</div>
-            <div class="section-subtitle" style="margin-bottom:14px;">Your released pay is built from regular pay, overtime, and any manual adjustments saved by payroll.</div>
+            <div class="section-subtitle" style="margin-bottom:14px;">Your released pay is built from regular pay, overtime, and any saved payroll adjustments. Each deduction or allowance used in this released snapshot is listed below.</div>
 
             <div class="payslip-breakdown">
                 <div class="payslip-breakdown-row">
@@ -364,14 +428,74 @@
                 <div class="payslip-breakdown-row">
                     <div>
                         <div class="payslip-breakdown-label">Allowances</div>
-                        <div class="payslip-breakdown-sub">Manual additions saved in payroll</div>
+                        <div class="payslip-breakdown-sub">
+                            {% if payslip.allowance_entries %}
+                                {{ payslip.allowance_entries|length }} item{{ '' if payslip.allowance_entries|length == 1 else 's' }} included in this released payslip
+                            {% elif payslip.allowances > 0 and payslip.missing_adjustment_detail %}
+                                Included in this released payslip, but item details were not stored in the older snapshot
+                            {% else %}
+                                No allowance lines included in this payslip
+                            {% endif %}
+                        </div>
+                        {% if payslip.allowance_entries %}
+                            <div class="payslip-breakdown-entry-list">
+                                {% for entry in payslip.allowance_entries %}
+                                    <div class="payslip-breakdown-entry">
+                                        <div>
+                                            <div class="payslip-breakdown-entry-title">{{ entry.label }}</div>
+                                            {% if entry.notes %}
+                                                <div class="payslip-breakdown-entry-note">{{ entry.notes }}</div>
+                                            {% endif %}
+                                            <div class="payslip-breakdown-entry-meta">
+                                                {{ entry.source_kind or 'Manual' }}{% if entry.recurrence_type %} | {{ entry.recurrence_type }}{% endif %}
+                                            </div>
+                                        </div>
+                                        <div class="payslip-breakdown-entry-amount payslip-breakdown-entry-amount-positive">+{{ entry.display_amount }}</div>
+                                    </div>
+                                {% endfor %}
+                            </div>
+                        {% elif payslip.allowances > 0 and payslip.missing_adjustment_detail %}
+                            <div class="payslip-breakdown-warning">
+                                This released payslip includes an allowance total, but the older payroll snapshot did not save the line-by-line reason yet.
+                            </div>
+                        {% endif %}
                     </div>
                     <div class="payslip-breakdown-value">{{ format_currency(payslip.allowances) }}</div>
                 </div>
                 <div class="payslip-breakdown-row">
                     <div>
                         <div class="payslip-breakdown-label">Deductions</div>
-                        <div class="payslip-breakdown-sub">Manual deductions saved in payroll</div>
+                        <div class="payslip-breakdown-sub">
+                            {% if payslip.deduction_entries %}
+                                {{ payslip.deduction_entries|length }} item{{ '' if payslip.deduction_entries|length == 1 else 's' }} included in this released payslip
+                            {% elif payslip.deductions > 0 and payslip.missing_adjustment_detail %}
+                                Included in this released payslip, but item details were not stored in the older snapshot
+                            {% else %}
+                                No deduction lines included in this payslip
+                            {% endif %}
+                        </div>
+                        {% if payslip.deduction_entries %}
+                            <div class="payslip-breakdown-entry-list">
+                                {% for entry in payslip.deduction_entries %}
+                                    <div class="payslip-breakdown-entry">
+                                        <div>
+                                            <div class="payslip-breakdown-entry-title">{{ entry.label }}</div>
+                                            {% if entry.notes %}
+                                                <div class="payslip-breakdown-entry-note">{{ entry.notes }}</div>
+                                            {% endif %}
+                                            <div class="payslip-breakdown-entry-meta">
+                                                {{ entry.source_kind or 'Manual' }}{% if entry.recurrence_type %} | {{ entry.recurrence_type }}{% endif %}
+                                            </div>
+                                        </div>
+                                        <div class="payslip-breakdown-entry-amount payslip-breakdown-entry-amount-negative">-{{ entry.display_amount }}</div>
+                                    </div>
+                                {% endfor %}
+                            </div>
+                        {% elif payslip.deductions > 0 and payslip.missing_adjustment_detail %}
+                            <div class="payslip-breakdown-warning">
+                                This released payslip includes a deduction total, but the older payroll snapshot did not save the line-by-line reason yet.
+                            </div>
+                        {% endif %}
                     </div>
                     <div class="payslip-breakdown-value">{{ format_currency(payslip.deductions) }}</div>
                 </div>
