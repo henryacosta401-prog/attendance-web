@@ -1,0 +1,295 @@
+{% extends "base.html" %}
+{% block title %}Attendance Calendar{% endblock %}
+
+{% block extra_head %}
+<style>
+.employee-calendar-shell {
+    display: grid;
+    gap: 20px;
+}
+
+.employee-calendar-summary {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.employee-calendar-stat,
+.employee-calendar-card,
+.employee-calendar-legend,
+.employee-calendar-highlights {
+    padding: 18px;
+    border-radius: 22px;
+    background: linear-gradient(180deg, rgba(20, 31, 52, 0.96), rgba(13, 21, 38, 0.94));
+    border: 1px solid rgba(255,255,255,0.10);
+    box-shadow: 0 18px 36px rgba(0,0,0,0.24);
+}
+
+.employee-calendar-stat-label {
+    color: #9fb0d4;
+    font-size: 12px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.employee-calendar-stat-value {
+    margin-top: 8px;
+    color: #ffffff;
+    font-size: 28px;
+    font-weight: 900;
+}
+
+.employee-calendar-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+    gap: 20px;
+}
+
+.employee-calendar-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-bottom: 18px;
+}
+
+.employee-calendar-month {
+    color: #ffffff;
+    font-size: 28px;
+    font-weight: 900;
+}
+
+.employee-calendar-grid {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.employee-calendar-weekday {
+    padding: 10px 8px;
+    color: #9fb0d4;
+    font-size: 12px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    text-align: center;
+}
+
+.employee-calendar-day {
+    min-height: 124px;
+    padding: 12px;
+    border-radius: 18px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.04);
+    display: grid;
+    align-content: flex-start;
+    gap: 8px;
+}
+
+.employee-calendar-day.outside {
+    opacity: 0.32;
+}
+
+.employee-calendar-day.is-today {
+    border-color: rgba(96,165,250,0.42);
+    box-shadow: inset 0 0 0 1px rgba(96,165,250,0.18);
+}
+
+.employee-calendar-day.blue {
+    background: linear-gradient(180deg, rgba(59,130,246,0.16), rgba(255,255,255,0.04));
+}
+
+.employee-calendar-day.green {
+    background: linear-gradient(180deg, rgba(16,185,129,0.16), rgba(255,255,255,0.04));
+}
+
+.employee-calendar-day.yellow {
+    background: linear-gradient(180deg, rgba(245,158,11,0.16), rgba(255,255,255,0.04));
+}
+
+.employee-calendar-day.red {
+    background: linear-gradient(180deg, rgba(239,68,68,0.16), rgba(255,255,255,0.04));
+}
+
+.employee-calendar-day.gray {
+    background: rgba(255,255,255,0.03);
+}
+
+.employee-calendar-daynum {
+    color: #ffffff;
+    font-size: 16px;
+    font-weight: 900;
+}
+
+.employee-calendar-label {
+    display: inline-flex;
+    width: fit-content;
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: rgba(15, 23, 42, 0.52);
+    color: #eff6ff;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+}
+
+.employee-calendar-details {
+    color: #cbd5e1;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.employee-calendar-legend-list,
+.employee-calendar-highlights-list {
+    display: grid;
+    gap: 12px;
+}
+
+.employee-calendar-legend-row,
+.employee-calendar-highlight-row {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+}
+
+.employee-calendar-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 999px;
+    margin-top: 4px;
+    flex: 0 0 auto;
+}
+
+.dot-blue { background: #60a5fa; }
+.dot-green { background: #34d399; }
+.dot-yellow { background: #fbbf24; }
+.dot-red { background: #f87171; }
+.dot-gray { background: #94a3b8; }
+
+@media (max-width: 1150px) {
+    .employee-calendar-summary,
+    .employee-calendar-layout {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 720px) {
+    .employee-calendar-grid {
+        gap: 8px;
+    }
+
+    .employee-calendar-day {
+        min-height: 104px;
+        padding: 10px;
+    }
+
+    .employee-calendar-details {
+        font-size: 11px;
+    }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="employee-calendar-shell">
+    <div class="hero-card">
+        <div class="hero">
+            <div>
+                <h1>Attendance Calendar</h1>
+                <p class="section-subtitle">Track your month at a glance using the same attendance, leave, and suspension records used throughout the app.</p>
+            </div>
+            <a class="btn btn-gray" href="{{ url_for('dashboard') }}">Back to Dashboard</a>
+        </div>
+    </div>
+
+    <section class="employee-calendar-summary">
+        <div class="employee-calendar-stat">
+            <div class="employee-calendar-stat-label">Worked</div>
+            <div class="employee-calendar-stat-value">{{ calendar_data.counts.worked }}</div>
+        </div>
+        <div class="employee-calendar-stat">
+            <div class="employee-calendar-stat-label">Late</div>
+            <div class="employee-calendar-stat-value">{{ calendar_data.counts.late }}</div>
+        </div>
+        <div class="employee-calendar-stat">
+            <div class="employee-calendar-stat-label">Leave</div>
+            <div class="employee-calendar-stat-value">{{ calendar_data.counts.leave }}</div>
+        </div>
+        <div class="employee-calendar-stat">
+            <div class="employee-calendar-stat-label">Absent</div>
+            <div class="employee-calendar-stat-value">{{ calendar_data.counts.absent }}</div>
+        </div>
+        <div class="employee-calendar-stat">
+            <div class="employee-calendar-stat-label">Suspension</div>
+            <div class="employee-calendar-stat-value">{{ calendar_data.counts.suspension }}</div>
+        </div>
+    </section>
+
+    <div class="employee-calendar-layout">
+        <section class="employee-calendar-card">
+            <div class="employee-calendar-header">
+                <div>
+                    <div class="employee-calendar-month">{{ calendar_data.month_label }}</div>
+                    <div class="section-subtitle">Monthly attendance view for your assigned schedule.</div>
+                </div>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                    <a class="btn btn-gray" href="{{ url_for('employee_attendance_calendar', year=calendar_data.prev_year, month=calendar_data.prev_month) }}">Previous</a>
+                    <a class="btn btn-primary" href="{{ url_for('employee_attendance_calendar', year=calendar_data.next_year, month=calendar_data.next_month) }}">Next</a>
+                </div>
+            </div>
+
+            <div class="employee-calendar-grid">
+                {% for weekday in calendar_data.weekday_labels %}
+                    <div class="employee-calendar-weekday">{{ weekday }}</div>
+                {% endfor %}
+
+                {% for week in calendar_data.weeks %}
+                    {% for entry in week %}
+                        <div class="employee-calendar-day {{ entry.tone }} {{ entry.state_key }}{% if not entry.in_month %} outside{% endif %}{% if entry.is_today %} is-today{% endif %}">
+                            <div class="employee-calendar-daynum">{{ entry.day_number }}</div>
+                            {% if entry.in_month %}
+                                <div class="employee-calendar-label">{{ entry.label }}</div>
+                                <div class="employee-calendar-details">{{ entry.details }}</div>
+                            {% endif %}
+                        </div>
+                    {% endfor %}
+                {% endfor %}
+            </div>
+        </section>
+
+        <aside style="display:grid;gap:20px;">
+            <section class="employee-calendar-legend">
+                <div class="section-title" style="margin-bottom:12px;">Legend</div>
+                <div class="employee-calendar-legend-list">
+                    <div class="employee-calendar-legend-row"><span class="employee-calendar-dot dot-blue"></span><div><strong>Present / Worked</strong><div class="small muted">Recorded attendance, including on break and timed in states.</div></div></div>
+                    <div class="employee-calendar-legend-row"><span class="employee-calendar-dot dot-yellow"></span><div><strong>Late / Undertime / Sick Leave</strong><div class="small muted">Days that need extra attention or have approved sick leave.</div></div></div>
+                    <div class="employee-calendar-legend-row"><span class="employee-calendar-dot dot-green"></span><div><strong>Paid Leave</strong><div class="small muted">Approved paid leave dates.</div></div></div>
+                    <div class="employee-calendar-legend-row"><span class="employee-calendar-dot dot-red"></span><div><strong>Absent / Suspended</strong><div class="small muted">Missed scheduled days or active suspension dates.</div></div></div>
+                    <div class="employee-calendar-legend-row"><span class="employee-calendar-dot dot-gray"></span><div><strong>Off Day / Awaiting Scan</strong><div class="small muted">Non-working days or today before attendance is recorded.</div></div></div>
+                </div>
+            </section>
+
+            <section class="employee-calendar-highlights">
+                <div class="section-title" style="margin-bottom:12px;">Monthly Highlights</div>
+                {% if calendar_data.highlights %}
+                    <div class="employee-calendar-highlights-list">
+                        {% for item in calendar_data.highlights %}
+                            <div class="employee-calendar-highlight-row">
+                                <span class="employee-calendar-dot dot-{{ item.tone }}"></span>
+                                <div>
+                                    <div style="font-weight:800;color:#ffffff;">{{ item.label }} on {{ item.date }}</div>
+                                    <div class="small muted" style="margin-top:4px;">{{ item.details }}</div>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p class="muted">No exceptions or highlighted dates for this month.</p>
+                {% endif %}
+            </section>
+        </aside>
+    </div>
+</div>
+{% endblock %}

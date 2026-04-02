@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block title %}My Payslips{% endblock %}
+
+{% block extra_head %}
+<style>
+.payslip-history-shell { display: grid; gap: 20px; }
+.payslip-history-grid { display: grid; gap: 16px; }
+.payslip-history-card {
+    padding: 22px;
+    border-radius: 24px;
+    background: linear-gradient(180deg, rgba(20, 31, 52, 0.96), rgba(13, 21, 38, 0.94));
+    border: 1px solid rgba(255,255,255,0.10);
+    box-shadow: 0 20px 40px rgba(0,0,0,0.24);
+}
+.payslip-history-top,
+.payslip-history-meta,
+.payslip-history-actions,
+.payslip-history-summary {
+    display: flex;
+    justify-content: space-between;
+    gap: 14px;
+    flex-wrap: wrap;
+}
+.payslip-history-label {
+    color: #9fb0d4;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+.payslip-history-value {
+    margin-top: 8px;
+    color: #ffffff;
+    font-size: 28px;
+    font-weight: 900;
+}
+.payslip-history-summary {
+    margin-top: 18px;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.payslip-history-stat {
+    padding: 14px;
+    border-radius: 18px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.08);
+}
+.payslip-history-stat strong {
+    display: block;
+    color: #ffffff;
+    font-size: 18px;
+    margin-top: 6px;
+}
+@media (max-width: 960px) {
+    .payslip-history-summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+@media (max-width: 640px) {
+    .payslip-history-summary {
+        grid-template-columns: 1fr;
+    }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="payslip-history-shell">
+    <div class="hero-card">
+        <div class="hero">
+            <div>
+                <h1>My Payslips</h1>
+                <p class="section-subtitle">Released payroll only. Open any period to review the full breakdown and print a clean payslip.</p>
+            </div>
+            <div class="status status-green">{{ payroll_runs|length }} Released Period{{ '' if payroll_runs|length == 1 else 's' }}</div>
+        </div>
+    </div>
+
+    <section class="card soft">
+        <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;">
+            <div>
+                <div class="section-title" style="margin-bottom:0;">Released Payroll History</div>
+                <div class="section-subtitle">Each pay period shows the latest released snapshot that includes your account.</div>
+            </div>
+            <a class="btn btn-gray" href="{{ url_for('dashboard') }}">Back to Dashboard</a>
+        </div>
+
+        {% if payroll_runs %}
+            <div class="payslip-history-grid" style="margin-top:18px;">
+                {% for run in payroll_runs %}
+                    <div class="payslip-history-card">
+                        <div class="payslip-history-top">
+                            <div>
+                                <div class="payslip-history-label">Pay Period</div>
+                                <div class="payslip-history-value">{{ run.period_label }}</div>
+                                <div class="small muted" style="margin-top:8px;">Released {{ run.released_display }} | {{ run.scope_label }}</div>
+                            </div>
+                            <div>
+                                <div class="payslip-history-label">Final Pay</div>
+                                <div class="payslip-history-value">{{ format_currency(run.final_pay) }}</div>
+                            </div>
+                        </div>
+
+                        <div class="payslip-history-summary">
+                            <div class="payslip-history-stat">
+                                <span class="payslip-history-label">Regular Pay</span>
+                                <strong>{{ format_currency(run.gross_pay) }}</strong>
+                            </div>
+                            <div class="payslip-history-stat">
+                                <span class="payslip-history-label">Overtime Pay</span>
+                                <strong>{{ format_currency(run.overtime_pay) }}</strong>
+                            </div>
+                            <div class="payslip-history-stat">
+                                <span class="payslip-history-label">Allowances</span>
+                                <strong>{{ format_currency(run.allowances) }}</strong>
+                            </div>
+                            <div class="payslip-history-stat">
+                                <span class="payslip-history-label">Deductions</span>
+                                <strong>{{ format_currency(run.deductions) }}</strong>
+                            </div>
+                        </div>
+
+                        <div class="payslip-history-meta" style="margin-top:18px;">
+                            <div class="small muted">Hours: {{ "%.2f"|format(run.total_hours) }} regular | {{ "%.2f"|format(run.overtime_hours) }} overtime</div>
+                            <div class="small muted">Prepared by {{ run.created_by_name }}</div>
+                        </div>
+
+                        <div class="payslip-history-actions" style="margin-top:18px;">
+                            <a class="btn btn-primary" href="{{ url_for('employee_payslip', payroll_run_id=run.payroll_run_id) }}">Open Payslip</a>
+                        </div>
+                    </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <div class="empty-state" style="margin-top:18px;">
+                <div class="section-title" style="margin-bottom:8px;">No released payroll yet</div>
+                <p class="muted">Payslips will appear here after admin releases payroll for a period that includes your account.</p>
+            </div>
+        {% endif %}
+    </section>
+</div>
+{% endblock %}

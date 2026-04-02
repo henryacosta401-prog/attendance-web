@@ -8,7 +8,10 @@
             <h1>Recent Activity</h1>
             <p class="section-subtitle">See your latest attendance, corrections, and account activity without crowding the dashboard.</p>
         </div>
-        <div class="status status-purple">Activity Log</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+            <div class="status status-purple">Activity Log</div>
+            <a class="btn btn-gray" href="{{ url_for('employee_payroll_history') }}">My Payslips</a>
+        </div>
     </div>
 </div>
 

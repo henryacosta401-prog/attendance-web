@@ -212,9 +212,46 @@
     margin-bottom: 10px;
 }
 
+.employee-service-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+}
+
+.employee-service-card {
+    padding: 20px;
+    border-radius: 22px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.08);
+    display: grid;
+    gap: 14px;
+}
+
+.employee-service-kicker {
+    color: #93c5fd;
+    font-size: 12px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.employee-service-title {
+    color: #ffffff;
+    font-size: 22px;
+    font-weight: 900;
+    line-height: 1.1;
+}
+
+.employee-service-copy {
+    color: #9fb0d4;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
 @media (max-width: 1100px) {
     .employee-hero,
-    .employee-feed-grid {
+    .employee-feed-grid,
+    .employee-service-grid {
         grid-template-columns: 1fr;
     }
 }
@@ -269,12 +306,12 @@
             <div class="employee-glance">
                 <div class="employee-glance-card">
                     <div class="employee-glance-label">Time In</div>
-                    <div class="employee-glance-value">{{ format_time_12h(today_attendance.time_in) if today_attendance and today_attendance.time_in else '—' }}</div>
+                    <div class="employee-glance-value">{{ format_time_12h(today_attendance.time_in) if today_attendance and today_attendance.time_in else '--' }}</div>
                     <div class="employee-glance-note">Scheduled start: {{ user.shift_start if user.shift_start else '09:00' }}</div>
                 </div>
                 <div class="employee-glance-card">
                     <div class="employee-glance-label">Time Out</div>
-                    <div class="employee-glance-value">{{ format_time_12h(today_attendance.time_out) if today_attendance and today_attendance.time_out else '—' }}</div>
+                    <div class="employee-glance-value">{{ format_time_12h(today_attendance.time_out) if today_attendance and today_attendance.time_out else '--' }}</div>
                     <div class="employee-glance-note">Scheduled end: {{ user.shift_end if user.shift_end else '18:00' }}</div>
                 </div>
                 <div class="employee-glance-card">
@@ -393,7 +430,7 @@
                 <div class="employee-timeline-label">Work Summary</div>
                 <div>
                     <div class="employee-timeline-value">{{ minutes_to_hm(todays_work_minutes) }}</div>
-                    <div class="employee-panel-subtitle">Net work time after breaks</div>
+                    <div class="employee-panel-subtitle">Recorded shift time for today based on your attendance timestamps.</div>
                 </div>
             </div>
         </div>
@@ -412,6 +449,66 @@
                 {% endif %}
             </div>
         {% endif %}
+    </section>
+
+    <section class="employee-panel">
+        <div class="employee-panel-head">
+            <div>
+                <div class="employee-panel-title">Self-Service Tools</div>
+                <div class="employee-panel-subtitle">Open your released payslips, review the month on a calendar, and jump to the records you check most often.</div>
+            </div>
+        </div>
+
+        <div class="employee-service-grid">
+            <div class="employee-service-card">
+                <div>
+                    <div class="employee-service-kicker">Payroll</div>
+                    <div class="employee-service-title">
+                        {% if latest_payslip %}
+                            {{ format_currency(latest_payslip.final_pay) }}
+                        {% else %}
+                            No Released Payslip Yet
+                        {% endif %}
+                    </div>
+                    <div class="employee-service-copy">
+                        {% if latest_payslip %}
+                            Latest released period: {{ latest_payslip.period_label }}.
+                        {% else %}
+                            Released payroll snapshots will appear here once admin finalizes your payroll.
+                        {% endif %}
+                    </div>
+                </div>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                    <a class="btn btn-primary" href="{{ url_for('employee_payroll_history') }}">Open Payslips</a>
+                    {% if latest_payslip %}
+                        <a class="btn btn-gray" href="{{ url_for('employee_payslip', payroll_run_id=latest_payslip.payroll_run_id) }}">Latest Payslip</a>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="employee-service-card">
+                <div>
+                    <div class="employee-service-kicker">Calendar</div>
+                    <div class="employee-service-title">{{ current_calendar_label }}</div>
+                    <div class="employee-service-copy">Review present, late, leave, absent, and suspension dates in one monthly view built from your actual attendance records.</div>
+                </div>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                    <a class="btn btn-primary" href="{{ url_for('employee_attendance_calendar', year=current_calendar_year, month=current_calendar_month) }}">Open Calendar</a>
+                </div>
+            </div>
+
+            <div class="employee-service-card">
+                <div>
+                    <div class="employee-service-kicker">Records</div>
+                    <div class="employee-service-title">History & Activity</div>
+                    <div class="employee-service-copy">Use attendance history for work records and recent activity for updates, approvals, and account changes.</div>
+                </div>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                    <a class="btn btn-primary" href="{{ url_for('employee_history') }}">Attendance History</a>
+                    <a class="btn btn-gray" href="{{ url_for('employee_activity') }}">Recent Activity</a>
+                </div>
+            </div>
+        </div>
     </section>
 
     <section class="employee-panel">

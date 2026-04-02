@@ -1049,7 +1049,8 @@
         {% else %}
             <div class="nav-primary">
                 <a class="pill-link {% if request.endpoint == 'dashboard' %}active{% endif %}" data-tour-id="nav-dashboard" href="{{ url_for('dashboard') }}">Dashboard</a>
-                <a class="pill-link {% if request.endpoint == 'employee_activity' %}active{% endif %}" href="{{ url_for('employee_activity') }}">Recent Activity</a>
+                <a class="pill-link {% if request.endpoint == 'employee_payroll_history' or request.endpoint == 'employee_payslip' %}active{% endif %}" href="{{ url_for('employee_payroll_history') }}">Payslips</a>
+                <a class="pill-link {% if request.endpoint == 'employee_attendance_calendar' %}active{% endif %}" href="{{ url_for('employee_attendance_calendar') }}">Calendar</a>
                 <a class="pill-link {% if request.endpoint == 'employee_history' %}active{% endif %}" data-tour-id="nav-history" href="{{ url_for('employee_history') }}">History</a>
                 <a class="pill-link {% if request.endpoint == 'employee_corrections' %}active{% endif %}" data-tour-id="nav-corrections" href="{{ url_for('employee_corrections') }}">Corrections</a>
                 <a class="pill-link {% if request.endpoint == 'employee_profile' %}active{% endif %}" data-tour-id="nav-profile" href="{{ url_for('employee_profile') }}">Profile</a>

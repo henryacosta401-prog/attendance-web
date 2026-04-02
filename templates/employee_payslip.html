@@ -1,0 +1,324 @@
+{% extends "base.html" %}
+{% block title %}My Payslip{% endblock %}
+
+{% block extra_head %}
+<style>
+.payslip-shell {
+    display: grid;
+    gap: 20px;
+}
+
+.payslip-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
+    gap: 20px;
+}
+
+.payslip-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.payslip-stat,
+.payslip-detail-card,
+.payslip-breakdown-card {
+    padding: 18px;
+    border-radius: 22px;
+    background: linear-gradient(180deg, rgba(20, 31, 52, 0.96), rgba(13, 21, 38, 0.94));
+    border: 1px solid rgba(255,255,255,0.10);
+    box-shadow: 0 18px 36px rgba(0,0,0,0.24);
+}
+
+.payslip-stat-label {
+    color: #9fb0d4;
+    font-size: 12px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.payslip-stat-value {
+    margin-top: 10px;
+    color: #ffffff;
+    font-size: 28px;
+    font-weight: 900;
+}
+
+.payslip-list {
+    display: grid;
+    gap: 12px;
+}
+
+.payslip-list-row {
+    display: grid;
+    grid-template-columns: 170px minmax(0, 1fr);
+    gap: 14px;
+    padding: 12px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.payslip-list-row:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+}
+
+.payslip-list-label {
+    color: #9fb0d4;
+    font-size: 12px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.payslip-list-value {
+    color: #ffffff;
+    font-weight: 700;
+}
+
+.payslip-breakdown {
+    display: grid;
+    gap: 14px;
+}
+
+.payslip-breakdown-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 12px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.payslip-breakdown-row:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+}
+
+.payslip-breakdown-label {
+    color: #dbeafe;
+    font-weight: 700;
+}
+
+.payslip-breakdown-sub {
+    margin-top: 4px;
+    color: #94a3b8;
+    font-size: 12px;
+}
+
+.payslip-breakdown-value {
+    color: #ffffff;
+    font-weight: 900;
+    text-align: right;
+}
+
+.payslip-final-row {
+    margin-top: 8px;
+    padding-top: 14px;
+    border-top: 1px solid rgba(96,165,250,0.20);
+}
+
+@media (max-width: 1100px) {
+    .payslip-grid,
+    .payslip-summary-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media print {
+    body {
+        background: #ffffff !important;
+        color: #111827 !important;
+    }
+
+    .navbar,
+    .btn,
+    .flash-wrap {
+        display: none !important;
+    }
+
+    .page-shell {
+        max-width: none;
+        padding: 0;
+    }
+
+    .hero-card,
+    .card,
+    .soft,
+    .payslip-stat,
+    .payslip-detail-card,
+    .payslip-breakdown-card {
+        background: #ffffff !important;
+        color: #111827 !important;
+        box-shadow: none !important;
+        border-color: #d1d5db !important;
+    }
+
+    .section-title,
+    .payslip-stat-value,
+    .payslip-list-value,
+    .payslip-breakdown-label,
+    .payslip-breakdown-value,
+    h1,
+    h2,
+    h3 {
+        color: #111827 !important;
+    }
+
+    .muted,
+    .section-subtitle,
+    .payslip-stat-label,
+    .payslip-list-label,
+    .payslip-breakdown-sub {
+        color: #4b5563 !important;
+    }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="payslip-shell">
+    <div class="hero-card">
+        <div class="hero">
+            <div>
+                <h1>{{ payslip.period_label }}</h1>
+                <p class="section-subtitle">Released payroll breakdown for your account. This view is safe to print as your personal payslip reference.</p>
+            </div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                <a class="btn btn-gray" href="{{ url_for('employee_payroll_history') }}">Back to Payslips</a>
+                <button class="btn btn-primary" type="button" onclick="window.print()">Print Payslip</button>
+            </div>
+        </div>
+    </div>
+
+    <section class="payslip-summary-grid">
+        <div class="payslip-stat">
+            <div class="payslip-stat-label">Final Pay</div>
+            <div class="payslip-stat-value">{{ format_currency(payslip.final_pay) }}</div>
+        </div>
+        <div class="payslip-stat">
+            <div class="payslip-stat-label">Regular Pay</div>
+            <div class="payslip-stat-value">{{ format_currency(payslip.gross_pay) }}</div>
+        </div>
+        <div class="payslip-stat">
+            <div class="payslip-stat-label">Overtime Pay</div>
+            <div class="payslip-stat-value">{{ format_currency(payslip.overtime_pay) }}</div>
+        </div>
+        <div class="payslip-stat">
+            <div class="payslip-stat-label">Adjustment Balance</div>
+            <div class="payslip-stat-value">{{ format_currency(payslip.adjustment_balance) }}</div>
+        </div>
+    </section>
+
+    <div class="payslip-grid">
+        <section class="payslip-detail-card">
+            <div class="section-title" style="margin-bottom:12px;">Payroll Details</div>
+            <div class="section-subtitle" style="margin-bottom:14px;">This released snapshot reflects what payroll stored for your account during this period.</div>
+
+            <div class="payslip-list">
+                <div class="payslip-list-row">
+                    <div class="payslip-list-label">Employee</div>
+                    <div class="payslip-list-value">{{ payslip.full_name }}</div>
+                </div>
+                <div class="payslip-list-row">
+                    <div class="payslip-list-label">Department / Position</div>
+                    <div class="payslip-list-value">{{ payslip.department }} | {{ payslip.position }}</div>
+                </div>
+                <div class="payslip-list-row">
+                    <div class="payslip-list-label">Hourly Rate</div>
+                    <div class="payslip-list-value">{{ format_currency(payslip.hourly_rate) }}</div>
+                </div>
+                <div class="payslip-list-row">
+                    <div class="payslip-list-label">Days Worked</div>
+                    <div class="payslip-list-value">{{ payslip.days_worked }}</div>
+                </div>
+                <div class="payslip-list-row">
+                    <div class="payslip-list-label">Regular Hours</div>
+                    <div class="payslip-list-value">{{ "%.2f"|format(payslip.total_hours) }}</div>
+                </div>
+                <div class="payslip-list-row">
+                    <div class="payslip-list-label">Overtime Hours</div>
+                    <div class="payslip-list-value">{{ "%.2f"|format(payslip.overtime_hours) }}</div>
+                </div>
+                <div class="payslip-list-row">
+                    <div class="payslip-list-label">Late Minutes</div>
+                    <div class="payslip-list-value">{{ payslip.late_minutes }}</div>
+                </div>
+                <div class="payslip-list-row">
+                    <div class="payslip-list-label">Break Minutes</div>
+                    <div class="payslip-list-value">{{ payslip.break_minutes }}</div>
+                </div>
+                <div class="payslip-list-row">
+                    <div class="payslip-list-label">Suspension Days</div>
+                    <div class="payslip-list-value">{{ payslip.suspension_days }}</div>
+                </div>
+                <div class="payslip-list-row">
+                    <div class="payslip-list-label">Suspension Loss</div>
+                    <div class="payslip-list-value">{{ format_currency(payslip.suspension_pay) }}</div>
+                </div>
+                <div class="payslip-list-row">
+                    <div class="payslip-list-label">Release Scope</div>
+                    <div class="payslip-list-value">{{ payslip.scope_label }}</div>
+                </div>
+                <div class="payslip-list-row">
+                    <div class="payslip-list-label">Released</div>
+                    <div class="payslip-list-value">{{ payslip.released_display or 'Draft timing unavailable' }}</div>
+                </div>
+                <div class="payslip-list-row">
+                    <div class="payslip-list-label">Prepared By</div>
+                    <div class="payslip-list-value">{{ payslip.created_by_name }}</div>
+                </div>
+                {% if payslip.notes %}
+                <div class="payslip-list-row">
+                    <div class="payslip-list-label">Notes</div>
+                    <div class="payslip-list-value">{{ payslip.notes }}</div>
+                </div>
+                {% endif %}
+            </div>
+        </section>
+
+        <aside class="payslip-breakdown-card">
+            <div class="section-title" style="margin-bottom:12px;">Pay Breakdown</div>
+            <div class="section-subtitle" style="margin-bottom:14px;">Your released pay is built from regular pay, overtime, and any manual adjustments saved by payroll.</div>
+
+            <div class="payslip-breakdown">
+                <div class="payslip-breakdown-row">
+                    <div>
+                        <div class="payslip-breakdown-label">Regular Pay</div>
+                        <div class="payslip-breakdown-sub">Base amount from recorded shift hours</div>
+                    </div>
+                    <div class="payslip-breakdown-value">{{ format_currency(payslip.gross_pay) }}</div>
+                </div>
+                <div class="payslip-breakdown-row">
+                    <div>
+                        <div class="payslip-breakdown-label">Overtime Pay</div>
+                        <div class="payslip-breakdown-sub">{{ "%.2f"|format(payslip.overtime_hours) }} overtime hours included</div>
+                    </div>
+                    <div class="payslip-breakdown-value">{{ format_currency(payslip.overtime_pay) }}</div>
+                </div>
+                <div class="payslip-breakdown-row">
+                    <div>
+                        <div class="payslip-breakdown-label">Allowances</div>
+                        <div class="payslip-breakdown-sub">Manual additions saved in payroll</div>
+                    </div>
+                    <div class="payslip-breakdown-value">{{ format_currency(payslip.allowances) }}</div>
+                </div>
+                <div class="payslip-breakdown-row">
+                    <div>
+                        <div class="payslip-breakdown-label">Deductions</div>
+                        <div class="payslip-breakdown-sub">Manual deductions saved in payroll</div>
+                    </div>
+                    <div class="payslip-breakdown-value">{{ format_currency(payslip.deductions) }}</div>
+                </div>
+                <div class="payslip-breakdown-row payslip-final-row">
+                    <div>
+                        <div class="payslip-breakdown-label">Final Pay</div>
+                        <div class="payslip-breakdown-sub">Released total for this pay period</div>
+                    </div>
+                    <div class="payslip-breakdown-value">{{ format_currency(payslip.final_pay) }}</div>
+                </div>
+            </div>
+        </aside>
+    </div>
+</div>
+{% endblock %}

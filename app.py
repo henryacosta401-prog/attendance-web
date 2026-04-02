@@ -1,3 +1,4 @@
+import calendar
 import os
 import os
 import secrets
@@ -3467,6 +3468,435 @@ def get_recent_payroll_runs(limit=8):
     return enriched
 
 
+def format_payroll_period_label(date_from, date_to):
+    start_date = parse_iso_date(date_from)
+    end_date = parse_iso_date(date_to, start_date)
+    if not start_date or not end_date:
+        return f"{date_from} to {date_to}"
+    if start_date.year == end_date.year and start_date.month == end_date.month:
+        return f"{start_date.strftime('%b %d')} - {end_date.strftime('%d, %Y')}"
+    return f"{start_date.strftime('%b %d, %Y')} - {end_date.strftime('%b %d, %Y')}"
+
+
+def enrich_employee_payroll_item(row, current_user_id=None):
+    if not row:
+        return None
+
+    item = dict(row)
+    item["period_label"] = format_payroll_period_label(item.get("date_from"), item.get("date_to"))
+    released_source = item.get("released_at") or item.get("updated_at") or item.get("created_at")
+    item["released_display"] = format_datetime_12h(released_source) if released_source else ""
+    item["adjustment_balance"] = round(float(item.get("allowances") or 0) - float(item.get("deductions") or 0), 2)
+    item["total_compensation"] = round(float(item.get("gross_pay") or 0) + float(item.get("overtime_pay") or 0), 2)
+
+    employee_filter_value = str(item.get("employee_filter") or "").strip()
+    if employee_filter_value.isdigit():
+        if current_user_id and int(employee_filter_value) == int(current_user_id):
+            item["scope_label"] = "Employee-only release"
+        else:
+            item["scope_label"] = "Filtered employee release"
+    elif item.get("department_filter"):
+        item["scope_label"] = f"{item['department_filter']} release"
+    else:
+        item["scope_label"] = "Company-wide release"
+
+    item["created_by_name"] = item.get("created_by_name") or "Administrator"
+    return item
+
+
+def get_employee_released_payroll_runs(user_id, limit=24):
+    rows = [
+        enrich_employee_payroll_item(row, current_user_id=user_id)
+        for row in fetchall("""
+            SELECT
+                pr.id AS payroll_run_id,
+                pr.date_from,
+                pr.date_to,
+                pr.department_filter,
+                pr.employee_filter,
+                pr.status,
+                pr.notes,
+                pr.created_by,
+                pr.created_at,
+                pr.updated_at,
+                pr.released_at,
+                creator.full_name AS created_by_name,
+                pri.user_id,
+                pri.full_name,
+                pri.department,
+                pri.position,
+                pri.hourly_rate,
+                pri.days_worked,
+                pri.total_hours,
+                pri.overtime_hours,
+                pri.late_minutes,
+                pri.break_minutes,
+                pri.suspension_days,
+                pri.suspension_pay,
+                pri.gross_pay,
+                pri.overtime_pay,
+                pri.allowances,
+                pri.deductions,
+                pri.final_pay,
+                pri.created_at AS item_created_at
+            FROM payroll_run_items pri
+            JOIN payroll_runs pr ON pr.id = pri.payroll_run_id
+            LEFT JOIN users creator ON creator.id = pr.created_by
+            WHERE pri.user_id = ?
+              AND pr.status = 'Released'
+            ORDER BY pr.date_to DESC, COALESCE(pr.released_at, pr.updated_at, pr.created_at) DESC, pr.id DESC
+        """, (user_id,))
+    ]
+
+    deduped = []
+    seen_periods = set()
+    for item in rows:
+        period_key = (item.get("date_from"), item.get("date_to"))
+        if period_key in seen_periods:
+            continue
+        seen_periods.add(period_key)
+        deduped.append(item)
+        if len(deduped) >= limit:
+            break
+    return deduped
+
+
+def get_employee_released_payroll_item(user_id, payroll_run_id):
+    row = fetchone("""
+        SELECT
+            pr.id AS payroll_run_id,
+            pr.date_from,
+            pr.date_to,
+            pr.department_filter,
+            pr.employee_filter,
+            pr.status,
+            pr.notes,
+            pr.created_by,
+            pr.created_at,
+            pr.updated_at,
+            pr.released_at,
+            creator.full_name AS created_by_name,
+            pri.user_id,
+            pri.full_name,
+            pri.department,
+            pri.position,
+            pri.hourly_rate,
+            pri.days_worked,
+            pri.total_hours,
+            pri.overtime_hours,
+            pri.late_minutes,
+            pri.break_minutes,
+            pri.suspension_days,
+            pri.suspension_pay,
+            pri.gross_pay,
+            pri.overtime_pay,
+            pri.allowances,
+            pri.deductions,
+            pri.final_pay,
+            pri.created_at AS item_created_at
+        FROM payroll_run_items pri
+        JOIN payroll_runs pr ON pr.id = pri.payroll_run_id
+        LEFT JOIN users creator ON creator.id = pr.created_by
+        WHERE pri.user_id = ?
+          AND pr.id = ?
+          AND pr.status = 'Released'
+        LIMIT 1
+    """, (user_id, payroll_run_id))
+    return enrich_employee_payroll_item(row, current_user_id=user_id) if row else None
+
+
+def shift_month(year, month, delta):
+    month_index = (year * 12 + (month - 1)) + delta
+    return month_index // 12, (month_index % 12) + 1
+
+
+def parse_calendar_month(year_value="", month_value=""):
+    today = now_dt().date()
+    try:
+        year = int(year_value)
+    except Exception:
+        year = today.year
+    try:
+        month = int(month_value)
+    except Exception:
+        month = today.month
+
+    if year < 2000 or year > 2100:
+        year = today.year
+    if month < 1 or month > 12:
+        month = today.month
+    return year, month
+
+
+def build_employee_attendance_calendar(user_row, year, month):
+    month_start = datetime(year, month, 1).date()
+    _, days_in_month = calendar.monthrange(year, month)
+    month_end = datetime(year, month, days_in_month).date()
+    date_from_text = month_start.strftime("%Y-%m-%d")
+    date_to_text = month_end.strftime("%Y-%m-%d")
+    today_value = now_dt().date()
+    today_text = today_value.strftime("%Y-%m-%d")
+    break_limit_minutes = get_employee_break_limit(user_row)
+
+    attendance_map = {}
+    for row in fetchall("""
+        SELECT *
+        FROM attendance
+        WHERE user_id = ?
+          AND work_date BETWEEN ? AND ?
+        ORDER BY work_date DESC, id DESC
+    """, (user_row["id"], date_from_text, date_to_text)):
+        row = dict(row)
+        attendance_map.setdefault(row["work_date"], row)
+
+    request_map = {}
+    for row in [dict(item) for item in get_approved_special_requests(user_id=user_row["id"], date_from=date_from_text, date_to=date_to_text)]:
+        request_dates = expand_request_dates(row["work_date"], row.get("end_work_date")) if row["request_type"] in LEAVE_REQUEST_TYPES else [row["work_date"]]
+        for request_work_date in request_dates:
+            matched_attendance, _ = get_matching_attendance_context_for_request(
+                row["user_id"],
+                request_work_date,
+                request_type=row["request_type"],
+                requested_time_out=row.get("requested_time_out")
+            )
+            target_work_date = matched_attendance["work_date"] if matched_attendance else request_work_date
+            if target_work_date < date_from_text or target_work_date > date_to_text:
+                continue
+            existing = request_map.get(target_work_date)
+            if existing and existing.get("request_type") in LEAVE_REQUEST_TYPES:
+                continue
+            if row["request_type"] in LEAVE_REQUEST_TYPES or not existing:
+                request_map[target_work_date] = row
+
+    suspension_map = {}
+    for row in [dict(item) for item in get_disciplinary_actions(action_type="Suspension", user_id=user_row["id"])]:
+        for suspension_date in expand_suspension_dates(row):
+            if suspension_date < date_from_text or suspension_date > date_to_text:
+                continue
+            suspension_map[suspension_date] = row
+
+    counts = {
+        "worked": 0,
+        "late": 0,
+        "leave": 0,
+        "suspension": 0,
+        "undertime": 0,
+        "absent": 0,
+        "off_day": 0,
+    }
+    highlights = []
+
+    def push_highlight(entry):
+        if not entry.get("highlight"):
+            return
+        highlights.append({
+            "date": entry["date"],
+            "label": entry["label"],
+            "details": entry["details"],
+            "tone": entry["tone"],
+        })
+
+    def build_entry(work_date):
+        attendance_row = attendance_map.get(work_date)
+        special_request = request_map.get(work_date)
+
+        if attendance_row:
+            row = dict(attendance_row)
+            row["source_type"] = "attendance"
+            row["request_type"] = special_request["request_type"] if special_request else ""
+            row["admin_note"] = special_request["admin_note"] if special_request else ""
+            row["message"] = special_request["message"] if special_request else ""
+            row["requested_time_out"] = special_request["requested_time_out"] if special_request else ""
+            item = enrich_history_record(row, break_limit_minutes, employee_row=user_row)
+            state_key = "worked"
+            label = "Present"
+            tone = "blue"
+
+            if item["record_type"] == "Suspension":
+                state_key, label, tone = "suspension", "Suspended", "red"
+            elif item["record_type"] in LEAVE_REQUEST_TYPES:
+                state_key = "leave"
+                label = item["record_type"]
+                tone = "yellow" if item["record_type"] == "Sick Leave" else "green"
+            elif item["record_type"] == "Undertime":
+                state_key, label, tone = "undertime", "Undertime", "yellow"
+            elif row.get("late_flag") == 1:
+                state_key, label, tone = "late", "Late", "yellow"
+            elif row.get("time_in") and not row.get("time_out") and work_date < today_text:
+                state_key, label, tone = "absent", "Missing Time Out", "red"
+            elif item["display_status"] == "On Break":
+                state_key, label, tone = "worked", "On Break", "blue"
+            elif item["display_status"] == "Timed In":
+                state_key, label, tone = "worked", "Timed In", "blue"
+
+            details = []
+            if row.get("time_in"):
+                details.append(f"In {format_time_12h(row['time_in'])}")
+            if row.get("time_out"):
+                details.append(f"Out {format_time_12h(row['time_out'])}")
+            if item["work_minutes"]:
+                details.append(minutes_to_hm(item["work_minutes"]))
+            if row.get("late_flag") == 1:
+                details.append(f"{int(row.get('late_minutes') or 0)} min late")
+            if item["over_break_minutes"] > 0:
+                details.append(f"Over break {item['over_break_minutes']}m")
+            if not details and item["request_note"]:
+                details.append(item["request_note"])
+
+            return {
+                "date": work_date,
+                "label": label,
+                "tone": tone,
+                "state_key": state_key,
+                "details": " | ".join(details) if details else (item["display_status"] or item["record_type"]),
+                "highlight": state_key in {"late", "leave", "suspension", "undertime", "absent"} or item["over_break_minutes"] > 0,
+            }
+
+        if work_date in suspension_map:
+            suspension = suspension_map[work_date]
+            return {
+                "date": work_date,
+                "label": "Suspended",
+                "tone": "red",
+                "state_key": "suspension",
+                "details": suspension.get("details") or "Suspension in effect for this date.",
+                "highlight": True,
+            }
+
+        if special_request and special_request["request_type"] in LEAVE_REQUEST_TYPES:
+            note = special_request.get("admin_note") or special_request.get("message") or ""
+            return {
+                "date": work_date,
+                "label": special_request["request_type"],
+                "tone": "yellow" if special_request["request_type"] == "Sick Leave" else "green",
+                "state_key": "leave",
+                "details": note or f"Approved {special_request['request_type'].lower()} request.",
+                "highlight": True,
+            }
+
+        if special_request and special_request["request_type"] == "Undertime":
+            synthetic_row = {
+                "id": None,
+                "user_id": special_request["user_id"],
+                "work_date": work_date,
+                "time_in": None,
+                "time_out": special_request.get("requested_time_out"),
+                "status": "Approved Undertime",
+                "proof_file": None,
+                "late_flag": 0,
+                "late_minutes": 0,
+                "request_type": "Undertime",
+                "admin_note": special_request.get("admin_note") or "",
+                "message": special_request.get("message") or "",
+                "requested_time_out": special_request.get("requested_time_out") or "",
+                "source_type": "request",
+            }
+            item = enrich_history_record(synthetic_row, break_limit_minutes, employee_row=user_row)
+            return {
+                "date": work_date,
+                "label": "Undertime",
+                "tone": "yellow",
+                "state_key": "undertime",
+                "details": item["request_note"] or "Approved undertime request.",
+                "highlight": True,
+            }
+
+        scheduled = is_scheduled_on_date(user_row, work_date)
+        if scheduled:
+            if work_date < today_text or (work_date == today_text and is_absent_today(user_row, None)):
+                return {
+                    "date": work_date,
+                    "label": "Absent",
+                    "tone": "red",
+                    "state_key": "absent",
+                    "details": "Scheduled day with no attendance record.",
+                    "highlight": True,
+                }
+            if work_date == today_text:
+                return {
+                    "date": work_date,
+                    "label": "Awaiting Scan",
+                    "tone": "gray",
+                    "state_key": "scheduled",
+                    "details": "Scheduled for today. Attendance has not been recorded yet.",
+                    "highlight": False,
+                }
+            return {
+                "date": work_date,
+                "label": "Scheduled",
+                "tone": "gray",
+                "state_key": "scheduled",
+                "details": f"Shift {user_row['shift_start'] or DEFAULT_SHIFT_START} - {user_row['shift_end'] or DEFAULT_SHIFT_END}",
+                "highlight": False,
+            }
+
+        return {
+            "date": work_date,
+            "label": "Off Day",
+            "tone": "gray",
+            "state_key": "off_day",
+            "details": "Not part of your scheduled workdays.",
+            "highlight": False,
+        }
+
+    weeks = []
+    calendar_weeks = calendar.Calendar(firstweekday=0).monthdatescalendar(year, month)
+    for week in calendar_weeks:
+        week_entries = []
+        for day in week:
+            work_date = day.strftime("%Y-%m-%d")
+            in_month = day.month == month
+            entry = {
+                "date": work_date,
+                "day_number": day.day,
+                "in_month": in_month,
+                "is_today": work_date == today_text,
+                "label": "",
+                "tone": "gray",
+                "state_key": "outside",
+                "details": "",
+                "highlight": False,
+            }
+            if in_month:
+                entry.update(build_entry(work_date))
+                if entry["state_key"] in {"worked", "late", "undertime"}:
+                    counts["worked"] += 1
+                elif entry["state_key"] == "leave":
+                    counts["leave"] += 1
+                elif entry["state_key"] == "suspension":
+                    counts["suspension"] += 1
+                elif entry["state_key"] == "absent":
+                    counts["absent"] += 1
+                elif entry["state_key"] == "off_day":
+                    counts["off_day"] += 1
+
+                if entry["state_key"] == "late":
+                    counts["late"] += 1
+                if entry["state_key"] == "undertime":
+                    counts["undertime"] += 1
+                push_highlight(entry)
+            week_entries.append(entry)
+        weeks.append(week_entries)
+
+    prev_year, prev_month = shift_month(year, month, -1)
+    next_year, next_month = shift_month(year, month, 1)
+    highlights.sort(key=lambda item: item["date"], reverse=True)
+
+    return {
+        "month_label": month_start.strftime("%B %Y"),
+        "weeks": weeks,
+        "counts": counts,
+        "highlights": highlights[:10],
+        "prev_year": prev_year,
+        "prev_month": prev_month,
+        "next_year": next_year,
+        "next_month": next_month,
+        "year": year,
+        "month": month,
+        "weekday_labels": [label for _, label in WEEKDAY_OPTIONS],
+    }
+
+
 def save_payroll_run_snapshot(date_from, date_to, department_filter="", employee_filter="", status="Draft", notes="", actor_id=None):
     status = status if status in {"Draft", "Released"} else "Draft"
     date_from_text = payroll_date_text(date_from)
@@ -3992,6 +4422,10 @@ def dashboard():
     break_limit_minutes = get_employee_break_limit(user)
     over_break_minutes = get_overbreak_minutes(todays_break_minutes, break_limit_minutes)
     leave_summary = get_leave_balance_summary(user)
+    latest_payslip = None
+    released_runs = get_employee_released_payroll_runs(user["id"], limit=1)
+    if released_runs:
+        latest_payslip = released_runs[0]
 
     return render_template(
         "employee_dashboard.html",
@@ -4006,7 +4440,11 @@ def dashboard():
         leave_summary=leave_summary,
         break_limit_minutes=break_limit_minutes,
         over_break_minutes=over_break_minutes,
-        minutes_to_hm=minutes_to_hm
+        minutes_to_hm=minutes_to_hm,
+        latest_payslip=latest_payslip,
+        current_calendar_year=now_dt().year,
+        current_calendar_month=now_dt().month,
+        current_calendar_label=now_dt().strftime("%B %Y")
     )
 
 
@@ -4075,6 +4513,65 @@ def employee_history():
     user = get_user_by_id(session["user_id"])
     records = build_employee_history_records(user, limit=60)
     return render_template("employee_history.html", records=records, minutes_to_hm=minutes_to_hm)
+
+
+@app.route("/my-payroll")
+@login_required(role="employee")
+def employee_payroll_history():
+    user = get_user_by_id(session["user_id"])
+    if not user:
+        session.clear()
+        flash("Your session expired. Please log in again.", "warning")
+        return redirect(url_for("login"))
+
+    payroll_runs = get_employee_released_payroll_runs(user["id"], limit=24)
+    return render_template(
+        "employee_payroll_history.html",
+        user=user,
+        payroll_runs=payroll_runs
+    )
+
+
+@app.route("/my-payroll/<int:payroll_run_id>")
+@login_required(role="employee")
+def employee_payslip(payroll_run_id):
+    user = get_user_by_id(session["user_id"])
+    if not user:
+        session.clear()
+        flash("Your session expired. Please log in again.", "warning")
+        return redirect(url_for("login"))
+
+    payslip = get_employee_released_payroll_item(user["id"], payroll_run_id)
+    if not payslip:
+        flash("Released payslip not found for your account.", "warning")
+        return redirect(url_for("employee_payroll_history"))
+
+    return render_template(
+        "employee_payslip.html",
+        user=user,
+        payslip=payslip
+    )
+
+
+@app.route("/attendance-calendar")
+@login_required(role="employee")
+def employee_attendance_calendar():
+    user = get_user_by_id(session["user_id"])
+    if not user:
+        session.clear()
+        flash("Your session expired. Please log in again.", "warning")
+        return redirect(url_for("login"))
+
+    year, month = parse_calendar_month(
+        request.args.get("year", ""),
+        request.args.get("month", "")
+    )
+    calendar_data = build_employee_attendance_calendar(user, year, month)
+    return render_template(
+        "employee_attendance_calendar.html",
+        user=user,
+        calendar_data=calendar_data
+    )
 
 
 @app.route("/profile", methods=["GET", "POST"])
