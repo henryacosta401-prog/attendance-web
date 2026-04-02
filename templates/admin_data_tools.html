@@ -95,6 +95,25 @@
             <button class="btn btn-primary" type="submit">Monthly Cleanup</button>
         </form>
     </div>
+
+    <div class="divider"></div>
+    <h4 style="margin-top:0;">Custom Date Range Cleanup</h4>
+    <form method="POST" class="grid grid-3" style="align-items:end;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="action" value="cleanup_logs_custom">
+        <div>
+            <label>From Date</label>
+            <input class="input" type="date" name="cleanup_from" value="{{ cleanup_from }}">
+        </div>
+        <div>
+            <label>To Date</label>
+            <input class="input" type="date" name="cleanup_to" value="{{ cleanup_to }}">
+        </div>
+        <div>
+            <button class="btn btn-secondary" type="submit" style="width:100%;" onclick="return confirm('Delete logs and read notifications inside this date range? Core attendance and payroll data will be kept.');">Cleanup Date Range</button>
+        </div>
+    </form>
+    <div class="small muted" style="margin-top:10px;">The selected range is inclusive from the start date through the end date.</div>
 </div>
 
 <div class="card" style="margin-top:18px; border-color:rgba(239,68,68,0.28); background:linear-gradient(180deg, rgba(78, 20, 20, 0.18), rgba(255,255,255,0.04));">

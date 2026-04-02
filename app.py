@@ -2959,6 +2959,61 @@ def perform_log_retention_cleanup(retention_days):
     return removed_counts
 
 
+def perform_log_cleanup_for_date_range(date_from_value, date_to_value):
+    start_date = parse_iso_date(date_from_value)
+    end_date = parse_iso_date(date_to_value)
+
+    if not start_date or not end_date:
+        raise ValueError("Choose both cleanup start and cleanup end dates.")
+
+    if end_date < start_date:
+        start_date, end_date = end_date, start_date
+
+    range_start_text = datetime.combine(start_date, datetime.min.time()).strftime("%Y-%m-%d %H:%M:%S")
+    range_end_exclusive_text = datetime.combine(end_date + timedelta(days=1), datetime.min.time()).strftime("%Y-%m-%d %H:%M:%S")
+
+    db = get_db()
+    removed_counts = {
+        "activity_logs": 0,
+        "scanner_logs": 0,
+        "login_attempts": 0,
+        "read_notifications": 0,
+    }
+
+    delete_specs = [
+        ("activity_logs", "DELETE FROM activity_logs WHERE created_at >= ? AND created_at < ?"),
+        ("scanner_logs", "DELETE FROM scanner_logs WHERE created_at >= ? AND created_at < ?"),
+        ("login_attempts", "DELETE FROM login_attempts WHERE attempted_at >= ? AND attempted_at < ?"),
+        ("read_notifications", "DELETE FROM notifications WHERE COALESCE(is_read, 0) = 1 AND created_at >= ? AND created_at < ?"),
+    ]
+
+    try:
+        if using_postgres():
+            with db.cursor() as cur:
+                for key, query in delete_specs:
+                    cur.execute(convert_query(query), (range_start_text, range_end_exclusive_text))
+                    removed_counts[key] = max(cur.rowcount or 0, 0)
+            db.commit()
+        else:
+            for key, query in delete_specs:
+                cur = db.execute(query, (range_start_text, range_end_exclusive_text))
+                removed_counts[key] = max(cur.rowcount or 0, 0)
+            db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    removed_counts["date_from"] = start_date.strftime("%Y-%m-%d")
+    removed_counts["date_to"] = end_date.strftime("%Y-%m-%d")
+    removed_counts["total_removed"] = (
+        removed_counts["activity_logs"]
+        + removed_counts["scanner_logs"]
+        + removed_counts["login_attempts"]
+        + removed_counts["read_notifications"]
+    )
+    return removed_counts
+
+
 def get_employee_break_limit(user_row):
     if not user_row:
         return BREAK_LIMIT_MINUTES
@@ -7881,6 +7936,8 @@ def admin_history():
 @login_required(role="admin")
 def admin_data_tools():
     search = request.args.get("search", "").strip()
+    cleanup_from = request.args.get("cleanup_from", "").strip()
+    cleanup_to = request.args.get("cleanup_to", "").strip()
 
     if request.method == "POST":
         action = request.form.get("action", "").strip()
@@ -7912,14 +7969,38 @@ def admin_data_tools():
             except ValueError as exc:
                 flash(str(exc), "danger")
             return redirect(url_for("admin_data_tools", search=search))
+        if action == "cleanup_logs_custom":
+            cleanup_from = request.form.get("cleanup_from", "").strip()
+            cleanup_to = request.form.get("cleanup_to", "").strip()
+            try:
+                result = perform_log_cleanup_for_date_range(cleanup_from, cleanup_to)
+                log_activity(
+                    session["user_id"],
+                    "CLEANUP LOGS",
+                    f"Removed {result['total_removed']} log row(s) for {result['date_from']} to {result['date_to']}."
+                )
+                flash(
+                    "Cleanup completed for "
+                    f"{result['date_from']} to {result['date_to']}. Removed "
+                    f"{result['activity_logs']} activity log(s), "
+                    f"{result['scanner_logs']} scanner log(s), "
+                    f"{result['login_attempts']} login attempt row(s), and "
+                    f"{result['read_notifications']} read notification(s).",
+                    "success"
+                )
+                cleanup_from = result["date_from"]
+                cleanup_to = result["date_to"]
+            except ValueError as exc:
+                flash(str(exc), "danger")
+            return redirect(url_for("admin_data_tools", search=search, cleanup_from=cleanup_from, cleanup_to=cleanup_to))
         if action == "go_live_reset":
             confirmation = request.form.get("confirmation_text", "").strip().upper()
             if confirmation != "RESET":
                 flash("Type RESET exactly before running the go-live reset.", "danger")
-                return redirect(url_for("admin_data_tools", search=search))
+                return redirect(url_for("admin_data_tools", search=search, cleanup_from=cleanup_from, cleanup_to=cleanup_to))
             if using_postgres() and request.form.get("confirm_no_backup") != "1":
                 flash("On Postgres/Render, no automatic database backup is created by this reset. Confirm that you understand before continuing.", "danger")
-                return redirect(url_for("admin_data_tools", search=search))
+                return redirect(url_for("admin_data_tools", search=search, cleanup_from=cleanup_from, cleanup_to=cleanup_to))
             try:
                 result = perform_go_live_reset()
                 backup_note = f" Backup: {os.path.basename(result['backup_path'])}." if result.get("backup_path") else ""
@@ -7930,12 +8011,12 @@ def admin_data_tools():
                 flash(f"Go-live reset completed.{backup_note}{upload_note}", "success")
             except ValueError as exc:
                 flash(str(exc), "danger")
-            return redirect(url_for("admin_data_tools", search=search))
+            return redirect(url_for("admin_data_tools", search=search, cleanup_from=cleanup_from, cleanup_to=cleanup_to))
 
         attendance_id = request.form.get("attendance_id", "").strip()
         if not attendance_id:
             flash("Attendance record is required.", "danger")
-            return redirect(url_for("admin_data_tools", search=search))
+            return redirect(url_for("admin_data_tools", search=search, cleanup_from=cleanup_from, cleanup_to=cleanup_to))
 
         try:
             updated_row = update_attendance_record_by_admin(
@@ -7951,7 +8032,7 @@ def admin_data_tools():
         except ValueError as exc:
             flash(str(exc), "danger")
 
-        return redirect(url_for("admin_data_tools", search=search))
+        return redirect(url_for("admin_data_tools", search=search, cleanup_from=cleanup_from, cleanup_to=cleanup_to))
 
     candidates = get_suspicious_attendance_records(search=search, limit=60)
     backups = get_backup_files(limit=12)
@@ -7961,6 +8042,8 @@ def admin_data_tools():
         candidates=candidates,
         backups=backups,
         search=search,
+        cleanup_from=cleanup_from,
+        cleanup_to=cleanup_to,
         cleanup_summary=cleanup_summary,
         using_postgres_reset=using_postgres(),
         format_datetime_12h=format_datetime_12h,
