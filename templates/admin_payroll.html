@@ -280,6 +280,15 @@
                         {% endif %}
                     </div>
                 </div>
+                {% if current_run.status == 'Draft' %}
+                    <div class="payroll-actions" style="margin-top:16px;">
+                        <form method="POST" action="{{ url_for('delete_payroll_run', payroll_run_id=current_run.id) }}" class="payroll-inline-form" onsubmit="return confirm('Delete this draft payroll snapshot? This cannot be undone.');">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            {{ payroll_hidden_filters() }}
+                            <button class="btn btn-danger" type="submit">Delete Draft</button>
+                        </form>
+                    </div>
+                {% endif %}
             {% else %}
                 <div class="payroll-empty" style="margin-top:16px;">No payroll snapshot has been saved for this exact filter yet.</div>
             {% endif %}
@@ -328,6 +337,13 @@
                                     {% endif %}
                                     <div class="payroll-actions" style="margin-top:10px;">
                                         <a class="btn btn-secondary" href="{{ url_for('admin_payroll', period='custom', date_from=run.date_from, date_to=run.date_to, department=run.department_filter or '', employee_id=run.employee_filter or '') }}">Open Run</a>
+                                        {% if run.status == 'Draft' %}
+                                            <form method="POST" action="{{ url_for('delete_payroll_run', payroll_run_id=run.id) }}" class="payroll-inline-form" onsubmit="return confirm('Delete this draft payroll snapshot? This cannot be undone.');">
+                                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                                {{ payroll_hidden_filters() }}
+                                                <button class="btn btn-danger" type="submit">Delete Draft</button>
+                                            </form>
+                                        {% endif %}
                                     </div>
                                 </div>
                             {% endfor %}

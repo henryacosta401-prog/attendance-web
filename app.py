@@ -6585,6 +6585,44 @@ def save_payroll_run():
     return redirect(url_for("admin_payroll", **redirect_args))
 
 
+@app.route("/admin/payroll/runs/<int:payroll_run_id>/delete", methods=["POST"])
+@login_required(role="admin")
+def delete_payroll_run(payroll_run_id):
+    redirect_args = payroll_filter_redirect_args(request.form)
+    payroll_run = fetchone("""
+        SELECT pr.*, creator.full_name AS created_by_name
+        FROM payroll_runs pr
+        LEFT JOIN users creator ON creator.id = pr.created_by
+        WHERE pr.id = ?
+    """, (payroll_run_id,))
+
+    if not payroll_run:
+        flash("Payroll run not found.", "warning")
+        return redirect(url_for("admin_payroll", **redirect_args))
+
+    payroll_run = enrich_admin_payroll_run(payroll_run)
+    if payroll_run["status"] != "Draft":
+        flash("Only draft payroll snapshots can be deleted.", "danger")
+        return redirect(url_for("admin_payroll", **redirect_args))
+
+    db = get_db()
+    try:
+        execute_db("DELETE FROM payroll_run_items WHERE payroll_run_id = ?", (payroll_run_id,))
+        execute_db("DELETE FROM payroll_runs WHERE id = ?", (payroll_run_id,))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    log_activity(
+        session["user_id"],
+        "DELETE PAYROLL DRAFT",
+        f"Deleted draft payroll snapshot {payroll_run['period_label']} ({payroll_run['item_count']} employee row(s))"
+    )
+    flash(f"Deleted draft payroll snapshot for {payroll_run['period_label']}.", "info")
+    return redirect(url_for("admin_payroll", **redirect_args))
+
+
 @app.route("/admin/payroll/bulk-release", methods=["POST"])
 @login_required(role="admin")
 def bulk_release_payroll_runs():
