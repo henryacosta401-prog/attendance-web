@@ -22,7 +22,8 @@
 
 .payslip-stat,
 .payslip-detail-card,
-.payslip-breakdown-card {
+.payslip-breakdown-card,
+.payslip-adjustment-card {
     padding: 18px;
     border-radius: 22px;
     background: linear-gradient(180deg, rgba(20, 31, 52, 0.96), rgba(13, 21, 38, 0.94));
@@ -118,6 +119,62 @@
     border-top: 1px solid rgba(96,165,250,0.20);
 }
 
+.payslip-adjustment-list {
+    display: grid;
+    gap: 12px;
+}
+
+.payslip-adjustment-item {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px;
+    border-radius: 18px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+}
+
+.payslip-adjustment-type {
+    color: #9fb0d4;
+    font-size: 12px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.payslip-adjustment-title {
+    margin-top: 4px;
+    color: #ffffff;
+    font-weight: 800;
+}
+
+.payslip-adjustment-note {
+    margin-top: 6px;
+    color: #cdd8ee;
+    font-size: 13px;
+    line-height: 1.45;
+}
+
+.payslip-adjustment-meta {
+    margin-top: 8px;
+    color: #94a3b8;
+    font-size: 12px;
+}
+
+.payslip-adjustment-amount {
+    color: #ffffff;
+    font-weight: 900;
+    white-space: nowrap;
+}
+
+.payslip-adjustment-amount-positive {
+    color: #86efac;
+}
+
+.payslip-adjustment-amount-negative {
+    color: #fda4af;
+}
+
 @media (max-width: 1100px) {
     .payslip-grid,
     .payslip-summary-grid {
@@ -147,7 +204,9 @@
     .soft,
     .payslip-stat,
     .payslip-detail-card,
-    .payslip-breakdown-card {
+    .payslip-breakdown-card,
+    .payslip-adjustment-card,
+    .payslip-adjustment-item {
         background: #ffffff !important;
         color: #111827 !important;
         box-shadow: none !important;
@@ -159,6 +218,8 @@
     .payslip-list-value,
     .payslip-breakdown-label,
     .payslip-breakdown-value,
+    .payslip-adjustment-title,
+    .payslip-adjustment-amount,
     h1,
     h2,
     h3 {
@@ -169,7 +230,10 @@
     .section-subtitle,
     .payslip-stat-label,
     .payslip-list-label,
-    .payslip-breakdown-sub {
+    .payslip-breakdown-sub,
+    .payslip-adjustment-type,
+    .payslip-adjustment-note,
+    .payslip-adjustment-meta {
         color: #4b5563 !important;
     }
 }
@@ -321,5 +385,39 @@
             </div>
         </aside>
     </div>
+
+    {% if payslip.has_adjustment_entries or payslip.missing_adjustment_detail %}
+    <section class="payslip-adjustment-card">
+        <div class="section-title" style="margin-bottom:12px;">Adjustment Reasons</div>
+        <div class="section-subtitle" style="margin-bottom:14px;">Employees can use this section to understand why any allowance or deduction was included in the released payroll.</div>
+
+        {% if payslip.has_adjustment_entries %}
+            <div class="payslip-adjustment-list">
+                {% for entry in payslip.adjustment_entries %}
+                    <div class="payslip-adjustment-item">
+                        <div>
+                            <div class="payslip-adjustment-type">{{ entry.adjustment_type }}</div>
+                            <div class="payslip-adjustment-title">{{ entry.label }}</div>
+                            {% if entry.notes %}
+                                <div class="payslip-adjustment-note">{{ entry.notes }}</div>
+                            {% endif %}
+                            <div class="payslip-adjustment-meta">
+                                {{ entry.source_kind or 'Manual' }}{% if entry.recurrence_type %} | {{ entry.recurrence_type }}{% endif %}{% if entry.adjustment_created_at %} | Saved on {{ entry.adjustment_created_at }}{% endif %}{% if entry.created_by_name %} by {{ entry.created_by_name }}{% endif %}
+                            </div>
+                        </div>
+                        <div class="payslip-adjustment-amount {% if entry.is_deduction %}payslip-adjustment-amount-negative{% else %}payslip-adjustment-amount-positive{% endif %}">
+                            {% if entry.is_deduction %}-{% else %}+{% endif %}{{ entry.display_amount }}
+                        </div>
+                    </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <div class="empty-state">
+                <div class="section-title" style="margin-bottom:8px;">Detailed reason not saved in this older snapshot</div>
+                <p class="muted">This released payroll shows an allowance or deduction total, but the individual reason lines were not yet being stored when this snapshot was created.</p>
+            </div>
+        {% endif %}
+    </section>
+    {% endif %}
 </div>
 {% endblock %}

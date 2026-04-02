@@ -603,6 +603,26 @@ def init_sqlite_db():
     """)
 
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS payroll_recurring_rules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            adjustment_type TEXT NOT NULL,
+            label TEXT NOT NULL,
+            amount REAL NOT NULL DEFAULT 0,
+            recurrence_type TEXT NOT NULL DEFAULT 'Every Payroll',
+            start_date TEXT,
+            end_date TEXT,
+            notes TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_by INTEGER,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users (id),
+            FOREIGN KEY (created_by) REFERENCES users (id)
+        )
+    """)
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS payroll_runs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             date_from TEXT NOT NULL,
@@ -643,6 +663,28 @@ def init_sqlite_db():
             created_at TEXT NOT NULL,
             FOREIGN KEY (payroll_run_id) REFERENCES payroll_runs (id),
             FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS payroll_run_item_adjustments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            payroll_run_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            source_kind TEXT,
+            source_rule_id INTEGER,
+            recurrence_type TEXT,
+            adjustment_type TEXT NOT NULL,
+            label TEXT NOT NULL,
+            amount REAL NOT NULL DEFAULT 0,
+            notes TEXT,
+            created_by INTEGER,
+            created_by_name TEXT,
+            adjustment_created_at TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (payroll_run_id) REFERENCES payroll_runs (id),
+            FOREIGN KEY (user_id) REFERENCES users (id),
+            FOREIGN KEY (created_by) REFERENCES users (id)
         )
     """)
 
@@ -957,6 +999,76 @@ def init_sqlite_db():
                 FOREIGN KEY (user_id) REFERENCES users (id)
             )
         """)
+
+    existing_cols_payroll_run_item_adjustments = [row[1] for row in cursor.execute("PRAGMA table_info(payroll_run_item_adjustments)").fetchall()]
+    if not existing_cols_payroll_run_item_adjustments:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS payroll_run_item_adjustments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                payroll_run_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                source_kind TEXT,
+                source_rule_id INTEGER,
+                recurrence_type TEXT,
+                adjustment_type TEXT NOT NULL,
+                label TEXT NOT NULL,
+                amount REAL NOT NULL DEFAULT 0,
+                notes TEXT,
+                created_by INTEGER,
+                created_by_name TEXT,
+                adjustment_created_at TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (payroll_run_id) REFERENCES payroll_runs (id),
+                FOREIGN KEY (user_id) REFERENCES users (id),
+                FOREIGN KEY (created_by) REFERENCES users (id)
+            )
+        """)
+    else:
+        if "source_kind" not in existing_cols_payroll_run_item_adjustments:
+            cursor.execute("ALTER TABLE payroll_run_item_adjustments ADD COLUMN source_kind TEXT")
+        if "source_rule_id" not in existing_cols_payroll_run_item_adjustments:
+            cursor.execute("ALTER TABLE payroll_run_item_adjustments ADD COLUMN source_rule_id INTEGER")
+        if "recurrence_type" not in existing_cols_payroll_run_item_adjustments:
+            cursor.execute("ALTER TABLE payroll_run_item_adjustments ADD COLUMN recurrence_type TEXT")
+
+    existing_cols_payroll_recurring_rules = [row[1] for row in cursor.execute("PRAGMA table_info(payroll_recurring_rules)").fetchall()]
+    if not existing_cols_payroll_recurring_rules:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS payroll_recurring_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                adjustment_type TEXT NOT NULL,
+                label TEXT NOT NULL,
+                amount REAL NOT NULL DEFAULT 0,
+                recurrence_type TEXT NOT NULL DEFAULT 'Every Payroll',
+                start_date TEXT,
+                end_date TEXT,
+                notes TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_by INTEGER,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users (id),
+                FOREIGN KEY (created_by) REFERENCES users (id)
+            )
+        """)
+    else:
+        if "recurrence_type" not in existing_cols_payroll_recurring_rules:
+            cursor.execute("ALTER TABLE payroll_recurring_rules ADD COLUMN recurrence_type TEXT NOT NULL DEFAULT 'Every Payroll'")
+        if "start_date" not in existing_cols_payroll_recurring_rules:
+            cursor.execute("ALTER TABLE payroll_recurring_rules ADD COLUMN start_date TEXT")
+        if "end_date" not in existing_cols_payroll_recurring_rules:
+            cursor.execute("ALTER TABLE payroll_recurring_rules ADD COLUMN end_date TEXT")
+        if "notes" not in existing_cols_payroll_recurring_rules:
+            cursor.execute("ALTER TABLE payroll_recurring_rules ADD COLUMN notes TEXT")
+        if "is_active" not in existing_cols_payroll_recurring_rules:
+            cursor.execute("ALTER TABLE payroll_recurring_rules ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
+        if "created_by" not in existing_cols_payroll_recurring_rules:
+            cursor.execute("ALTER TABLE payroll_recurring_rules ADD COLUMN created_by INTEGER")
+        if "created_at" not in existing_cols_payroll_recurring_rules:
+            cursor.execute("ALTER TABLE payroll_recurring_rules ADD COLUMN created_at TEXT")
+        if "updated_at" not in existing_cols_payroll_recurring_rules:
+            cursor.execute("ALTER TABLE payroll_recurring_rules ADD COLUMN updated_at TEXT")
 
     db.commit()
 
@@ -1281,6 +1393,36 @@ def init_postgres_db():
         cur.execute("ALTER TABLE payroll_adjustments ADD COLUMN IF NOT EXISTS created_at TEXT")
 
         cur.execute("""
+            CREATE TABLE IF NOT EXISTS payroll_recurring_rules (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                adjustment_type TEXT NOT NULL,
+                label TEXT NOT NULL,
+                amount REAL NOT NULL DEFAULT 0,
+                recurrence_type TEXT NOT NULL DEFAULT 'Every Payroll',
+                start_date TEXT,
+                end_date TEXT,
+                notes TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_by INTEGER,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        cur.execute("ALTER TABLE payroll_recurring_rules ADD COLUMN IF NOT EXISTS user_id INTEGER")
+        cur.execute("ALTER TABLE payroll_recurring_rules ADD COLUMN IF NOT EXISTS adjustment_type TEXT")
+        cur.execute("ALTER TABLE payroll_recurring_rules ADD COLUMN IF NOT EXISTS label TEXT")
+        cur.execute("ALTER TABLE payroll_recurring_rules ADD COLUMN IF NOT EXISTS amount REAL NOT NULL DEFAULT 0")
+        cur.execute("ALTER TABLE payroll_recurring_rules ADD COLUMN IF NOT EXISTS recurrence_type TEXT NOT NULL DEFAULT 'Every Payroll'")
+        cur.execute("ALTER TABLE payroll_recurring_rules ADD COLUMN IF NOT EXISTS start_date TEXT")
+        cur.execute("ALTER TABLE payroll_recurring_rules ADD COLUMN IF NOT EXISTS end_date TEXT")
+        cur.execute("ALTER TABLE payroll_recurring_rules ADD COLUMN IF NOT EXISTS notes TEXT")
+        cur.execute("ALTER TABLE payroll_recurring_rules ADD COLUMN IF NOT EXISTS is_active INTEGER NOT NULL DEFAULT 1")
+        cur.execute("ALTER TABLE payroll_recurring_rules ADD COLUMN IF NOT EXISTS created_by INTEGER")
+        cur.execute("ALTER TABLE payroll_recurring_rules ADD COLUMN IF NOT EXISTS created_at TEXT")
+        cur.execute("ALTER TABLE payroll_recurring_rules ADD COLUMN IF NOT EXISTS updated_at TEXT")
+
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS payroll_runs (
                 id SERIAL PRIMARY KEY,
                 date_from TEXT NOT NULL,
@@ -1349,6 +1491,38 @@ def init_postgres_db():
         cur.execute("ALTER TABLE payroll_run_items ADD COLUMN IF NOT EXISTS deductions REAL NOT NULL DEFAULT 0")
         cur.execute("ALTER TABLE payroll_run_items ADD COLUMN IF NOT EXISTS final_pay REAL NOT NULL DEFAULT 0")
         cur.execute("ALTER TABLE payroll_run_items ADD COLUMN IF NOT EXISTS created_at TEXT")
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS payroll_run_item_adjustments (
+                id SERIAL PRIMARY KEY,
+                payroll_run_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                source_kind TEXT,
+                source_rule_id INTEGER,
+                recurrence_type TEXT,
+                adjustment_type TEXT NOT NULL,
+                label TEXT NOT NULL,
+                amount REAL NOT NULL DEFAULT 0,
+                notes TEXT,
+                created_by INTEGER,
+                created_by_name TEXT,
+                adjustment_created_at TEXT,
+                created_at TEXT NOT NULL
+            )
+        """)
+        cur.execute("ALTER TABLE payroll_run_item_adjustments ADD COLUMN IF NOT EXISTS payroll_run_id INTEGER")
+        cur.execute("ALTER TABLE payroll_run_item_adjustments ADD COLUMN IF NOT EXISTS user_id INTEGER")
+        cur.execute("ALTER TABLE payroll_run_item_adjustments ADD COLUMN IF NOT EXISTS source_kind TEXT")
+        cur.execute("ALTER TABLE payroll_run_item_adjustments ADD COLUMN IF NOT EXISTS source_rule_id INTEGER")
+        cur.execute("ALTER TABLE payroll_run_item_adjustments ADD COLUMN IF NOT EXISTS recurrence_type TEXT")
+        cur.execute("ALTER TABLE payroll_run_item_adjustments ADD COLUMN IF NOT EXISTS adjustment_type TEXT")
+        cur.execute("ALTER TABLE payroll_run_item_adjustments ADD COLUMN IF NOT EXISTS label TEXT")
+        cur.execute("ALTER TABLE payroll_run_item_adjustments ADD COLUMN IF NOT EXISTS amount REAL NOT NULL DEFAULT 0")
+        cur.execute("ALTER TABLE payroll_run_item_adjustments ADD COLUMN IF NOT EXISTS notes TEXT")
+        cur.execute("ALTER TABLE payroll_run_item_adjustments ADD COLUMN IF NOT EXISTS created_by INTEGER")
+        cur.execute("ALTER TABLE payroll_run_item_adjustments ADD COLUMN IF NOT EXISTS created_by_name TEXT")
+        cur.execute("ALTER TABLE payroll_run_item_adjustments ADD COLUMN IF NOT EXISTS adjustment_created_at TEXT")
+        cur.execute("ALTER TABLE payroll_run_item_adjustments ADD COLUMN IF NOT EXISTS created_at TEXT")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_login_attempts_ip_attempted_at ON login_attempts(ip_address, attempted_at)")
         try:
             cur.execute("SAVEPOINT attendance_open_index")
@@ -2666,6 +2840,7 @@ def perform_go_live_reset():
                     scanner_logs,
                     overtime_sessions,
                     payroll_adjustments,
+                    payroll_run_item_adjustments,
                     payroll_run_items,
                     payroll_runs,
                     login_attempts,
@@ -2685,6 +2860,7 @@ def perform_go_live_reset():
             "scanner_logs",
             "overtime_sessions",
             "payroll_adjustments",
+            "payroll_run_item_adjustments",
             "payroll_run_items",
             "payroll_runs",
             "login_attempts",
@@ -2695,7 +2871,7 @@ def perform_go_live_reset():
         try:
             cur.execute("""
                 DELETE FROM sqlite_sequence
-                WHERE name IN ('breaks', 'attendance', 'correction_requests', 'notifications', 'activity_logs', 'scanner_logs', 'overtime_sessions', 'payroll_adjustments', 'payroll_run_items', 'payroll_runs', 'login_attempts', 'incident_reports', 'disciplinary_actions')
+                WHERE name IN ('breaks', 'attendance', 'correction_requests', 'notifications', 'activity_logs', 'scanner_logs', 'overtime_sessions', 'payroll_adjustments', 'payroll_run_item_adjustments', 'payroll_run_items', 'payroll_runs', 'login_attempts', 'incident_reports', 'disciplinary_actions')
             """)
         except sqlite3.OperationalError:
             pass
@@ -3424,6 +3600,156 @@ def get_payroll_adjustments(date_from, date_to, department_filter="", employee_f
     return fetchall(sql, tuple(params))
 
 
+def get_payroll_recurring_rules(department_filter="", employee_filter="", include_inactive=True):
+    sql = """
+        SELECT
+            prr.*,
+            u.full_name AS employee_name,
+            u.department AS employee_department,
+            u.position AS employee_position,
+            creator.full_name AS created_by_name
+        FROM payroll_recurring_rules prr
+        JOIN users u ON u.id = prr.user_id
+        LEFT JOIN users creator ON creator.id = prr.created_by
+        WHERE 1 = 1
+    """
+    params = []
+    if not include_inactive:
+        sql += " AND COALESCE(prr.is_active, 1) = 1"
+    if department_filter:
+        sql += " AND COALESCE(u.department, '') = ?"
+        params.append(department_filter)
+    if employee_filter:
+        sql += " AND prr.user_id = ?"
+        params.append(int(employee_filter))
+    sql += " ORDER BY COALESCE(prr.is_active, 1) DESC, u.full_name ASC, prr.label ASC, prr.id DESC"
+    rows = [dict(row) for row in fetchall(sql, tuple(params))]
+    for row in rows:
+        monthly_anchor = parse_iso_date(row.get("start_date"))
+        row["amount"] = round(float(row.get("amount") or 0), 2)
+        row["display_amount"] = format_currency(row["amount"])
+        row["status_label"] = "Active" if int(row.get("is_active") or 0) == 1 else "Inactive"
+        row["active_range_label"] = "Open-ended"
+        if row.get("start_date") and row.get("end_date"):
+            row["active_range_label"] = f"{row['start_date']} to {row['end_date']}"
+        elif row.get("start_date"):
+            row["active_range_label"] = f"Starting {row['start_date']}"
+        elif row.get("end_date"):
+            row["active_range_label"] = f"Until {row['end_date']}"
+        row["recurrence_description"] = (
+            "Applies to every payroll period in range."
+            if row.get("recurrence_type") != "Monthly"
+            else f"Applies once per month when the payroll period includes day {(monthly_anchor.day if monthly_anchor else 1)}."
+        )
+    return rows
+
+
+def recurring_rule_applies_to_period(rule_row, period_from, period_to):
+    if int(rule_row.get("is_active") or 0) != 1:
+        return False
+
+    start_date = parse_iso_date(rule_row.get("start_date"))
+    end_date = parse_iso_date(rule_row.get("end_date"))
+    if start_date and period_to < start_date:
+        return False
+    if end_date and period_from > end_date:
+        return False
+
+    recurrence_type = (rule_row.get("recurrence_type") or "Every Payroll").strip() or "Every Payroll"
+    if recurrence_type != "Monthly":
+        return True
+
+    anchor_source = start_date or period_from.replace(day=1)
+    anchor_day = anchor_source.day
+    month_cursor = period_from.replace(day=1)
+    final_month = period_to.replace(day=1)
+    while month_cursor <= final_month:
+        days_in_month = calendar.monthrange(month_cursor.year, month_cursor.month)[1]
+        candidate_day = min(anchor_day, days_in_month)
+        candidate_date = month_cursor.replace(day=candidate_day)
+        if start_date and candidate_date < start_date:
+            candidate_date = start_date if start_date.year == month_cursor.year and start_date.month == month_cursor.month else candidate_date
+        if end_date and candidate_date > end_date:
+            pass
+        elif period_from <= candidate_date <= period_to:
+            return True
+
+        if month_cursor.month == 12:
+            month_cursor = month_cursor.replace(year=month_cursor.year + 1, month=1)
+        else:
+            month_cursor = month_cursor.replace(month=month_cursor.month + 1)
+    return False
+
+
+def build_effective_payroll_adjustments(date_from, date_to, department_filter="", employee_filter=""):
+    date_from_text = payroll_date_text(date_from)
+    date_to_text = payroll_date_text(date_to)
+    period_from = parse_iso_date(date_from_text)
+    period_to = parse_iso_date(date_to_text, period_from)
+
+    effective_rows = []
+    for row in [dict(item) for item in get_payroll_adjustments(date_from_text, date_to_text, department_filter=department_filter, employee_filter=employee_filter)]:
+        row["source_kind"] = "Manual"
+        row["source_rule_id"] = None
+        row["recurrence_type"] = ""
+        effective_rows.append(row)
+
+    if not period_from or not period_to:
+        return effective_rows
+
+    recurring_rules = get_payroll_recurring_rules(
+        department_filter=department_filter,
+        employee_filter=employee_filter,
+        include_inactive=False
+    )
+    for rule in recurring_rules:
+        if not recurring_rule_applies_to_period(rule, period_from, period_to):
+            continue
+        effective_rows.append({
+            "id": None,
+            "user_id": rule["user_id"],
+            "date_from": date_from_text,
+            "date_to": date_to_text,
+            "adjustment_type": rule["adjustment_type"],
+            "label": rule["label"],
+            "amount": rule["amount"],
+            "notes": rule.get("notes") or "",
+            "created_by": rule.get("created_by"),
+            "created_at": rule.get("updated_at") or rule.get("created_at") or now_str(),
+            "created_by_name": rule.get("created_by_name") or "Administrator",
+            "employee_name": rule.get("employee_name"),
+            "employee_department": rule.get("employee_department"),
+            "employee_position": rule.get("employee_position"),
+            "source_kind": "Recurring Rule",
+            "source_rule_id": rule["id"],
+            "recurrence_type": rule.get("recurrence_type") or "Every Payroll",
+        })
+
+    effective_rows.sort(key=lambda item: (item.get("employee_name") or "", item.get("adjustment_type") or "", item.get("label") or "", item.get("created_at") or ""))
+    return effective_rows
+
+
+def get_payroll_run_item_adjustments(payroll_run_id, user_id=None):
+    sql = """
+        SELECT *
+        FROM payroll_run_item_adjustments
+        WHERE payroll_run_id = ?
+    """
+    params = [payroll_run_id]
+    if user_id is not None:
+        sql += " AND user_id = ?"
+        params.append(int(user_id))
+    sql += " ORDER BY adjustment_created_at ASC, created_at ASC, id ASC"
+    rows = [dict(row) for row in fetchall(sql, tuple(params))]
+    for row in rows:
+        row["amount"] = round(float(row.get("amount") or 0), 2)
+        row["is_deduction"] = row.get("adjustment_type") == "Deduction"
+        row["display_amount"] = format_currency(row["amount"])
+        row["source_kind"] = row.get("source_kind") or "Manual"
+        row["recurrence_type"] = row.get("recurrence_type") or ""
+    return rows
+
+
 def get_payroll_run(date_from, date_to, department_filter="", employee_filter=""):
     return fetchone("""
         SELECT pr.*, creator.full_name AS created_by_name
@@ -3441,6 +3767,17 @@ def get_payroll_run(date_from, date_to, department_filter="", employee_filter=""
         department_filter or "",
         str(employee_filter or "")
     ))
+
+
+def get_payroll_recurring_rule(rule_id):
+    if not str(rule_id or "").strip().isdigit():
+        return None
+    rows = get_payroll_recurring_rules(include_inactive=True)
+    target_id = int(rule_id)
+    for row in rows:
+        if int(row["id"]) == target_id:
+            return row
+    return None
 
 
 def get_payroll_run_item_count(payroll_run_id):
@@ -3692,10 +4029,45 @@ def build_employee_payslip_pdf_bytes(payslip):
         current_y -= 42
 
     notes_y = panel_top - left_height - 18
-    add_rect(margin, notes_y - 98, content_width, 98, fill_rgb=panel_fill, stroke_rgb=panel_border)
-    add_text(margin + 16, notes_y - 22, "Notes", size=12, font="F2", rgb=body_color)
-    notes_text = payslip.get("notes") or "This downloadable copy reflects the released payroll snapshot stored by Stellar Seats for your account."
-    add_wrapped_text(margin + 16, notes_y - 42, notes_text, width_chars=92, size=9.5, font="F1", rgb=body_color, leading=12, max_lines=4)
+    add_rect(margin, notes_y - 114, content_width, 114, fill_rgb=panel_fill, stroke_rgb=panel_border)
+    adjustment_entries = payslip.get("adjustment_entries") or []
+    missing_adjustment_detail = bool(payslip.get("missing_adjustment_detail"))
+    if adjustment_entries:
+        notes_title = "Adjustment Reasons"
+        detail_lines = []
+        for entry in adjustment_entries:
+            amount_text = format_currency(entry.get("amount"))
+            prefix = "Deduction" if entry.get("adjustment_type") == "Deduction" else "Allowance"
+            source_text = entry.get("source_kind") or "Manual"
+            if entry.get("recurrence_type"):
+                source_text = f"{source_text} / {entry.get('recurrence_type')}"
+            detail_lines.append(f"{prefix} - {entry.get('label')} ({source_text}): {amount_text}")
+            if entry.get("notes"):
+                detail_lines.append(f"Reason: {entry.get('notes')}")
+    elif missing_adjustment_detail:
+        notes_title = "Adjustment Reasons"
+        detail_lines = [
+            "This released payroll includes an allowance or deduction total,",
+            "but the line-by-line reason was not stored in this older snapshot."
+        ]
+    else:
+        notes_title = "Notes"
+        detail_lines = pdf_wrap_lines(
+            payslip.get("notes") or "This downloadable copy reflects the released payroll snapshot stored by Stellar Seats for your account.",
+            92
+        )
+    add_text(margin + 16, notes_y - 22, notes_title, size=12, font="F2", rgb=body_color)
+    add_wrapped_text(
+        margin + 16,
+        notes_y - 42,
+        " ".join(detail_lines),
+        width_chars=92,
+        size=9.5,
+        font="F1",
+        rgb=body_color,
+        leading=12,
+        max_lines=6
+    )
 
     footer_y = 56
     add_text(margin, footer_y, "Generated by Stellar Seats Attendance Dashboard", size=8.5, font="F1", rgb=label_color)
@@ -3844,7 +4216,18 @@ def get_employee_released_payroll_item(user_id, payroll_run_id):
           AND pr.status = 'Released'
         LIMIT 1
     """, (user_id, payroll_run_id))
-    return enrich_employee_payroll_item(row, current_user_id=user_id) if row else None
+    if not row:
+        return None
+    item = enrich_employee_payroll_item(row, current_user_id=user_id)
+    item["adjustment_entries"] = get_payroll_run_item_adjustments(item["payroll_run_id"], user_id=user_id)
+    item["allowance_entries"] = [entry for entry in item["adjustment_entries"] if entry["adjustment_type"] == "Allowance"]
+    item["deduction_entries"] = [entry for entry in item["adjustment_entries"] if entry["adjustment_type"] == "Deduction"]
+    item["has_adjustment_entries"] = bool(item["adjustment_entries"])
+    item["missing_adjustment_detail"] = (
+        not item["adjustment_entries"]
+        and (float(item.get("allowances") or 0) > 0 or float(item.get("deductions") or 0) > 0)
+    )
+    return item
 
 
 def shift_month(year, month, delta):
@@ -4144,6 +4527,12 @@ def save_payroll_run_snapshot(date_from, date_to, department_filter="", employee
     date_from_text = payroll_date_text(date_from)
     date_to_text = payroll_date_text(date_to)
     rows = build_payroll_rows(date_from, date_to, department_filter=department_filter, employee_filter=employee_filter)
+    snapshot_adjustments = build_effective_payroll_adjustments(
+        date_from_text,
+        date_to_text,
+        department_filter=department_filter,
+        employee_filter=employee_filter
+    )
     timestamp = now_str()
     released_at = timestamp if status == "Released" else None
     existing = get_payroll_run(date_from_text, date_to_text, department_filter, employee_filter)
@@ -4162,6 +4551,7 @@ def save_payroll_run_snapshot(date_from, date_to, department_filter="", employee
         ), commit=True)
         payroll_run_id = existing["id"]
         execute_db("DELETE FROM payroll_run_items WHERE payroll_run_id = ?", (payroll_run_id,), commit=True)
+        execute_db("DELETE FROM payroll_run_item_adjustments WHERE payroll_run_id = ?", (payroll_run_id,), commit=True)
     else:
         execute_db("""
             INSERT INTO payroll_runs (
@@ -4212,6 +4602,30 @@ def save_payroll_run_snapshot(date_from, date_to, department_filter="", employee
             row["allowances"],
             row["deductions"],
             row["final_pay"],
+            timestamp
+        ), commit=True)
+
+    for adjustment in snapshot_adjustments:
+        execute_db("""
+            INSERT INTO payroll_run_item_adjustments (
+                payroll_run_id, user_id, source_kind, source_rule_id, recurrence_type,
+                adjustment_type, label, amount, notes, created_by,
+                created_by_name, adjustment_created_at, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            payroll_run_id,
+            adjustment["user_id"],
+            adjustment.get("source_kind") or "Manual",
+            adjustment.get("source_rule_id"),
+            adjustment.get("recurrence_type") or None,
+            adjustment["adjustment_type"],
+            adjustment["label"],
+            round(float(adjustment["amount"] or 0), 2),
+            adjustment.get("notes") or None,
+            adjustment.get("created_by"),
+            adjustment.get("created_by_name") or "Administrator",
+            adjustment.get("created_at") or timestamp,
             timestamp
         ), commit=True)
 
@@ -4430,7 +4844,7 @@ def build_payroll_rows(date_from, date_to, department_filter="", employee_filter
             summary["suspension_hours"] += round(shift_minutes / 60, 2)
 
     adjustment_totals = {}
-    for adjustment in get_payroll_adjustments(date_from_text, date_to_text, department_filter=department_filter, employee_filter=employee_filter):
+    for adjustment in build_effective_payroll_adjustments(date_from_text, date_to_text, department_filter=department_filter, employee_filter=employee_filter):
         totals = adjustment_totals.setdefault(adjustment["user_id"], {"allowances": 0.0, "deductions": 0.0})
         amount = round(float(adjustment["amount"] or 0), 2)
         if adjustment["adjustment_type"] == "Allowance":
@@ -6651,10 +7065,16 @@ def admin_payroll():
     )
     stats = build_payroll_stats(payroll_rows)
     adjustments = get_payroll_adjustments(date_from, date_to, department_filter=department_filter, employee_filter=employee_filter)
+    recurring_rules = get_payroll_recurring_rules(
+        department_filter=department_filter,
+        employee_filter=employee_filter,
+        include_inactive=True
+    )
     current_run = get_payroll_run(date_from, date_to, department_filter=department_filter, employee_filter=employee_filter)
     if current_run:
         current_run = enrich_admin_payroll_run(current_run)
     recent_runs = get_recent_payroll_runs()
+    editing_recurring_rule = get_payroll_recurring_rule(request.args.get("edit_recurring_rule", ""))
 
     return render_template(
         "admin_payroll.html",
@@ -6668,9 +7088,11 @@ def admin_payroll():
         date_to=date_to.strftime("%Y-%m-%d"),
         stats=stats,
         adjustments=adjustments,
+        recurring_rules=recurring_rules,
         current_run=current_run,
         recent_runs=recent_runs,
-        employee_filter_label=get_payroll_employee_filter_label(employee_filter)
+        employee_filter_label=get_payroll_employee_filter_label(employee_filter),
+        editing_recurring_rule=editing_recurring_rule
     )
 
 
@@ -6739,7 +7161,10 @@ def add_payroll_adjustment():
         "ADD PAYROLL ADJUSTMENT",
         f"{adjustment_type} {format_currency(amount)} for {employee['full_name']} ({label})"
     )
-    flash(f"{adjustment_type} added for {employee['full_name']}.", "success")
+    flash(
+        f"{adjustment_type} added for {employee['full_name']}. Save or re-release this payroll period to update the payslip snapshot.",
+        "success"
+    )
     return redirect(url_for("admin_payroll", **redirect_args))
 
 
@@ -6763,7 +7188,186 @@ def delete_payroll_adjustment(adjustment_id):
         "DELETE PAYROLL ADJUSTMENT",
         f"Removed {adjustment['adjustment_type']} {format_currency(adjustment['amount'])} for {adjustment['employee_name']} ({adjustment['label']})"
     )
-    flash("Payroll adjustment removed.", "info")
+    flash("Payroll adjustment removed. Save or re-release this payroll period to refresh the payslip snapshot.", "info")
+    return redirect(url_for("admin_payroll", **redirect_args))
+
+
+@app.route("/admin/payroll/recurring-rules", methods=["POST"])
+@login_required(role="admin")
+def save_payroll_recurring_rule():
+    redirect_args = payroll_filter_redirect_args(request.form)
+    rule_id_raw = (request.form.get("rule_id", "") or "").strip()
+    user_id_raw = (request.form.get("user_id", "") or "").strip()
+    adjustment_type = (request.form.get("adjustment_type", "") or "").strip()
+    label = (request.form.get("label", "") or "").strip()
+    recurrence_type = (request.form.get("recurrence_type", "") or "Every Payroll").strip() or "Every Payroll"
+    start_date = (request.form.get("start_date", "") or "").strip()
+    end_date = (request.form.get("end_date", "") or "").strip()
+    notes = (request.form.get("notes", "") or "").strip()
+    amount = parse_money_value(request.form.get("amount", "0"))
+
+    if not user_id_raw.isdigit():
+        flash("Please choose an employee for the recurring payroll rule.", "danger")
+        return redirect(url_for("admin_payroll", **redirect_args))
+
+    if adjustment_type not in {"Allowance", "Deduction"}:
+        flash("Recurring payroll rule type must be Allowance or Deduction.", "danger")
+        return redirect(url_for("admin_payroll", **redirect_args))
+
+    if recurrence_type not in {"Every Payroll", "Monthly"}:
+        flash("Recurring payroll rule recurrence must be Every Payroll or Monthly.", "danger")
+        return redirect(url_for("admin_payroll", **redirect_args))
+
+    if not label:
+        flash("Recurring payroll rule label is required.", "danger")
+        return redirect(url_for("admin_payroll", **redirect_args))
+
+    if amount <= 0:
+        flash("Recurring payroll rule amount must be greater than zero.", "danger")
+        return redirect(url_for("admin_payroll", **redirect_args))
+
+    employee = fetchone("""
+        SELECT id, full_name
+        FROM users
+        WHERE id = ? AND role = 'employee'
+    """, (int(user_id_raw),))
+    if not employee:
+        flash("Selected employee was not found.", "danger")
+        return redirect(url_for("admin_payroll", **redirect_args))
+
+    start_date_value = parse_iso_date(start_date) if start_date else None
+    end_date_value = parse_iso_date(end_date) if end_date else None
+    if start_date and not start_date_value:
+        flash("Recurring payroll rule start date is invalid.", "danger")
+        return redirect(url_for("admin_payroll", **redirect_args))
+    if end_date and not end_date_value:
+        flash("Recurring payroll rule end date is invalid.", "danger")
+        return redirect(url_for("admin_payroll", **redirect_args))
+    if start_date_value and end_date_value and start_date_value > end_date_value:
+        flash("Recurring payroll rule end date must not be earlier than the start date.", "danger")
+        return redirect(url_for("admin_payroll", **redirect_args))
+    if recurrence_type == "Monthly" and not start_date_value:
+        flash("Monthly recurring rules need a start date so the monthly anchor day is clear.", "danger")
+        return redirect(url_for("admin_payroll", **redirect_args))
+
+    timestamp = now_str()
+    if rule_id_raw.isdigit():
+        existing = fetchone("""
+            SELECT *
+            FROM payroll_recurring_rules
+            WHERE id = ?
+        """, (int(rule_id_raw),))
+        if not existing:
+            flash("Recurring payroll rule not found.", "warning")
+            return redirect(url_for("admin_payroll", **redirect_args))
+
+        execute_db("""
+            UPDATE payroll_recurring_rules
+            SET user_id = ?, adjustment_type = ?, label = ?, amount = ?,
+                recurrence_type = ?, start_date = ?, end_date = ?, notes = ?, updated_at = ?
+            WHERE id = ?
+        """, (
+            employee["id"],
+            adjustment_type,
+            label,
+            amount,
+            recurrence_type,
+            start_date or None,
+            end_date or None,
+            notes or None,
+            timestamp,
+            existing["id"]
+        ), commit=True)
+        log_activity(
+            session["user_id"],
+            "UPDATE PAYROLL RECURRING RULE",
+            f"Updated {adjustment_type.lower()} rule {label} for {employee['full_name']}."
+        )
+        flash("Recurring payroll rule updated.", "success")
+    else:
+        execute_db("""
+            INSERT INTO payroll_recurring_rules (
+                user_id, adjustment_type, label, amount, recurrence_type,
+                start_date, end_date, notes, is_active, created_by, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            employee["id"],
+            adjustment_type,
+            label,
+            amount,
+            recurrence_type,
+            start_date or None,
+            end_date or None,
+            notes or None,
+            1,
+            session["user_id"],
+            timestamp,
+            timestamp
+        ), commit=True)
+        log_activity(
+            session["user_id"],
+            "ADD PAYROLL RECURRING RULE",
+            f"Added {adjustment_type.lower()} recurring rule {label} for {employee['full_name']}."
+        )
+        flash("Recurring payroll rule added. It will be included automatically when the rule matches the payroll period.", "success")
+
+    return redirect(url_for("admin_payroll", **redirect_args))
+
+
+@app.route("/admin/payroll/recurring-rules/<int:rule_id>/toggle", methods=["POST"])
+@login_required(role="admin")
+def toggle_payroll_recurring_rule(rule_id):
+    redirect_args = payroll_filter_redirect_args(request.form)
+    rule = fetchone("""
+        SELECT prr.*, u.full_name AS employee_name
+        FROM payroll_recurring_rules prr
+        JOIN users u ON u.id = prr.user_id
+        WHERE prr.id = ?
+    """, (rule_id,))
+    if not rule:
+        flash("Recurring payroll rule not found.", "warning")
+        return redirect(url_for("admin_payroll", **redirect_args))
+
+    new_status = 0 if int(rule.get("is_active") or 0) == 1 else 1
+    execute_db("""
+        UPDATE payroll_recurring_rules
+        SET is_active = ?, updated_at = ?
+        WHERE id = ?
+    """, (new_status, now_str(), rule_id), commit=True)
+    log_activity(
+        session["user_id"],
+        "TOGGLE PAYROLL RECURRING RULE",
+        f"{'Activated' if new_status == 1 else 'Paused'} recurring rule {rule['label']} for {rule['employee_name']}."
+    )
+    flash(
+        f"Recurring payroll rule {'activated' if new_status == 1 else 'paused'}.",
+        "success" if new_status == 1 else "info"
+    )
+    return redirect(url_for("admin_payroll", **redirect_args))
+
+
+@app.route("/admin/payroll/recurring-rules/<int:rule_id>/delete", methods=["POST"])
+@login_required(role="admin")
+def delete_payroll_recurring_rule(rule_id):
+    redirect_args = payroll_filter_redirect_args(request.form)
+    rule = fetchone("""
+        SELECT prr.*, u.full_name AS employee_name
+        FROM payroll_recurring_rules prr
+        JOIN users u ON u.id = prr.user_id
+        WHERE prr.id = ?
+    """, (rule_id,))
+    if not rule:
+        flash("Recurring payroll rule not found.", "warning")
+        return redirect(url_for("admin_payroll", **redirect_args))
+
+    execute_db("DELETE FROM payroll_recurring_rules WHERE id = ?", (rule_id,), commit=True)
+    log_activity(
+        session["user_id"],
+        "DELETE PAYROLL RECURRING RULE",
+        f"Deleted recurring rule {rule['label']} for {rule['employee_name']}."
+    )
+    flash("Recurring payroll rule deleted.", "info")
     return redirect(url_for("admin_payroll", **redirect_args))
 
 
@@ -6839,6 +7443,7 @@ def delete_payroll_run(payroll_run_id):
 
     db = get_db()
     try:
+        execute_db("DELETE FROM payroll_run_item_adjustments WHERE payroll_run_id = ?", (payroll_run_id,))
         execute_db("DELETE FROM payroll_run_items WHERE payroll_run_id = ?", (payroll_run_id,))
         execute_db("DELETE FROM payroll_runs WHERE id = ?", (payroll_run_id,))
         db.commit()
@@ -6956,7 +7561,7 @@ def export_admin_payroll_excel():
         department_filter=filters["department_filter"],
         employee_filter=filters["employee_filter"]
     )
-    adjustments = get_payroll_adjustments(
+    adjustments = build_effective_payroll_adjustments(
         filters["date_from"],
         filters["date_to"],
         department_filter=filters["department_filter"],
@@ -7018,10 +7623,12 @@ def export_admin_payroll_excel():
         ])
 
     adjustment_sheet = workbook.create_sheet(title="Adjustments")
-    adjustment_sheet.append(["Employee", "Type", "Label", "Amount", "Notes", "Created By", "Created At"])
+    adjustment_sheet.append(["Employee", "Source", "Recurrence", "Type", "Label", "Amount", "Notes", "Created By", "Created At"])
     for adjustment in adjustments:
         adjustment_sheet.append([
             adjustment["employee_name"],
+            adjustment.get("source_kind") or "Manual",
+            adjustment.get("recurrence_type") or "",
             adjustment["adjustment_type"],
             adjustment["label"],
             adjustment["amount"],
@@ -7059,7 +7666,7 @@ def print_admin_payroll():
         employee_filter=filters["employee_filter"]
     )
     stats = build_payroll_stats(payroll_rows)
-    adjustments = get_payroll_adjustments(
+    adjustments = build_effective_payroll_adjustments(
         filters["date_from"],
         filters["date_to"],
         department_filter=filters["department_filter"],
@@ -8533,6 +9140,10 @@ def delete_employee(user_id):
         execute_db("DELETE FROM activity_logs WHERE user_id = ?", (user_id,))
         execute_db("DELETE FROM correction_requests WHERE user_id = ?", (user_id,))
         execute_db("DELETE FROM scanner_logs WHERE employee_user_id = ? OR scanner_user_id = ?", (user_id, user_id))
+        execute_db("DELETE FROM payroll_adjustments WHERE user_id = ?", (user_id,))
+        execute_db("DELETE FROM payroll_recurring_rules WHERE user_id = ?", (user_id,))
+        execute_db("DELETE FROM payroll_run_item_adjustments WHERE user_id = ?", (user_id,))
+        execute_db("DELETE FROM payroll_run_items WHERE user_id = ?", (user_id,))
         execute_db("DELETE FROM incident_reports WHERE user_id = ?", (user_id,))
         execute_db("DELETE FROM disciplinary_actions WHERE user_id = ?", (user_id,))
         execute_db("DELETE FROM users WHERE id = ?", (user_id,))

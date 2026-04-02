@@ -199,6 +199,7 @@
                 <thead>
                     <tr>
                         <th>Employee</th>
+                        <th>Source</th>
                         <th>Type</th>
                         <th>Label</th>
                         <th>Amount</th>
@@ -210,6 +211,7 @@
                     {% for adjustment in adjustments %}
                         <tr>
                             <td>{{ adjustment.employee_name }}</td>
+                            <td>{{ adjustment.source_kind or 'Manual' }}{% if adjustment.recurrence_type %}<div class="print-note">{{ adjustment.recurrence_type }}</div>{% endif %}</td>
                             <td>{{ adjustment.adjustment_type }}</td>
                             <td>{{ adjustment.label }}</td>
                             <td class="{% if adjustment.adjustment_type == 'Allowance' %}allowance{% else %}deduction{% endif %}">{{ format_currency(adjustment.amount) }}</td>
@@ -217,7 +219,7 @@
                             <td>{{ adjustment.created_at }}</td>
                         </tr>
                     {% else %}
-                        <tr><td colspan="6">No adjustments recorded for this payroll view.</td></tr>
+                        <tr><td colspan="7">No adjustments recorded for this payroll view.</td></tr>
                     {% endfor %}
                 </tbody>
             </table>

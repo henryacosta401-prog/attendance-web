@@ -61,6 +61,7 @@
 .payroll-adjustment-positive { color: #8cf0c0; font-weight: 800; }
 .payroll-adjustment-negative { color: #ffb4b4; font-weight: 800; }
 .payroll-empty { padding: 18px; color: #9fb0d4; text-align: center; }
+.payroll-empty a { color: #93c5fd; }
 .payroll-run-list { display: grid; gap: 12px; margin-top: 16px; }
 .payroll-run-entry {
     padding: 14px;
@@ -112,6 +113,19 @@
 .payroll-inline-form { display: inline; }
 .payroll-table td.payroll-money-strong { font-weight: 800; color: #ffffff; }
 .payroll-highlight { color: #ffffff; font-weight: 800; }
+.payroll-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 5px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+.payroll-pill-active { background: rgba(16, 185, 129, 0.18); color: #86efac; }
+.payroll-pill-paused { background: rgba(148, 163, 184, 0.18); color: #cbd5e1; }
+.payroll-pill-recurring { background: rgba(59, 130, 246, 0.16); color: #bfdbfe; }
 @media (max-width: 1240px) {
     .payroll-grid { grid-template-columns: 1fr; }
 }
@@ -421,8 +435,138 @@
     <section class="payroll-adjustment-card">
         <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
             <div>
-                <h2 style="margin:0;color:#f8fbff;">Adjustments</h2>
-                <p class="payroll-subtitle" style="margin-top:6px;">Use this section after the main payroll table looks right and you only need targeted additions or deductions.</p>
+                <h2 style="margin:0;color:#f8fbff;">Recurring Payroll Rules</h2>
+                <p class="payroll-subtitle" style="margin-top:6px;">Use recurring rules for deductions or allowances that should be applied automatically. Monthly rules apply once when the payroll period includes the rule start-day anchor.</p>
+            </div>
+            {% if editing_recurring_rule %}
+                <a class="btn btn-gray" href="{{ url_for('admin_payroll', period=period, date_from=date_from, date_to=date_to, department=department_filter, employee_id=employee_filter) }}">Cancel Edit</a>
+            {% endif %}
+        </div>
+
+        <form method="POST" action="{{ url_for('save_payroll_recurring_rule') }}" class="payroll-toolbar">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="rule_id" value="{{ editing_recurring_rule.id if editing_recurring_rule else '' }}">
+            {{ payroll_hidden_filters() }}
+            <div>
+                <label>Employee</label>
+                <select class="input" name="user_id" required>
+                    <option value="">Select Employee</option>
+                    {% for employee in employees %}
+                        {% if not department_filter or employee.department == department_filter %}
+                            {% set recurring_selected = editing_recurring_rule.user_id|string if editing_recurring_rule else employee_filter %}
+                            <option value="{{ employee.id }}" {% if recurring_selected == (employee.id|string) %}selected{% endif %}>{{ employee.full_name }}</option>
+                        {% endif %}
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label>Type</label>
+                <select class="input" name="adjustment_type" required>
+                    <option value="Allowance" {% if editing_recurring_rule and editing_recurring_rule.adjustment_type == 'Allowance' %}selected{% endif %}>Allowance</option>
+                    <option value="Deduction" {% if not editing_recurring_rule or editing_recurring_rule.adjustment_type == 'Deduction' %}selected{% endif %}>Deduction</option>
+                </select>
+            </div>
+            <div>
+                <label>Recurrence</label>
+                <select class="input" name="recurrence_type" required>
+                    <option value="Every Payroll" {% if not editing_recurring_rule or editing_recurring_rule.recurrence_type == 'Every Payroll' %}selected{% endif %}>Every Payroll</option>
+                    <option value="Monthly" {% if editing_recurring_rule and editing_recurring_rule.recurrence_type == 'Monthly' %}selected{% endif %}>Monthly</option>
+                </select>
+            </div>
+            <div>
+                <label>Label</label>
+                <input class="input" type="text" name="label" placeholder="SSS, PhilHealth, Meal Allowance" value="{{ editing_recurring_rule.label if editing_recurring_rule else '' }}" required>
+            </div>
+            <div>
+                <label>Amount</label>
+                <input class="input" type="number" name="amount" min="0.01" step="0.01" placeholder="0.00" value="{{ editing_recurring_rule.amount if editing_recurring_rule else '' }}" required>
+            </div>
+            <div style="display:flex;align-items:end;">
+                <button class="btn btn-primary" type="submit" style="width:100%;">{{ 'Update Rule' if editing_recurring_rule else 'Save Rule' }}</button>
+            </div>
+            <div>
+                <label>Start Date</label>
+                <input class="input" type="date" name="start_date" value="{{ editing_recurring_rule.start_date if editing_recurring_rule else '' }}">
+            </div>
+            <div>
+                <label>End Date</label>
+                <input class="input" type="date" name="end_date" value="{{ editing_recurring_rule.end_date if editing_recurring_rule else '' }}">
+            </div>
+            <div style="grid-column: span 2;">
+                <label>Notes</label>
+                <input class="input" type="text" name="notes" placeholder="Visible as the employee-facing reason on the released payslip." value="{{ editing_recurring_rule.notes if editing_recurring_rule else '' }}">
+            </div>
+        </form>
+
+        <div class="payroll-table-wrap">
+            <table class="payroll-adjustment-table">
+                <thead>
+                    <tr>
+                        <th>Employee</th>
+                        <th>Type</th>
+                        <th>Label</th>
+                        <th>Amount</th>
+                        <th>Recurrence</th>
+                        <th>Active Window</th>
+                        <th>Notes</th>
+                        <th>Status</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if recurring_rules %}
+                        {% for rule in recurring_rules %}
+                            <tr>
+                                <td>
+                                    <div class="payroll-highlight">{{ rule.employee_name }}</div>
+                                    <div class="payroll-subtext">{{ rule.employee_department or '-' }}{% if rule.employee_position %} | {{ rule.employee_position }}{% endif %}</div>
+                                </td>
+                                <td>{{ rule.adjustment_type }}</td>
+                                <td>{{ rule.label }}</td>
+                                <td class="{% if rule.adjustment_type == 'Allowance' %}payroll-adjustment-positive{% else %}payroll-adjustment-negative{% endif %}">
+                                    {% if rule.adjustment_type == 'Allowance' %}+{% else %}-{% endif %}{{ format_currency(rule.amount) }}
+                                </td>
+                                <td>
+                                    <div class="payroll-pill payroll-pill-recurring">{{ rule.recurrence_type }}</div>
+                                    <div class="payroll-subtext" style="margin-top:6px;">{{ rule.recurrence_description }}</div>
+                                </td>
+                                <td>{{ rule.active_range_label }}</td>
+                                <td>{{ rule.notes or '-' }}</td>
+                                <td>
+                                    <span class="payroll-pill {% if rule.is_active %}payroll-pill-active{% else %}payroll-pill-paused{% endif %}">
+                                        {{ rule.status_label }}
+                                    </span>
+                                </td>
+                                <td style="text-align:right;">
+                                    <div class="payroll-actions" style="justify-content:flex-end;">
+                                        <a class="btn btn-secondary" href="{{ url_for('admin_payroll', period=period, date_from=date_from, date_to=date_to, department=department_filter, employee_id=employee_filter, edit_recurring_rule=rule.id) }}">Edit</a>
+                                        <form method="POST" action="{{ url_for('toggle_payroll_recurring_rule', rule_id=rule.id) }}" class="payroll-inline-form">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                            {{ payroll_hidden_filters() }}
+                                            <button class="btn btn-gray" type="submit">{{ 'Pause' if rule.is_active else 'Activate' }}</button>
+                                        </form>
+                                        <form method="POST" action="{{ url_for('delete_payroll_recurring_rule', rule_id=rule.id) }}" class="payroll-inline-form" onsubmit="return confirm('Delete this recurring payroll rule?');">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                            {{ payroll_hidden_filters() }}
+                                            <button class="btn btn-danger" type="submit">Delete</button>
+                                        </form>
+                                    </div>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr><td colspan="9" class="payroll-empty">No recurring payroll rules saved yet.</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="payroll-adjustment-card">
+        <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
+            <div>
+                <h2 style="margin:0;color:#f8fbff;">One-Time Adjustments</h2>
+                <p class="payroll-subtitle" style="margin-top:6px;">Use this section after the main payroll table looks right and you only need targeted additions or deductions for this specific payroll period.</p>
             </div>
         </div>
 
