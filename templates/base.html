@@ -3,8 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#111827">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Stellar Seats">
     <title>{% block title %}Stellar Seats Attendance{% endblock %}</title>
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='stellar-seats-logo.svg') }}">
+    <link rel="manifest" href="{{ url_for('web_manifest') }}">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='stellar-seats-logo.svg') }}">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 
     <style>
@@ -260,6 +267,10 @@
         .pill-link:hover {
             transform: translateY(-1px);
             background: rgba(255,255,255,0.10);
+        }
+
+        .install-button[hidden] {
+            display: none !important;
         }
 
         .pill-link.active {
@@ -945,7 +956,11 @@
 
     {% block extra_head %}{% endblock %}
 </head>
-<body data-tour-role="{{ session.get('role', 'guest') }}" data-tour-endpoint="{{ request.endpoint or '' }}">
+<body
+    data-tour-role="{{ session.get('role', 'guest') }}"
+    data-tour-endpoint="{{ request.endpoint or '' }}"
+    data-service-worker-url="{{ url_for('service_worker') }}"
+>
 
 {% if session.get('user_id') %}
 <div class="navbar">
@@ -1060,6 +1075,7 @@
         <div class="nav-utility">
             <span class="pill-link utility">👤 {{ session.get('full_name') }}</span>
             <span class="pill-link utility">🔔 {{ unread_count }}</span>
+            <button class="pill-link install-button" id="globalInstallButton" type="button" hidden>Install App</button>
             <button class="pill-link tour-launch" data-tour-launch="manual" type="button">App Tour</button>
             <form method="POST" action="{{ url_for('logout') }}" style="margin:0;">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -1474,6 +1490,67 @@ document.addEventListener("DOMContentLoaded", function () {
             storeScrollState(element, { mode: "path" });
         });
     });
+});
+
+document.addEventListener("DOMContentLoaded", function () {
+    const installButton = document.getElementById("globalInstallButton");
+    const serviceWorkerUrl = document.body.dataset.serviceWorkerUrl;
+    const isStandalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+    const isIos = /iphone|ipad|ipod/i.test(window.navigator.userAgent || "");
+    let deferredPrompt = null;
+
+    function hideInstallButton() {
+        if (installButton) {
+            installButton.hidden = true;
+        }
+    }
+
+    function showInstallButton() {
+        if (installButton && !isStandalone) {
+            installButton.hidden = false;
+        }
+    }
+
+    window.addEventListener("beforeinstallprompt", function (event) {
+        event.preventDefault();
+        deferredPrompt = event;
+        showInstallButton();
+    });
+
+    window.addEventListener("appinstalled", function () {
+        deferredPrompt = null;
+        hideInstallButton();
+    });
+
+    if (installButton) {
+        installButton.addEventListener("click", async function () {
+            if (deferredPrompt) {
+                deferredPrompt.prompt();
+                try {
+                    await deferredPrompt.userChoice;
+                } catch (error) {
+                    console.warn("Install prompt was dismissed.", error);
+                }
+                deferredPrompt = null;
+                hideInstallButton();
+                return;
+            }
+
+            if (isIos && !isStandalone) {
+                window.alert('To install this app on iPhone or iPad, tap Share and choose "Add to Home Screen".');
+            }
+        });
+    }
+
+    if (!isStandalone && "serviceWorker" in navigator && serviceWorkerUrl) {
+        window.addEventListener("load", function () {
+            navigator.serviceWorker.register(serviceWorkerUrl).catch(function (error) {
+                console.warn("Service worker registration failed.", error);
+            });
+        });
+    } else {
+        hideInstallButton();
+    }
 });
 </script>
 </body>

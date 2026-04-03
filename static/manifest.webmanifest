@@ -1,0 +1,33 @@
+{
+  "id": "/",
+  "name": "Stellar Seats Attendance",
+  "short_name": "Stellar Seats",
+  "description": "Attendance, payroll, scanner kiosk, and employee self-service for Stellar Seats.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#111827",
+  "icons": [
+    {
+      "src": "/static/stellar-seats-logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Scanner Kiosk",
+      "short_name": "Scanner",
+      "description": "Open the Stellar Seats scanner kiosk.",
+      "url": "/scanner"
+    },
+    {
+      "name": "Payroll",
+      "short_name": "Payroll",
+      "description": "Open the payroll dashboard.",
+      "url": "/admin/payroll"
+    }
+  ]
+}

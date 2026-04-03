@@ -5962,6 +5962,23 @@ def uploaded_file(filename):
     return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
 
 
+@app.route("/manifest.webmanifest")
+def web_manifest():
+    manifest_path = os.path.join(app.static_folder, "manifest.webmanifest")
+    with open(manifest_path, "r", encoding="utf-8") as manifest_file:
+        payload = manifest_file.read()
+    response = Response(payload, mimetype="application/manifest+json")
+    response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
+@app.route("/service-worker.js")
+def service_worker():
+    response = send_from_directory(app.static_folder, "service-worker.js")
+    response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 # =========================
 # ADMIN
 # =========================

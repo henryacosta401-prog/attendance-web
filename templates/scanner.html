@@ -3,7 +3,14 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#0a1c34">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Stellar Seats">
     <title>Scanner Kiosk | Stellar Seats</title>
+    <link rel="manifest" href="{{ url_for('web_manifest') }}">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='stellar-seats-logo.svg') }}">
     <style>
         :root {
             --bg-1: #05101f;
@@ -108,6 +115,33 @@
             line-height: 1.3;
             position: relative;
             z-index: 1;
+        }
+
+        .install-pill {
+            position: relative;
+            z-index: 1;
+            justify-self: center;
+            border: 1px solid rgba(125, 211, 252, 0.24);
+            background: rgba(8, 16, 30, 0.56);
+            color: #e0f2fe;
+            border-radius: 999px;
+            padding: 8px 14px;
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: transform 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+        }
+
+        .install-pill:hover {
+            background: rgba(14, 116, 144, 0.34);
+            border-color: rgba(125, 211, 252, 0.40);
+            transform: translateY(-1px);
+        }
+
+        .install-pill[hidden] {
+            display: none !important;
         }
 
         .employee-card {
@@ -652,7 +686,7 @@
         }
     </style>
 </head>
-<body>
+<body data-service-worker-url="{{ url_for('service_worker') }}">
     <div
         class="scanner-app"
         data-lock-timeout-ms="{{ ((company_settings.scanner_lock_timeout_seconds or 90) | int) * 1000 }}"
@@ -661,6 +695,7 @@
         <header class="header-card">
             <div class="header-title">Welcome to Stellar Seats</div>
             <div class="header-meta" id="liveDateTime">Loading date and time...</div>
+            <button class="install-pill" id="scannerInstallButton" type="button" hidden>Install App</button>
         </header>
 
         <section class="employee-card">
@@ -1179,6 +1214,68 @@
         keepScannerFocused();
         startCamera();
         resetInactivityTimer();
+    });
+    </script>
+    <script>
+    document.addEventListener("DOMContentLoaded", function () {
+        const installButton = document.getElementById("scannerInstallButton");
+        const serviceWorkerUrl = document.body.dataset.serviceWorkerUrl;
+        const isStandalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+        const isIos = /iphone|ipad|ipod/i.test(window.navigator.userAgent || "");
+        let deferredPrompt = null;
+
+        function hideInstallButton() {
+            if (installButton) {
+                installButton.hidden = true;
+            }
+        }
+
+        function showInstallButton() {
+            if (installButton && !isStandalone) {
+                installButton.hidden = false;
+            }
+        }
+
+        window.addEventListener("beforeinstallprompt", function (event) {
+            event.preventDefault();
+            deferredPrompt = event;
+            showInstallButton();
+        });
+
+        window.addEventListener("appinstalled", function () {
+            deferredPrompt = null;
+            hideInstallButton();
+        });
+
+        if (installButton) {
+            installButton.addEventListener("click", async function () {
+                if (deferredPrompt) {
+                    deferredPrompt.prompt();
+                    try {
+                        await deferredPrompt.userChoice;
+                    } catch (error) {
+                        console.warn("Install prompt was dismissed.", error);
+                    }
+                    deferredPrompt = null;
+                    hideInstallButton();
+                    return;
+                }
+
+                if (isIos && !isStandalone) {
+                    window.alert('To install this scanner on iPhone or iPad, tap Share and choose "Add to Home Screen".');
+                }
+            });
+        }
+
+        if (!isStandalone && "serviceWorker" in navigator && serviceWorkerUrl) {
+            window.addEventListener("load", function () {
+                navigator.serviceWorker.register(serviceWorkerUrl).catch(function (error) {
+                    console.warn("Scanner service worker registration failed.", error);
+                });
+            });
+        } else {
+            hideInstallButton();
+        }
     });
     </script>
 </body>
