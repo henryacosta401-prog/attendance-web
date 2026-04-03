@@ -61,6 +61,21 @@
 }
 .admin-signal-count { color: #ffffff; font-size: 26px; font-weight: 900; }
 .admin-signal-copy { color: #cfe0ff; font-size: 13px; line-height: 1.45; margin-top: 8px; }
+html.app-standalone .admin-stat-card,
+html.app-standalone .admin-panel,
+html.app-standalone .admin-exception-card {
+    box-shadow: 0 12px 20px rgba(15, 23, 42, 0.16);
+    background: linear-gradient(180deg, rgba(19, 27, 45, 0.98), rgba(12, 18, 32, 0.98));
+}
+html.app-standalone .admin-table-wrap,
+html.app-standalone .admin-list-card,
+html.app-standalone .admin-signal-card {
+    background: rgba(10, 16, 29, 0.46);
+}
+html.app-standalone .admin-live-table th,
+html.app-standalone .admin-live-table td {
+    padding: 12px 14px;
+}
 @media (max-width: 1200px) {
     .admin-dashboard-grid { grid-template-columns: 1fr; }
     .admin-filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -69,8 +84,23 @@
 </style>
 <script>
 document.addEventListener("DOMContentLoaded", function () {
+    const standaloneMode = document.documentElement.classList.contains("app-standalone");
     let currentPage = {{ pagination.page }};
     let currentPageSize = {{ pagination.page_size }};
+    let refreshInFlight = false;
+    let queuedRefresh = false;
+    let searchDebounceTimer = null;
+    let refreshTimer = null;
+    const refreshIntervalMs = standaloneMode ? 45000 : 15000;
+
+    if (standaloneMode && currentPageSize > 10) {
+        currentPageSize = 10;
+        const pageSizeSelect = document.getElementById("pageSize");
+        if (pageSizeSelect) {
+            pageSizeSelect.value = String(currentPageSize);
+        }
+    }
+
     function formatDateTime12h(value) {
         if (!value) return "";
         try {
@@ -110,9 +140,17 @@ document.addEventListener("DOMContentLoaded", function () {
         document.getElementById("nextPageBtn").disabled = !pagination.has_next;
     }
     async function refreshLiveStatus(resetPage) {
+        if (document.hidden) {
+            return;
+        }
         if (resetPage) currentPage = 1;
+        if (refreshInFlight) {
+            queuedRefresh = true;
+            return;
+        }
+        refreshInFlight = true;
         try {
-            const response = await fetch(`/admin/live-status?${buildQuery()}`);
+            const response = await fetch(`/admin/live-status?${buildQuery()}`, { cache: "no-store" });
             const data = await response.json();
             const rows = data.rows || [];
             const tbody = document.getElementById("liveStatusBody");
@@ -142,17 +180,61 @@ document.addEventListener("DOMContentLoaded", function () {
                 </tr>`;
             }).join("");
             updatePager(data.pagination || {});
-        } catch (error) { console.error("Live status refresh failed:", error); }
+        } catch (error) {
+            console.error("Live status refresh failed:", error);
+        } finally {
+            refreshInFlight = false;
+            if (queuedRefresh) {
+                queuedRefresh = false;
+                window.requestAnimationFrame(function () {
+                    refreshLiveStatus(false);
+                });
+            }
+        }
     }
     document.getElementById("pageSize")?.addEventListener("change", function () { currentPageSize = Number(this.value); refreshLiveStatus(true); });
     document.getElementById("prevPageBtn")?.addEventListener("click", function () { currentPage = Math.max(currentPage - 1, 1); refreshLiveStatus(false); });
     document.getElementById("nextPageBtn")?.addEventListener("click", function () { currentPage += 1; refreshLiveStatus(false); });
-    ["searchBox", "statusFilter", "departmentFilter", "overBreakOnly"].forEach(id => {
+    document.getElementById("refreshNowBtn")?.addEventListener("click", function () {
+        refreshLiveStatus(false);
+    });
+    ["statusFilter", "departmentFilter", "overBreakOnly"].forEach(id => {
         const el = document.getElementById(id);
-        if (el) el.addEventListener(id === "searchBox" ? "input" : "change", function () { refreshLiveStatus(true); });
+        if (el) el.addEventListener("change", function () { refreshLiveStatus(true); });
+    });
+    const searchBox = document.getElementById("searchBox");
+    if (searchBox) {
+        searchBox.addEventListener("input", function () {
+            clearTimeout(searchDebounceTimer);
+            searchDebounceTimer = setTimeout(function () {
+                refreshLiveStatus(true);
+            }, standaloneMode ? 280 : 160);
+        });
+    }
+    const refreshHint = document.getElementById("refreshHint");
+    if (refreshHint) {
+        refreshHint.textContent = standaloneMode
+            ? "Installed app mode refreshes every 45 seconds to keep the dashboard lighter."
+            : "Auto-refreshes every 15 seconds without jumping back to the top.";
+    }
+    function startRefreshLoop() {
+        clearInterval(refreshTimer);
+        refreshTimer = setInterval(function () {
+            if (!document.hidden) {
+                refreshLiveStatus(false);
+            }
+        }, refreshIntervalMs);
+    }
+    document.addEventListener("visibilitychange", function () {
+        if (!document.hidden) {
+            refreshLiveStatus(false);
+        }
+    });
+    window.addEventListener("focus", function () {
+        refreshLiveStatus(false);
     });
     refreshLiveStatus(false);
-    setInterval(function () { refreshLiveStatus(false); }, 15000);
+    startRefreshLoop();
 });
 </script>
 {% endblock %}
@@ -189,7 +271,10 @@ document.addEventListener("DOMContentLoaded", function () {
             </div>
             <div class="admin-toolbar">
                 <div class="admin-panel-subtitle" id="pageSummary">{% if pagination.total %}Showing {{ pagination.start_index }}-{{ pagination.end_index }} of {{ pagination.total }}{% else %}No matching employees{% endif %}</div>
-                <a class="btn btn-purple" data-tour-id="admin-history-link" href="{{ url_for('admin_history', department=department_filter) }}">Open Full History</a>
+                <div class="admin-exception-actions">
+                    <button class="btn btn-dark" id="refreshNowBtn" type="button">Refresh Now</button>
+                    <a class="btn btn-purple" data-tour-id="admin-history-link" href="{{ url_for('admin_history', department=department_filter) }}">Open Full History</a>
+                </div>
             </div>
             <div class="admin-table-wrap">
                 <table class="admin-live-table">
@@ -214,7 +299,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 </table>
             </div>
             <div class="admin-pagination">
-                <div class="admin-panel-subtitle">Auto-refreshes every 15 seconds without jumping back to the top.</div>
+                <div class="admin-panel-subtitle" id="refreshHint">Auto-refreshes every 15 seconds without jumping back to the top.</div>
                 <div class="admin-pagination-actions"><button class="btn btn-dark" id="prevPageBtn" type="button" {% if not pagination.has_prev %}disabled{% endif %}>Previous</button><button class="btn btn-primary" id="nextPageBtn" type="button" {% if not pagination.has_next %}disabled{% endif %}>Next</button></div>
             </div>
         </section>

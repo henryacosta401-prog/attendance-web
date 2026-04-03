@@ -13,6 +13,17 @@
     <link rel="manifest" href="{{ url_for('web_manifest') }}">
     <link rel="apple-touch-icon" href="{{ url_for('static', filename='stellar-seats-logo.svg') }}">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <script>
+        (function () {
+            let standalone = false;
+            try {
+                standalone = (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || window.navigator.standalone === true;
+            } catch (error) {
+                standalone = false;
+            }
+            document.documentElement.classList.add(standalone ? "app-standalone" : "app-browser");
+        })();
+    </script>
 
     <style>
         :root {
@@ -65,6 +76,11 @@
                 radial-gradient(circle at 90% 12%, rgba(139,92,246,0.18), transparent 25%),
                 radial-gradient(circle at 50% 100%, rgba(16,185,129,0.10), transparent 30%),
                 linear-gradient(135deg, var(--bg-1), var(--bg-2), var(--bg-3));
+        }
+
+        html.app-standalone body {
+            background:
+                linear-gradient(180deg, #0b1220 0%, #111827 52%, #18253c 100%);
         }
 
         a {
@@ -739,6 +755,29 @@
             z-index: 120;
         }
 
+        html.app-standalone .navbar,
+        html.app-standalone .nav-menu,
+        html.app-standalone .hero-card,
+        html.app-standalone .card,
+        html.app-standalone .table-wrap,
+        html.app-standalone .notification-dropdown,
+        html.app-standalone .login-card,
+        html.app-standalone .flash,
+        html.app-standalone .tour-card {
+            backdrop-filter: none !important;
+            box-shadow: 0 12px 24px rgba(2, 6, 23, 0.18) !important;
+        }
+
+        html.app-standalone .brand-logo img {
+            filter: none;
+        }
+
+        html.app-standalone .pill-link,
+        html.app-standalone .btn,
+        html.app-standalone .nav-menu-link {
+            transition-duration: 0.12s;
+        }
+
         .notification-dropdown.open {
             display: block;
         }
@@ -1303,6 +1342,7 @@ document.addEventListener("DOMContentLoaded", function () {
 document.addEventListener("DOMContentLoaded", function () {
     const role = document.body.dataset.tourRole || "guest";
     const endpoint = document.body.dataset.tourEndpoint || "";
+    const standaloneMode = document.documentElement.classList.contains("app-standalone");
     const backdrop = document.getElementById("tourBackdrop");
     const card = document.getElementById("tourCard");
     const title = document.getElementById("tourTitle");
@@ -1443,7 +1483,7 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     });
 
-    if (!localStorage.getItem(`attendance-tour-seen:${role}:${endpoint}`)) {
+    if (!standaloneMode && !localStorage.getItem(`attendance-tour-seen:${role}:${endpoint}`)) {
         setTimeout(function () {
             openTour();
         }, 450);
@@ -1565,6 +1605,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const installButton = document.getElementById("globalInstallButton");
     const serviceWorkerUrl = document.body.dataset.serviceWorkerUrl;
     const isStandalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+    document.body.dataset.appMode = isStandalone ? "standalone" : "browser";
     const isIos = /iphone|ipad|ipod/i.test(window.navigator.userAgent || "");
     let deferredPrompt = null;
 
