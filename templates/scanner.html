@@ -123,10 +123,18 @@
             z-index: 1;
         }
 
-        .install-pill {
+        .header-actions {
             position: relative;
             z-index: 1;
-            justify-self: center;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .install-pill {
+            position: relative;
             border: 1px solid rgba(125, 211, 252, 0.24);
             background: rgba(8, 16, 30, 0.56);
             color: #e0f2fe;
@@ -148,6 +156,31 @@
 
         .install-pill[hidden] {
             display: none !important;
+        }
+
+        .kiosk-logout-form {
+            margin: 0;
+        }
+
+        .kiosk-logout-btn {
+            appearance: none;
+            border: 1px solid rgba(248, 113, 113, 0.26);
+            background: rgba(127, 29, 29, 0.32);
+            color: #fee2e2;
+            border-radius: 999px;
+            padding: 8px 14px;
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: transform 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+        }
+
+        .kiosk-logout-btn:hover {
+            background: rgba(153, 27, 27, 0.46);
+            border-color: rgba(252, 165, 165, 0.38);
+            transform: translateY(-1px);
         }
 
         .employee-card {
@@ -734,6 +767,11 @@
                 font-size: 10px;
             }
 
+            .kiosk-logout-btn {
+                padding: 7px 12px;
+                font-size: 10px;
+            }
+
             .employee-card {
                 padding: 10px 10px 8px;
                 gap: 6px;
@@ -803,6 +841,177 @@
                 font-size: 9px;
             }
         }
+
+        @media (max-width: 420px), (max-height: 760px) {
+            .scanner-app {
+                grid-template-rows: auto minmax(0, 0.82fr) minmax(0, 1fr) minmax(0, 0.94fr);
+                gap: 5px;
+                padding:
+                    calc(6px + env(safe-area-inset-top, 0px))
+                    calc(6px + env(safe-area-inset-right, 0px))
+                    calc(6px + env(safe-area-inset-bottom, 0px))
+                    calc(6px + env(safe-area-inset-left, 0px));
+            }
+
+            .header-card,
+            .employee-card,
+            .actions-card,
+            .status-card {
+                border-radius: 18px;
+            }
+
+            .header-card {
+                padding: 8px 10px 7px;
+                gap: 3px;
+            }
+
+            .header-title {
+                font-size: 16px;
+            }
+
+            .header-meta {
+                font-size: 10px;
+                line-height: 1.15;
+            }
+
+            .install-pill {
+                padding: 6px 10px;
+                font-size: 9px;
+            }
+
+            .header-actions {
+                gap: 6px;
+            }
+
+            .kiosk-logout-btn {
+                padding: 6px 10px;
+                font-size: 9px;
+            }
+
+            .employee-card {
+                padding: 8px 8px 6px;
+                gap: 5px;
+            }
+
+            .employee-photo {
+                width: 72px;
+                height: 72px;
+                border-width: 3px;
+            }
+
+            .employee-fallback {
+                font-size: 30px;
+            }
+
+            .employee-fallback.is-logo {
+                padding: 12px;
+            }
+
+            .scan-result-chip {
+                min-height: 24px;
+                padding: 5px 9px;
+                font-size: 8px;
+                letter-spacing: 0.10em;
+            }
+
+            .employee-name {
+                font-size: 16px;
+                min-height: 24px;
+                line-height: 1;
+            }
+
+            .employee-status {
+                font-size: 11px;
+                min-height: 16px;
+                line-height: 1.15;
+            }
+
+            .actions-card {
+                padding: 7px;
+                gap: 6px;
+            }
+
+            .actions-title {
+                font-size: 9px;
+                letter-spacing: 0.16em;
+            }
+
+            .actions-list {
+                gap: 5px;
+            }
+
+            .action-btn {
+                border-radius: 14px;
+                font-size: 13px;
+                padding: 8px 10px;
+            }
+
+            .status-card {
+                padding: 7px;
+                gap: 6px;
+            }
+
+            .status-topbar {
+                gap: 6px;
+            }
+
+            .status-banner {
+                min-height: 36px;
+                border-radius: 14px;
+                padding: 7px 10px;
+                font-size: 12px;
+            }
+
+            .camera-controls {
+                padding: 3px;
+            }
+
+            .camera-toggle {
+                min-width: 68px;
+                min-height: 28px;
+                padding: 5px 9px;
+                font-size: 9px;
+            }
+
+            .camera-card {
+                height: 86px;
+                border-radius: 16px;
+            }
+
+            .camera-card::after {
+                inset: 15% 10%;
+                border-radius: 14px;
+            }
+
+            .camera-overlay {
+                inset: auto 8px 8px 8px;
+                padding: 6px 8px;
+                font-size: 9px;
+            }
+
+            .status-meta {
+                gap: 5px;
+            }
+
+            .meta-item {
+                border-radius: 12px;
+                min-height: 42px;
+                padding: 6px 8px;
+            }
+
+            .meta-label {
+                font-size: 9px;
+                margin-bottom: 2px;
+            }
+
+            .meta-value {
+                font-size: 11px;
+            }
+
+            .scanner-focus {
+                font-size: 8px;
+            }
+        }
     </style>
 </head>
 <body data-service-worker-url="{{ url_for('service_worker') }}">
@@ -814,7 +1023,13 @@
         <header class="header-card">
             <div class="header-title">Welcome to Stellar Seats</div>
             <div class="header-meta" id="liveDateTime">Loading date and time...</div>
-            <button class="install-pill" id="scannerInstallButton" type="button" hidden>Install App</button>
+            <div class="header-actions">
+                <button class="install-pill" id="scannerInstallButton" type="button" hidden>Install App</button>
+                <form class="kiosk-logout-form" method="POST" action="{{ url_for('logout') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button class="kiosk-logout-btn" type="submit">Log Out</button>
+                </form>
+            </div>
         </header>
 
         <section class="employee-card">
