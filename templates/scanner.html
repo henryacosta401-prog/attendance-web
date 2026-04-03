@@ -36,6 +36,7 @@
             margin: 0;
             overflow: hidden;
             font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+            min-height: 100dvh;
             background:
                 radial-gradient(circle at 50% -8%, rgba(96, 165, 250, 0.16), transparent 24%),
                 radial-gradient(circle at 88% 12%, rgba(125, 211, 252, 0.12), transparent 18%),
@@ -50,10 +51,15 @@
 
         .scanner-app {
             height: 100vh;
+            height: 100dvh;
             display: grid;
             grid-template-rows: auto minmax(0, 0.92fr) minmax(0, 1fr) minmax(0, 0.98fr);
             gap: 10px;
-            padding: 10px 10px calc(10px + env(safe-area-inset-bottom, 0px));
+            padding:
+                calc(10px + env(safe-area-inset-top, 0px))
+                calc(10px + env(safe-area-inset-right, 0px))
+                calc(10px + env(safe-area-inset-bottom, 0px))
+                calc(10px + env(safe-area-inset-left, 0px));
             position: relative;
         }
 
@@ -657,6 +663,21 @@
         }
 
         @media (max-width: 800px) {
+            .scanner-app {
+                gap: 8px;
+            }
+
+            .header-card,
+            .employee-card,
+            .actions-card,
+            .status-card {
+                border-radius: 22px;
+            }
+
+            .header-title {
+                font-size: 21px;
+            }
+
             .employee-photo {
                 width: 96px;
                 height: 96px;
@@ -682,6 +703,104 @@
 
             .camera-controls {
                 justify-self: center;
+            }
+        }
+
+        @media (max-width: 520px) {
+            .scanner-app {
+                grid-template-rows: auto minmax(0, 0.88fr) minmax(0, 1fr) minmax(0, 1.02fr);
+                gap: 6px;
+                padding:
+                    calc(8px + env(safe-area-inset-top, 0px))
+                    calc(8px + env(safe-area-inset-right, 0px))
+                    calc(8px + env(safe-area-inset-bottom, 0px))
+                    calc(8px + env(safe-area-inset-left, 0px));
+            }
+
+            .header-card {
+                padding: 10px 12px 8px;
+            }
+
+            .header-title {
+                font-size: 18px;
+            }
+
+            .header-meta {
+                font-size: 11px;
+            }
+
+            .install-pill {
+                padding: 7px 12px;
+                font-size: 10px;
+            }
+
+            .employee-card {
+                padding: 10px 10px 8px;
+                gap: 6px;
+            }
+
+            .employee-photo {
+                width: 82px;
+                height: 82px;
+            }
+
+            .scan-result-chip {
+                font-size: 9px;
+                padding: 6px 10px;
+            }
+
+            .employee-name {
+                font-size: 18px;
+                min-height: 30px;
+            }
+
+            .employee-status {
+                font-size: 12px;
+                min-height: 20px;
+            }
+
+            .actions-card,
+            .status-card {
+                padding: 8px;
+            }
+
+            .actions-title {
+                font-size: 10px;
+                margin-bottom: 6px;
+            }
+
+            .action-btn {
+                min-height: 42px;
+                padding: 10px 12px;
+                font-size: 14px;
+            }
+
+            .status-banner {
+                min-height: 38px;
+                font-size: 13px;
+            }
+
+            .camera-controls {
+                gap: 6px;
+            }
+
+            .camera-toggle {
+                min-height: 30px;
+                padding: 6px 10px;
+                font-size: 10px;
+            }
+
+            .meta-item {
+                min-height: 48px;
+                padding: 8px 9px;
+            }
+
+            .meta-value {
+                font-size: 12px;
+            }
+
+            .scanner-focus {
+                font-size: 9px;
             }
         }
     </style>
