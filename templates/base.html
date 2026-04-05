@@ -1086,65 +1086,79 @@
         {% if session.get('role') == 'admin' %}
             {% set attendance_endpoints = ['admin_corrections', 'admin_history', 'admin_attendance_audit', 'admin_scanner_logs'] %}
             {% set workflow_endpoints = ['admin_leave_dashboard', 'admin_error_reports', 'admin_disciplinary_dashboard', 'admin_incident_report'] %}
+            {% set report_endpoints = ['admin_reports'] %}
             {% set admin_endpoints = ['admin_data_tools', 'admin_profile'] %}
             <div class="nav-primary">
-                <a class="pill-link {% if request.endpoint == 'admin_dashboard' %}active{% endif %}" data-tour-id="nav-dashboard" href="{{ url_for('admin_dashboard') }}">Dashboard</a>
-                <a class="pill-link {% if request.endpoint == 'manage_employees' or request.endpoint == 'edit_employee' %}active{% endif %}" data-tour-id="nav-employees" href="{{ url_for('manage_employees') }}">Employees</a>
-                <a class="pill-link {% if request.endpoint == 'admin_payroll' %}active{% endif %}" href="{{ url_for('admin_payroll') }}">Payroll</a>
+                {% if admin_can('dashboard') %}
+                    <a class="pill-link {% if request.endpoint == 'admin_dashboard' %}active{% endif %}" data-tour-id="nav-dashboard" href="{{ url_for('admin_dashboard') }}">Dashboard</a>
+                {% endif %}
+                {% if admin_can('employees') %}
+                    <a class="pill-link {% if request.endpoint == 'manage_employees' or request.endpoint == 'edit_employee' %}active{% endif %}" data-tour-id="nav-employees" href="{{ url_for('manage_employees') }}">Employees</a>
+                {% endif %}
+                {% if admin_can('payroll') %}
+                    <a class="pill-link {% if request.endpoint == 'admin_payroll' %}active{% endif %}" href="{{ url_for('admin_payroll') }}">Payroll</a>
+                {% endif %}
+                {% if admin_can('reports') %}
+                    <a class="pill-link {% if request.endpoint in report_endpoints %}active{% endif %}" href="{{ url_for('admin_reports') }}">Reports</a>
+                {% endif %}
 
-                <div class="nav-group" data-nav-group>
-                    <button class="pill-link nav-group-toggle {% if request.endpoint in attendance_endpoints %}active{% endif %}" data-nav-toggle data-tour-id="nav-attendance" type="button" aria-expanded="false">
-                        Attendance <span class="nav-caret">v</span>
-                    </button>
-                    <div class="nav-menu">
-                        <div class="nav-menu-label">Attendance Review</div>
-                        <div class="nav-menu-list">
-                            <a class="nav-menu-link {% if request.endpoint == 'admin_corrections' %}active{% endif %}" data-tour-id="nav-corrections" href="{{ url_for('admin_corrections') }}">
-                                <strong>Corrections</strong>
-                                <span>Approve missed punches, leave requests, and fixes.</span>
-                            </a>
-                            <a class="nav-menu-link {% if request.endpoint == 'admin_history' %}active{% endif %}" data-tour-id="nav-history" href="{{ url_for('admin_history') }}">
-                                <strong>History</strong>
-                                <span>Review exported attendance records and past entries.</span>
-                            </a>
-                            <a class="nav-menu-link {% if request.endpoint == 'admin_attendance_audit' %}active{% endif %}" href="{{ url_for('admin_attendance_audit') }}">
-                                <strong>Attendance Audit</strong>
-                                <span>Follow scanner, manual, and overtime actions in one timeline.</span>
-                            </a>
-                            <a class="nav-menu-link {% if request.endpoint == 'admin_scanner_logs' %}active{% endif %}" href="{{ url_for('admin_scanner_logs') }}">
-                                <strong>Scanner Logs</strong>
-                                <span>Inspect kiosk scans, failures, and matched employees.</span>
-                            </a>
+                {% if admin_can('attendance') %}
+                    <div class="nav-group" data-nav-group>
+                        <button class="pill-link nav-group-toggle {% if request.endpoint in attendance_endpoints %}active{% endif %}" data-nav-toggle data-tour-id="nav-attendance" type="button" aria-expanded="false">
+                            Attendance <span class="nav-caret">v</span>
+                        </button>
+                        <div class="nav-menu">
+                            <div class="nav-menu-label">Attendance Review</div>
+                            <div class="nav-menu-list">
+                                <a class="nav-menu-link {% if request.endpoint == 'admin_corrections' %}active{% endif %}" data-tour-id="nav-corrections" href="{{ url_for('admin_corrections') }}">
+                                    <strong>Corrections</strong>
+                                    <span>Approve missed punches, leave requests, and fixes.</span>
+                                </a>
+                                <a class="nav-menu-link {% if request.endpoint == 'admin_history' %}active{% endif %}" data-tour-id="nav-history" href="{{ url_for('admin_history') }}">
+                                    <strong>History</strong>
+                                    <span>Review exported attendance records and past entries.</span>
+                                </a>
+                                <a class="nav-menu-link {% if request.endpoint == 'admin_attendance_audit' %}active{% endif %}" href="{{ url_for('admin_attendance_audit') }}">
+                                    <strong>Attendance Audit</strong>
+                                    <span>Follow scanner, manual, and overtime actions in one timeline.</span>
+                                </a>
+                                <a class="nav-menu-link {% if request.endpoint == 'admin_scanner_logs' %}active{% endif %}" href="{{ url_for('admin_scanner_logs') }}">
+                                    <strong>Scanner Logs</strong>
+                                    <span>Inspect kiosk scans, failures, and matched employees.</span>
+                                </a>
+                            </div>
                         </div>
                     </div>
-                </div>
+                {% endif %}
 
-                <div class="nav-group" data-nav-group>
-                    <button class="pill-link nav-group-toggle {% if request.endpoint in workflow_endpoints %}active{% endif %}" data-nav-toggle type="button" aria-expanded="false">
-                        Workflows <span class="nav-caret">v</span>
-                    </button>
-                    <div class="nav-menu">
-                        <div class="nav-menu-label">People Operations</div>
-                        <div class="nav-menu-list">
-                            <a class="nav-menu-link {% if request.endpoint == 'admin_leave_dashboard' %}active{% endif %}" href="{{ url_for('admin_leave_dashboard') }}">
-                                <strong>Leave</strong>
-                                <span>Track balances, pending requests, and exhausted allowances.</span>
-                            </a>
-                            <a class="nav-menu-link {% if request.endpoint == 'admin_error_reports' %}active{% endif %}" href="{{ url_for('admin_error_reports') }}">
-                                <strong>Error Reports</strong>
-                                <span>Review reported issues and operational errors.</span>
-                            </a>
-                            <a class="nav-menu-link {% if request.endpoint == 'admin_disciplinary_dashboard' %}active{% endif %}" href="{{ url_for('admin_disciplinary_dashboard') }}">
-                                <strong>Disciplinary</strong>
-                                <span>Manage coaching, NTE, and suspension actions.</span>
-                            </a>
-                            <a class="nav-menu-link {% if request.endpoint == 'admin_incident_report' %}active{% endif %}" href="{{ url_for('admin_incident_report') }}">
-                                <strong>Create Incident</strong>
-                                <span>Log a new incident or operational concern.</span>
-                            </a>
+                {% if admin_can('workflows') %}
+                    <div class="nav-group" data-nav-group>
+                        <button class="pill-link nav-group-toggle {% if request.endpoint in workflow_endpoints %}active{% endif %}" data-nav-toggle type="button" aria-expanded="false">
+                            Workflows <span class="nav-caret">v</span>
+                        </button>
+                        <div class="nav-menu">
+                            <div class="nav-menu-label">People Operations</div>
+                            <div class="nav-menu-list">
+                                <a class="nav-menu-link {% if request.endpoint == 'admin_leave_dashboard' %}active{% endif %}" href="{{ url_for('admin_leave_dashboard') }}">
+                                    <strong>Leave</strong>
+                                    <span>Track balances, pending requests, and exhausted allowances.</span>
+                                </a>
+                                <a class="nav-menu-link {% if request.endpoint == 'admin_error_reports' %}active{% endif %}" href="{{ url_for('admin_error_reports') }}">
+                                    <strong>Error Reports</strong>
+                                    <span>Review reported issues and operational errors.</span>
+                                </a>
+                                <a class="nav-menu-link {% if request.endpoint == 'admin_disciplinary_dashboard' %}active{% endif %}" href="{{ url_for('admin_disciplinary_dashboard') }}">
+                                    <strong>Disciplinary</strong>
+                                    <span>Manage coaching, NTE, and suspension actions.</span>
+                                </a>
+                                <a class="nav-menu-link {% if request.endpoint == 'admin_incident_report' %}active{% endif %}" href="{{ url_for('admin_incident_report') }}">
+                                    <strong>Create Incident</strong>
+                                    <span>Log a new incident or operational concern.</span>
+                                </a>
+                            </div>
                         </div>
                     </div>
-                </div>
+                {% endif %}
 
                 <div class="nav-group" data-nav-group>
                     <button class="pill-link nav-group-toggle {% if request.endpoint in admin_endpoints %}active{% endif %}" data-nav-toggle type="button" aria-expanded="false">
@@ -1153,13 +1167,15 @@
                     <div class="nav-menu">
                         <div class="nav-menu-label">Admin Controls</div>
                         <div class="nav-menu-list">
-                            <a class="nav-menu-link {% if request.endpoint == 'admin_data_tools' %}active{% endif %}" href="{{ url_for('admin_data_tools') }}">
-                                <strong>Data Tools</strong>
-                                <span>Run backups, go-live reset, and suspicious-row repair tools.</span>
-                            </a>
+                            {% if admin_can('settings') %}
+                                <a class="nav-menu-link {% if request.endpoint == 'admin_data_tools' %}active{% endif %}" href="{{ url_for('admin_data_tools') }}">
+                                    <strong>Data Tools</strong>
+                                    <span>Run backups, go-live reset, and suspicious-row repair tools.</span>
+                                </a>
+                            {% endif %}
                             <a class="nav-menu-link {% if request.endpoint == 'admin_profile' %}active{% endif %}" data-tour-id="nav-account" href="{{ url_for('admin_profile') }}">
                                 <strong>Account Settings</strong>
-                                <span>Manage admin profile, scanner mode, and kiosk settings.</span>
+                                <span>Manage your admin profile{% if admin_can('settings') %}, scanner mode, and kiosk settings{% endif %}.</span>
                             </a>
                         </div>
                     </div>

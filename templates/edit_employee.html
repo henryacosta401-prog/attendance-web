@@ -12,6 +12,7 @@
 <div class="card" style="max-width:800px;">
     <form method="POST" enctype="multipart/form-data">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="form_action" value="edit_employee">
         <div class="grid grid-2">
             <div>
                 <label>Full Name</label>
@@ -37,11 +38,11 @@
 <div class="grid grid-2" style="margin-top:12px;">
     <div>
         <label>Shift Start</label>
-        <input class="input" type="time" name="shift_start" value="{{ employee.shift_start if employee else '09:00' }}">
+        <input class="input js-shift-start" type="time" name="shift_start" value="{{ employee.shift_start if employee else '09:00' }}">
     </div>
     <div>
         <label>Shift End</label>
-        <input class="input" type="time" name="shift_end" value="{{ employee.shift_end if employee and employee.shift_end else '18:00' }}">
+        <input class="input js-shift-end" type="time" name="shift_end" value="{{ employee.shift_end if employee and employee.shift_end else '18:00' }}">
     </div>
 </div>
 
@@ -52,7 +53,7 @@
     </div>
     <div>
         <label>Break Limit (Minutes)</label>
-        <input class="input" type="number" name="break_limit_minutes" value="{{ employee.break_limit_minutes if employee.break_limit_minutes else 15 }}" min="1">
+        <input class="input js-break-limit" type="number" name="break_limit_minutes" value="{{ employee.break_limit_minutes if employee.break_limit_minutes else 15 }}" min="1">
     </div>
 </div>
 
@@ -107,8 +108,26 @@
     </div>
 </div>
 
+<label style="display:block; margin-top:12px;">Schedule Preset (Optional)</label>
+<select class="input js-schedule-preset-select" name="schedule_preset_id">
+    <option value="">Custom Manual Schedule</option>
+    {% for preset in schedule_presets %}
+        <option
+            value="{{ preset.id }}"
+            data-schedule-days="{{ preset.schedule_days }}"
+            data-shift-start="{{ preset.shift_start }}"
+            data-shift-end="{{ preset.shift_end }}"
+            data-break-limit="{{ preset.break_limit_minutes }}"
+            {% if employee.schedule_preset_id == preset.id %}selected{% endif %}
+        >
+            {{ preset.name }}{% if preset.department_scope %} | {{ preset.department_scope }}{% endif %}
+        </option>
+    {% endfor %}
+</select>
+<div class="small muted" style="margin-top:8px;">Choosing a preset will save its schedule, shift, and break limit for this employee.</div>
+
 <label style="display:block; margin-top:12px;">Work Schedule</label>
-<div class="schedule-picker">
+<div class="schedule-picker js-schedule-day-picker">
     {% for code, label in weekday_options %}
         <label class="schedule-chip">
             <input type="checkbox" name="schedule_days" value="{{ code }}" {% if code in employee_schedule_days %}checked{% endif %}>
@@ -148,4 +167,139 @@
         </div>
     </form>
 </div>
+
+<div class="grid grid-2" style="margin-top:18px; align-items:start;">
+    <div class="card">
+        <div class="section-title">Queue Future Schedule Change</div>
+        <p class="muted" style="margin-bottom:14px;">Use this when a shift should change later without changing today’s attendance rules.</p>
+        <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="form_action" value="schedule_future_change">
+
+            <label>Effective Date</label>
+            <input class="input" type="date" name="effective_date" required>
+
+            <label style="display:block; margin-top:12px;">Schedule Preset (Optional)</label>
+            <select class="input js-schedule-preset-select" name="schedule_preset_id">
+                <option value="">Custom Manual Schedule</option>
+                {% for preset in schedule_presets %}
+                    <option
+                        value="{{ preset.id }}"
+                        data-schedule-days="{{ preset.schedule_days }}"
+                        data-shift-start="{{ preset.shift_start }}"
+                        data-shift-end="{{ preset.shift_end }}"
+                        data-break-limit="{{ preset.break_limit_minutes }}"
+                    >
+                        {{ preset.name }}{% if preset.department_scope %} | {{ preset.department_scope }}{% endif %}
+                    </option>
+                {% endfor %}
+            </select>
+
+            <label style="display:block; margin-top:12px;">Work Schedule</label>
+            <div class="schedule-picker js-schedule-day-picker">
+                {% for code, label in weekday_options %}
+                    <label class="schedule-chip">
+                        <input type="checkbox" name="schedule_days" value="{{ code }}" {% if code in employee_schedule_days %}checked{% endif %}>
+                        <span>{{ label }}</span>
+                    </label>
+                {% endfor %}
+            </div>
+
+            <div class="grid grid-2" style="margin-top:12px;">
+                <div>
+                    <label>Shift Start</label>
+                    <input class="input js-shift-start" type="time" name="shift_start" value="{{ employee.shift_start if employee else '09:00' }}">
+                </div>
+                <div>
+                    <label>Shift End</label>
+                    <input class="input js-shift-end" type="time" name="shift_end" value="{{ employee.shift_end if employee and employee.shift_end else '18:00' }}">
+                </div>
+            </div>
+
+            <label style="display:block; margin-top:12px;">Break Limit (Minutes)</label>
+            <input class="input js-break-limit" type="number" name="break_limit_minutes" value="{{ employee.break_limit_minutes if employee.break_limit_minutes else 15 }}" min="1">
+
+            <label style="display:block; margin-top:12px;">Notes</label>
+            <textarea class="input" name="future_schedule_notes" rows="3" placeholder="Optional note for the rollout"></textarea>
+
+            <button class="btn btn-primary" type="submit" style="width:100%; margin-top:16px;">Queue Future Change</button>
+        </form>
+    </div>
+
+    <div style="display:grid; gap:18px;">
+        <div class="card">
+            <div class="section-title">Upcoming Scheduled Changes</div>
+            {% if future_schedule_changes %}
+                <div style="display:grid; gap:12px;">
+                    {% for change in future_schedule_changes %}
+                        <div style="padding:14px; border-radius:16px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);">
+                            <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+                                <div>
+                                    <div style="font-weight:800; color:#fff;">Effective {{ change.effective_date }}</div>
+                                    <div class="small muted" style="margin-top:6px;">{{ change.schedule_summary }} | {{ change.window_summary }} | Break {{ change.break_limit_minutes }} min</div>
+                                    <div class="small muted" style="margin-top:4px;">
+                                        {% if change.preset_name %}Preset: {{ change.preset_name }}{% else %}Custom queued schedule{% endif %}
+                                        {% if change.notes %} | {{ change.notes }}{% endif %}
+                                    </div>
+                                </div>
+                                <div style="display:grid; gap:8px; justify-items:end;">
+                                    <span class="status status-blue">Queued</span>
+                                    <form method="POST" action="{{ url_for('delete_future_schedule_change', change_id=change.id) }}" style="margin:0;" onsubmit="return confirm('Delete this queued schedule change?');">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                        <button class="btn btn-danger" type="submit">Delete</button>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <p class="muted">No future schedule changes are queued for this employee.</p>
+            {% endif %}
+        </div>
+
+        <div class="card">
+            <div class="section-title">Recent Schedule History</div>
+            {% if schedule_history_rows %}
+                <div style="display:grid; gap:12px;">
+                    {% for row in schedule_history_rows %}
+                        <div style="padding:14px; border-radius:16px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);">
+                            <div style="font-weight:800; color:#fff;">{{ row.effective_at }}</div>
+                            <div class="small muted" style="margin-top:6px;">{{ row.schedule_summary }} | {{ row.window_summary }} | Break {{ row.break_limit_minutes }} min</div>
+                            <div class="small muted" style="margin-top:4px;">
+                                {% if row.preset_name %}Preset: {{ row.preset_name }}{% else %}Custom schedule{% endif %}
+                                {% if row.created_by_name %} | Saved by {{ row.created_by_name }}{% endif %}
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <p class="muted">No schedule history is available yet for this employee.</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    document.querySelectorAll(".js-schedule-preset-select").forEach((presetSelect) => {
+        presetSelect.addEventListener("change", function () {
+            const form = presetSelect.closest("form");
+            if (!form) return;
+            const selectedOption = presetSelect.options[presetSelect.selectedIndex];
+            if (!selectedOption || !selectedOption.value) return;
+            const shiftStart = form.querySelector(".js-shift-start");
+            const shiftEnd = form.querySelector(".js-shift-end");
+            const breakLimit = form.querySelector(".js-break-limit");
+            const checkboxes = form.querySelectorAll(".js-schedule-day-picker input[type='checkbox']");
+            if (shiftStart) shiftStart.value = selectedOption.dataset.shiftStart || shiftStart.value;
+            if (shiftEnd) shiftEnd.value = selectedOption.dataset.shiftEnd || shiftEnd.value;
+            if (breakLimit) breakLimit.value = selectedOption.dataset.breakLimit || breakLimit.value;
+            const selectedDays = new Set((selectedOption.dataset.scheduleDays || "").split(",").map((value) => value.trim()).filter(Boolean));
+            checkboxes.forEach((checkbox) => {
+                checkbox.checked = selectedDays.has(checkbox.value);
+            });
+        });
+    });
+});
+</script>
 {% endblock %}

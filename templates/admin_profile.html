@@ -50,78 +50,224 @@
     </form>
 </div>
 
-<div class="card">
-    <div class="section-title">Scanner Account</div>
-    <p class="muted" style="margin-bottom:14px;">Create or update the tablet kiosk login. This account can only access the scanner page.</p>
+{% if admin_can('settings') %}
+    <div class="card">
+        <div class="section-title">Scanner Account</div>
+        <p class="muted" style="margin-bottom:14px;">Create or update the tablet kiosk login. This account can only access the scanner page.</p>
 
-    <form method="POST">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <input type="hidden" name="form_action" value="scanner_account">
+        <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="form_action" value="scanner_account">
 
-        <label>Scanner Display Name</label>
-        <input class="input" type="text" name="scanner_full_name" value="{{ scanner_account.full_name if scanner_account else 'Scanner Kiosk' }}" required>
+            <label>Scanner Display Name</label>
+            <input class="input" type="text" name="scanner_full_name" value="{{ scanner_account.full_name if scanner_account else 'Scanner Kiosk' }}" required>
 
-        <label style="display:block; margin-top:12px;">Scanner Username</label>
-        <input class="input" type="text" name="scanner_username" value="{{ scanner_account.username if scanner_account else '' }}" placeholder="e.g. scanner-tablet" required>
+            <label style="display:block; margin-top:12px;">Scanner Username</label>
+            <input class="input" type="text" name="scanner_username" value="{{ scanner_account.username if scanner_account else '' }}" placeholder="e.g. scanner-tablet" required>
 
-        <label style="display:block; margin-top:12px;">Scanner Password</label>
-        <input class="input" type="password" name="scanner_password" placeholder="{% if scanner_account %}Leave blank to keep current scanner password{% else %}Create scanner password{% endif %}">
+            <label style="display:block; margin-top:12px;">Scanner Password</label>
+            <input class="input" type="password" name="scanner_password" placeholder="{% if scanner_account %}Leave blank to keep current scanner password{% else %}Create scanner password{% endif %}">
 
-        <div class="small muted" style="margin-top:10px;">
-            {% if scanner_account %}
-                Current scanner account is active. Update the password only when you want to rotate the tablet login.
-            {% else %}
-                No scanner account exists yet. Save this form to create the dedicated scanner-only login.
-            {% endif %}
-        </div>
+            <div class="small muted" style="margin-top:10px;">
+                {% if scanner_account %}
+                    Current scanner account is active. Update the password only when you want to rotate the tablet login.
+                {% else %}
+                    No scanner account exists yet. Save this form to create the dedicated scanner-only login.
+                {% endif %}
+            </div>
 
-        <div class="top-actions" style="margin-top:16px;">
-            <button class="btn btn-primary" type="submit">{% if scanner_account %}Update Scanner Account{% else %}Create Scanner Account{% endif %}</button>
-            {% if scanner_account %}
-                <span class="status status-blue">Scanner route: {{ url_for('scanner_kiosk') }}</span>
-            {% endif %}
-        </div>
-    </form>
+            <div class="top-actions" style="margin-top:16px;">
+                <button class="btn btn-primary" type="submit">{% if scanner_account %}Update Scanner Account{% else %}Create Scanner Account{% endif %}</button>
+                {% if scanner_account %}
+                    <span class="status status-blue">Scanner route: {{ url_for('scanner_kiosk') }}</span>
+                {% endif %}
+            </div>
+        </form>
+    </div>
+{% else %}
+    <div class="card">
+        <div class="section-title">Admin Access</div>
+        <p class="muted">Your account can update its own profile, but scanner, kiosk, and admin-team settings are restricted to admins with the <strong>Settings</strong> permission.</p>
+        <div class="small muted" style="margin-top:10px;">Current role preset: {{ get_admin_role_preset_meta(current_user).label }}</div>
+        <div class="small muted" style="margin-top:6px;">Current access: {{ describe_admin_permissions(current_user) }}</div>
+    </div>
+{% endif %}
 </div>
-</div>
 
-<div class="card" style="margin-top:20px;">
-    <div class="section-title">Attendance and Kiosk Settings</div>
-    <p class="muted" style="margin-bottom:14px;">Control whether attendance is scanner-only, how the kiosk auto-locks, and how overtime is estimated in payroll.</p>
+{% if admin_can('settings') %}
+    <div class="card" style="margin-top:20px;">
+        <div class="section-title">Admin Team Permissions</div>
+        <p class="muted" style="margin-bottom:14px;">Create limited admin accounts for payroll, attendance, reports, or people operations without giving every admin full access.</p>
 
-    <form method="POST">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <input type="hidden" name="form_action" value="attendance_settings">
+        <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="form_action" value="create_admin_account">
 
-        <label style="display:flex;align-items:center;gap:10px;">
-            <input type="checkbox" name="scanner_attendance_mode" value="1" {% if company_settings.scanner_attendance_mode %}checked{% endif %}>
-            <span>Use scanner kiosk as the official attendance method</span>
-        </label>
+            <div class="grid grid-3">
+                <div>
+                    <label>Admin Name</label>
+                    <input class="input" type="text" name="admin_full_name" placeholder="e.g. Payroll Officer" required>
+                </div>
+                <div>
+                    <label>Username</label>
+                    <input class="input" type="text" name="admin_username" placeholder="e.g. payroll.officer" required>
+                </div>
+                <div>
+                    <label>Password</label>
+                    <input class="input" type="password" name="admin_password" placeholder="Create password" required>
+                </div>
+            </div>
 
-        <label style="display:block; margin-top:12px;">Kiosk Auto-Lock Timeout (seconds)</label>
-        <input class="input" type="number" min="15" max="900" name="scanner_lock_timeout_seconds" value="{{ company_settings.scanner_lock_timeout_seconds or 90 }}">
+            <label style="display:block; margin-top:12px;">Role Preset</label>
+            <select class="input js-admin-role-preset" name="admin_role_preset">
+                <option value="">Custom Access</option>
+                {% for code, label, description, permissions in admin_role_preset_options %}
+                    <option value="{{ code }}" data-permissions="{{ permissions|join(',') }}" {% if code == 'full_admin' %}selected{% endif %}>{{ label }} | {{ description }}</option>
+                {% endfor %}
+            </select>
+            <div class="small muted" style="margin-top:8px;">Choose a preset to prefill the permissions below, or leave it on Custom Access for a manual mix.</div>
 
-        <label style="display:block; margin-top:12px;">Kiosk Unlock PIN</label>
-        <input class="input" type="password" name="scanner_exit_pin" placeholder="{% if scanner_exit_pin_configured %}Leave blank to keep current kiosk PIN{% else %}Create kiosk PIN{% endif %}">
-        <label style="display:flex;align-items:center;gap:10px;margin-top:10px;">
-            <input type="checkbox" name="clear_scanner_exit_pin" value="1">
-            <span>Clear existing kiosk PIN</span>
-        </label>
+            <label style="display:block; margin-top:12px;">Permissions</label>
+            <div class="schedule-picker">
+                {% for code, label in admin_permission_options %}
+                    <label class="schedule-chip">
+                        <input type="checkbox" name="admin_permissions" value="{{ code }}" checked>
+                        <span>{{ label }}</span>
+                    </label>
+                {% endfor %}
+            </div>
 
-        <label style="display:block; margin-top:12px;">Overtime Multiplier</label>
-        <input class="input" type="number" step="0.01" min="1" max="5" name="overtime_multiplier" value="{{ company_settings.overtime_multiplier or 1.25 }}">
+            <div class="top-actions" style="margin-top:16px;">
+                <button class="btn btn-primary" type="submit">Create Admin Account</button>
+            </div>
+        </form>
 
-        <div class="small muted" style="margin-top:10px;">
-            {% if scanner_exit_pin_configured %}
-                A kiosk PIN is configured and will be required when the scanner auto-locks.
-            {% else %}
-                No kiosk PIN is configured yet. The scanner can still auto-lock, but it will resume without a PIN.
-            {% endif %}
+        <div class="divider"></div>
+        <h4 style="margin-top:0;">Existing Admin Accounts</h4>
+        <div style="display:grid; gap:14px;">
+            {% for admin in admin_accounts %}
+                <div style="padding:14px; border-radius:18px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);">
+                    {% if admin.id == user.id %}
+                        <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;">
+                            <div>
+                                <div style="font-weight:800; color:#fff;">{{ admin.full_name }} <span class="small muted">(You)</span></div>
+                                <div class="small muted" style="margin-top:6px;">@{{ admin.username }} | {{ get_admin_role_preset_meta(admin).label }} | {{ describe_admin_permissions(admin) }}</div>
+                            </div>
+                            <span class="status status-green">Primary Admin</span>
+                        </div>
+                    {% else %}
+                        <form method="POST">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <input type="hidden" name="form_action" value="update_admin_account">
+                            <input type="hidden" name="admin_id" value="{{ admin.id }}">
+
+                            <div class="grid grid-3">
+                                <div>
+                                    <label>Admin Name</label>
+                                    <input class="input" type="text" name="admin_full_name" value="{{ admin.full_name }}" required>
+                                </div>
+                                <div>
+                                    <label>Username</label>
+                                    <input class="input" type="text" name="admin_username" value="{{ admin.username }}" required>
+                                </div>
+                                <div>
+                                    <label>New Password</label>
+                                    <input class="input" type="password" name="admin_password" placeholder="Leave blank to keep current password">
+                                </div>
+                            </div>
+
+                            {% set admin_role_meta = get_admin_role_preset_meta(admin) %}
+                            <label style="display:block; margin-top:12px;">Role Preset</label>
+                            <select class="input js-admin-role-preset" name="admin_role_preset">
+                                <option value="">Custom Access</option>
+                                {% for code, label, description, permissions in admin_role_preset_options %}
+                                    <option value="{{ code }}" data-permissions="{{ permissions|join(',') }}" {% if admin_role_meta.code == code %}selected{% endif %}>{{ label }} | {{ description }}</option>
+                                {% endfor %}
+                            </select>
+                            <div class="small muted" style="margin-top:8px;">Current preset: {{ admin_role_meta.label }}</div>
+
+                            <label style="display:block; margin-top:12px;">Permissions</label>
+                            {% set admin_codes = (admin.admin_permissions.split(',') if admin.admin_permissions else ['dashboard','employees','attendance','workflows','payroll','reports','settings']) %}
+                            <div class="schedule-picker">
+                                {% for code, label in admin_permission_options %}
+                                    <label class="schedule-chip">
+                                        <input type="checkbox" name="admin_permissions" value="{{ code }}" {% if code in admin_codes %}checked{% endif %}>
+                                        <span>{{ label }}</span>
+                                    </label>
+                                {% endfor %}
+                            </div>
+
+                            <label style="display:block; margin-top:12px;">Account Status</label>
+                            <select class="input" name="is_active">
+                                <option value="1" {% if admin.is_active == 1 %}selected{% endif %}>Active</option>
+                                <option value="0" {% if admin.is_active == 0 %}selected{% endif %}>Inactive</option>
+                            </select>
+
+                            <div class="top-actions" style="margin-top:16px;">
+                                <button class="btn btn-success" type="submit">Save Admin Access</button>
+                                <span class="small muted">Current access: {{ describe_admin_permissions(admin) }}</span>
+                            </div>
+                        </form>
+                    {% endif %}
+                </div>
+            {% endfor %}
         </div>
+    </div>
 
-        <div class="top-actions" style="margin-top:16px;">
-            <button class="btn btn-success" type="submit">Save Attendance Settings</button>
-        </div>
-    </form>
-</div>
+    <div class="card" style="margin-top:20px;">
+        <div class="section-title">Attendance and Kiosk Settings</div>
+        <p class="muted" style="margin-bottom:14px;">Control whether attendance is scanner-only, how the kiosk auto-locks, and how overtime is estimated in payroll.</p>
+
+        <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="form_action" value="attendance_settings">
+
+            <label style="display:flex;align-items:center;gap:10px;">
+                <input type="checkbox" name="scanner_attendance_mode" value="1" {% if company_settings.scanner_attendance_mode %}checked{% endif %}>
+                <span>Use scanner kiosk as the official attendance method</span>
+            </label>
+
+            <label style="display:block; margin-top:12px;">Kiosk Auto-Lock Timeout (seconds)</label>
+            <input class="input" type="number" min="15" max="900" name="scanner_lock_timeout_seconds" value="{{ company_settings.scanner_lock_timeout_seconds or 90 }}">
+
+            <label style="display:block; margin-top:12px;">Kiosk Unlock PIN</label>
+            <input class="input" type="password" name="scanner_exit_pin" placeholder="{% if scanner_exit_pin_configured %}Leave blank to keep current kiosk PIN{% else %}Create kiosk PIN{% endif %}">
+            <label style="display:flex;align-items:center;gap:10px;margin-top:10px;">
+                <input type="checkbox" name="clear_scanner_exit_pin" value="1">
+                <span>Clear existing kiosk PIN</span>
+            </label>
+
+            <label style="display:block; margin-top:12px;">Overtime Multiplier</label>
+            <input class="input" type="number" step="0.01" min="1" max="5" name="overtime_multiplier" value="{{ company_settings.overtime_multiplier or 1.25 }}">
+
+            <div class="small muted" style="margin-top:10px;">
+                {% if scanner_exit_pin_configured %}
+                    A kiosk PIN is configured and will be required when the scanner auto-locks.
+                {% else %}
+                    No kiosk PIN is configured yet. The scanner can still auto-lock, but it will resume without a PIN.
+                {% endif %}
+            </div>
+
+            <div class="top-actions" style="margin-top:16px;">
+                <button class="btn btn-success" type="submit">Save Attendance Settings</button>
+            </div>
+        </form>
+    </div>
+{% endif %}
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    document.querySelectorAll(".js-admin-role-preset").forEach((selectElement) => {
+        selectElement.addEventListener("change", function () {
+            const form = selectElement.closest("form");
+            if (!form) return;
+            const selectedOption = selectElement.options[selectElement.selectedIndex];
+            if (!selectedOption || !selectedOption.value) return;
+            const allowedCodes = new Set((selectedOption.dataset.permissions || "").split(",").map((value) => value.trim()).filter(Boolean));
+            form.querySelectorAll("input[name='admin_permissions']").forEach((checkbox) => {
+                checkbox.checked = allowedCodes.has(checkbox.value);
+            });
+        });
+    });
+});
+</script>
 {% endblock %}

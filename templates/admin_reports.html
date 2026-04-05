@@ -1,0 +1,294 @@
+{% extends "base.html" %}
+{% block title %}Admin Reports{% endblock %}
+
+{% block content %}
+<div class="hero-card" style="margin-bottom:20px;">
+    <div class="hero">
+        <div>
+            <h1>Operations Reports</h1>
+            <p class="section-subtitle">Review attendance, leave, overtime, incident, and released payroll trends for any date range.</p>
+        </div>
+        <div class="status status-purple">Reporting View</div>
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:18px;">
+    <form method="GET" class="grid grid-4" style="align-items:end;">
+        <div>
+            <label>Date From</label>
+            <input class="input" type="date" name="date_from" value="{{ date_from }}">
+        </div>
+        <div>
+            <label>Date To</label>
+            <input class="input" type="date" name="date_to" value="{{ date_to }}">
+        </div>
+        <div>
+            <label>Department</label>
+            <select class="input" name="department">
+                <option value="">All Departments</option>
+                {% for department in departments %}
+                    <option value="{{ department }}" {% if department_filter == department %}selected{% endif %}>{{ department }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="top-actions">
+            <button class="btn btn-primary" type="submit">Apply Filters</button>
+            <a class="btn btn-secondary" href="{{ url_for('export_admin_reports_excel', date_from=date_from, date_to=date_to, department=department_filter) }}">Export Excel</a>
+        </div>
+    </form>
+</div>
+
+<div class="grid grid-3" style="margin-bottom:18px;">
+    <div class="card">
+        <div class="section-title" style="font-size:12px;">Employees in Scope</div>
+        <div style="font-size:36px; font-weight:900; color:#fff;">{{ report_data.summary.employee_count }}</div>
+        <div class="small muted">Employees included in this report range.</div>
+    </div>
+    <div class="card">
+        <div class="section-title" style="font-size:12px;">Attendance Hours</div>
+        <div style="font-size:36px; font-weight:900; color:#fff;">{{ "%.2f"|format(report_data.summary.attendance_hours) }}</div>
+        <div class="small muted">{{ report_data.summary.attendance_days }} completed attendance day(s).</div>
+    </div>
+    <div class="card">
+        <div class="section-title" style="font-size:12px;">Overtime Hours</div>
+        <div style="font-size:36px; font-weight:900; color:#fff;">{{ "%.2f"|format(report_data.summary.overtime_hours) }}</div>
+        <div class="small muted">{{ report_data.summary.late_punches }} late punch(es) in the same window.</div>
+    </div>
+    <div class="card">
+        <div class="section-title" style="font-size:12px;">Follow-Ups</div>
+        <div style="font-size:36px; font-weight:900; color:#fff;">{{ report_data.summary.pending_corrections }}</div>
+        <div class="small muted">{{ report_data.summary.correction_requests }} correction request(s) logged in range.</div>
+    </div>
+    <div class="card">
+        <div class="section-title" style="font-size:12px;">Incident Reports</div>
+        <div style="font-size:36px; font-weight:900; color:#fff;">{{ report_data.summary.incident_reports }}</div>
+        <div class="small muted">Reported issues and incidents in the selected window.</div>
+    </div>
+    <div class="card">
+        <div class="section-title" style="font-size:12px;">Released Payroll Runs</div>
+        <div style="font-size:36px; font-weight:900; color:#fff;">{{ report_data.summary.released_payroll_runs }}</div>
+        <div class="small muted">{{ format_currency(report_data.summary.released_payroll_total) }} released total in the same range.</div>
+    </div>
+    <div class="card">
+        <div class="section-title" style="font-size:12px;">Break Minutes</div>
+        <div style="font-size:36px; font-weight:900; color:#fff;">{{ report_data.summary.break_minutes }}</div>
+        <div class="small muted">Tracked break minutes across completed attendance rows.</div>
+    </div>
+</div>
+
+<div class="grid grid-2" style="align-items:start;">
+    <div class="card">
+        <div class="section-title">Department Summary</div>
+        {% if report_data.department_rows %}
+            <div style="overflow-x:auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Department</th>
+                            <th>Employees</th>
+                            <th>Attendance Days</th>
+                            <th>Attendance Hours</th>
+                            <th>Avg Hours / Day</th>
+                            <th>Late Punches</th>
+                            <th>Overtime Hours</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in report_data.department_rows %}
+                            <tr>
+                                <td>{{ row.department }}</td>
+                                <td>{{ row.employee_count }}</td>
+                                <td>{{ row.attendance_days }}</td>
+                                <td>{{ "%.2f"|format(row.attendance_hours) }}</td>
+                                <td>{{ "%.2f"|format(row.avg_hours_per_day) }}</td>
+                                <td>{{ row.late_punches }}</td>
+                                <td>{{ "%.2f"|format(row.overtime_hours) }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <p class="muted">No department data matched the current filters.</p>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <div class="section-title">Daily Trend</div>
+        {% if report_data.daily_rows %}
+            <div style="overflow-x:auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Attendance Days</th>
+                            <th>Late Punches</th>
+                            <th>Overtime Hours</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in report_data.daily_rows %}
+                            <tr>
+                                <td>{{ row.work_date }}</td>
+                                <td>{{ row.attendance_days }}</td>
+                                <td>{{ row.late_punches }}</td>
+                                <td>{{ "%.2f"|format(row.overtime_hours) }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <p class="muted">No daily trend data matched the current filters.</p>
+        {% endif %}
+    </div>
+</div>
+
+<div class="grid grid-2" style="margin-top:18px; align-items:start;">
+    <div class="card">
+        <div class="section-title">Leave Request Summary</div>
+        {% if report_data.leave_rows %}
+            <div style="overflow-x:auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Request Type</th>
+                            <th>Status</th>
+                            <th>Count</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in report_data.leave_rows %}
+                            <tr>
+                                <td>{{ row.request_type }}</td>
+                                <td>{{ row.status }}</td>
+                                <td>{{ row.request_count }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <p class="muted">No leave requests overlapped the selected date range.</p>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <div class="section-title">Correction Request Summary</div>
+        {% if report_data.correction_rows %}
+            <div style="overflow-x:auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Request Type</th>
+                            <th>Status</th>
+                            <th>Count</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in report_data.correction_rows %}
+                            <tr>
+                                <td>{{ row.request_type }}</td>
+                                <td>{{ row.status }}</td>
+                                <td>{{ row.request_count }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <p class="muted">No correction requests overlapped the selected date range.</p>
+        {% endif %}
+    </div>
+</div>
+
+<div class="grid grid-2" style="margin-top:18px; align-items:start;">
+    <div class="card">
+        <div class="section-title">Incident Summary</div>
+        {% if report_data.incident_rows %}
+            <div style="overflow-x:auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Error Type</th>
+                            <th>Open</th>
+                            <th>Reviewed</th>
+                            <th>Resolved</th>
+                            <th>Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in report_data.incident_rows %}
+                            <tr>
+                                <td>{{ row.error_type }}</td>
+                                <td>{{ row.open_count }}</td>
+                                <td>{{ row.reviewed_count }}</td>
+                                <td>{{ row.resolved_count }}</td>
+                                <td>{{ row.total_count }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <p class="muted">No incident reports matched the selected range.</p>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <div class="section-title">Top Employee Signals</div>
+        {% if report_data.top_employee_rows %}
+            <div style="overflow-x:auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Employee</th>
+                            <th>Department</th>
+                            <th>Attendance Days</th>
+                            <th>Attendance Hours</th>
+                            <th>Late Punches</th>
+                            <th>Overtime Hours</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in report_data.top_employee_rows %}
+                            <tr>
+                                <td>{{ row.full_name }}</td>
+                                <td>{{ row.department }}</td>
+                                <td>{{ row.attendance_days }}</td>
+                                <td>{{ "%.2f"|format(row.attendance_hours) }}</td>
+                                <td>{{ row.late_punches }}</td>
+                                <td>{{ "%.2f"|format(row.overtime_hours) }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <p class="muted">No employee-level report signals are available for this range.</p>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card" style="margin-top:18px;">
+        <div class="section-title">Released Payroll Runs</div>
+        {% if report_data.released_runs %}
+            <div style="display:grid; gap:12px;">
+                {% for run in report_data.released_runs %}
+                    <div style="padding:14px; border-radius:16px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);">
+                        <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+                            <div>
+                                <div style="font-weight:800; color:#fff;">{{ run.period_label }}</div>
+                                <div class="small muted" style="margin-top:6px;">Scope: {{ run.scope_label }}</div>
+                                <div class="small muted" style="margin-top:4px;">Released: {{ run.released_at if run.released_at else run.updated_at }}</div>
+                            </div>
+                            <span class="status status-green">Released</span>
+                        </div>
+                    </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <p class="muted">No released payroll runs overlap this reporting range.</p>
+        {% endif %}
+    </div>
+{% endblock %}
