@@ -95,6 +95,18 @@ ATTENDANCE_REQUEST_TYPES = {
 LEAVE_REQUEST_TYPES = {"Sick Leave", "Paid Leave"}
 DEFAULT_SICK_LEAVE_DAYS = 7
 DEFAULT_PAID_LEAVE_DAYS = 7
+ADMIN_PERMISSION_OPTIONS = [
+    ("dashboard", "Dashboard"),
+    ("employees", "Employees"),
+    ("attendance", "Attendance"),
+    ("workflows", "Workflows"),
+    ("payroll", "Payroll"),
+    ("reports", "Reports"),
+    ("settings", "Settings"),
+]
+ADMIN_PERMISSION_CODES = {code for code, _ in ADMIN_PERMISSION_OPTIONS}
+ADMIN_PERMISSION_LABELS = {code: label for code, label in ADMIN_PERMISSION_OPTIONS}
+ADMIN_STATUS_CACHE_TTL_SECONDS = 12
 
 DEFAULT_SECRET_KEY = "dev-secret-key"
 LOGIN_WINDOW_MINUTES = 15
@@ -126,6 +138,7 @@ app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10MB
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = is_production_environment()
+_admin_employee_rows_cache = {"stamp": 0, "rows": []}
 
 
 # =========================
@@ -356,10 +369,25 @@ def login_required(role=None):
                 if is_scanner_api_request():
                     return jsonify({"ok": False, "message": "Scanner access denied."}), 403
                 flash("Access denied.", "danger")
-                return redirect(get_home_route_for_role(session.get("role")))
+                return redirect(get_home_route_for_user(user))
             return f(*args, **kwargs)
         return wrapped
     return decorator
+
+
+def get_admin_home_endpoint(user_row):
+    for permission_code, endpoint_name in [
+        ("dashboard", "admin_dashboard"),
+        ("employees", "manage_employees"),
+        ("attendance", "admin_corrections"),
+        ("workflows", "admin_leave_dashboard"),
+        ("payroll", "admin_payroll"),
+        ("reports", "admin_reports"),
+        ("settings", "admin_profile"),
+    ]:
+        if admin_has_permission(user_row, permission_code):
+            return endpoint_name
+    return "logout"
 
 
 def get_home_route_for_role(role_name):
@@ -370,6 +398,17 @@ def get_home_route_for_role(role_name):
     return url_for("dashboard")
 
 
+def get_home_route_for_user(user_row):
+    if not user_row:
+        return url_for("login")
+    if user_row.get("role") == "admin":
+        endpoint_name = get_admin_home_endpoint(user_row)
+        if endpoint_name == "logout":
+            return url_for("login")
+        return url_for(endpoint_name)
+    return get_home_route_for_role(user_row.get("role"))
+
+
 # =========================
 # DATABASE INIT / MIGRATION
 # =========================
@@ -378,6 +417,7 @@ def init_db():
         init_postgres_db()
     else:
         init_sqlite_db()
+    ensure_employee_schedule_history_seeded()
 
 
 def init_sqlite_db():
@@ -408,6 +448,8 @@ def init_sqlite_db():
             schedule_days TEXT DEFAULT 'Mon,Tue,Wed,Thu,Fri',
             shift_start TEXT DEFAULT '09:00',
             shift_end TEXT DEFAULT '18:00',
+            schedule_preset_id INTEGER,
+            admin_permissions TEXT,
             break_window_start TEXT DEFAULT '12:00',
             break_window_end TEXT DEFAULT '12:15',
             break_limit_minutes INTEGER NOT NULL DEFAULT 15,
@@ -501,6 +543,23 @@ def init_sqlite_db():
             created_by INTEGER,
             created_at TEXT NOT NULL,
             FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS schedule_presets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            department_scope TEXT,
+            schedule_days TEXT NOT NULL DEFAULT 'Mon,Tue,Wed,Thu,Fri',
+            shift_start TEXT NOT NULL DEFAULT '09:00',
+            shift_end TEXT NOT NULL DEFAULT '18:00',
+            break_limit_minutes INTEGER NOT NULL DEFAULT 15,
+            notes TEXT,
+            created_by INTEGER,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (created_by) REFERENCES users (id)
         )
     """)
 
@@ -722,6 +781,10 @@ def init_sqlite_db():
         cursor.execute("ALTER TABLE users ADD COLUMN shift_start TEXT DEFAULT '09:00'")
     if "shift_end" not in existing_cols_users:
         cursor.execute("ALTER TABLE users ADD COLUMN shift_end TEXT DEFAULT '18:00'")
+    if "schedule_preset_id" not in existing_cols_users:
+        cursor.execute("ALTER TABLE users ADD COLUMN schedule_preset_id INTEGER")
+    if "admin_permissions" not in existing_cols_users:
+        cursor.execute("ALTER TABLE users ADD COLUMN admin_permissions TEXT")
     if "break_window_start" not in existing_cols_users:
         cursor.execute("ALTER TABLE users ADD COLUMN break_window_start TEXT DEFAULT '12:00'")
     if "break_window_end" not in existing_cols_users:
@@ -760,6 +823,79 @@ def init_sqlite_db():
         cursor.execute("ALTER TABLE company_settings ADD COLUMN scanner_exit_pin_hash TEXT")
     if "overtime_multiplier" not in existing_cols_company_settings:
         cursor.execute("ALTER TABLE company_settings ADD COLUMN overtime_multiplier REAL NOT NULL DEFAULT 1.25")
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS schedule_presets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            department_scope TEXT,
+            schedule_days TEXT NOT NULL DEFAULT 'Mon,Tue,Wed,Thu,Fri',
+            shift_start TEXT NOT NULL DEFAULT '09:00',
+            shift_end TEXT NOT NULL DEFAULT '18:00',
+            break_limit_minutes INTEGER NOT NULL DEFAULT 15,
+            notes TEXT,
+            created_by INTEGER,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (created_by) REFERENCES users (id)
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS employee_schedule_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            effective_at TEXT NOT NULL,
+            department TEXT,
+            position TEXT,
+            schedule_days TEXT NOT NULL DEFAULT 'Mon,Tue,Wed,Thu,Fri',
+            shift_start TEXT NOT NULL DEFAULT '09:00',
+            shift_end TEXT NOT NULL DEFAULT '18:00',
+            break_limit_minutes INTEGER NOT NULL DEFAULT 15,
+            schedule_preset_id INTEGER,
+            created_by INTEGER,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users (id),
+            FOREIGN KEY (created_by) REFERENCES users (id)
+        )
+    """)
+    existing_cols_schedule_presets = [row[1] for row in cursor.execute("PRAGMA table_info(schedule_presets)").fetchall()]
+    if "department_scope" not in existing_cols_schedule_presets:
+        cursor.execute("ALTER TABLE schedule_presets ADD COLUMN department_scope TEXT")
+    if "schedule_days" not in existing_cols_schedule_presets:
+        cursor.execute(f"ALTER TABLE schedule_presets ADD COLUMN schedule_days TEXT NOT NULL DEFAULT '{DEFAULT_SCHEDULE_DAYS}'")
+    if "shift_start" not in existing_cols_schedule_presets:
+        cursor.execute(f"ALTER TABLE schedule_presets ADD COLUMN shift_start TEXT NOT NULL DEFAULT '{DEFAULT_SHIFT_START}'")
+    if "shift_end" not in existing_cols_schedule_presets:
+        cursor.execute(f"ALTER TABLE schedule_presets ADD COLUMN shift_end TEXT NOT NULL DEFAULT '{DEFAULT_SHIFT_END}'")
+    if "break_limit_minutes" not in existing_cols_schedule_presets:
+        cursor.execute("ALTER TABLE schedule_presets ADD COLUMN break_limit_minutes INTEGER NOT NULL DEFAULT 15")
+    if "notes" not in existing_cols_schedule_presets:
+        cursor.execute("ALTER TABLE schedule_presets ADD COLUMN notes TEXT")
+    if "created_by" not in existing_cols_schedule_presets:
+        cursor.execute("ALTER TABLE schedule_presets ADD COLUMN created_by INTEGER")
+    if "created_at" not in existing_cols_schedule_presets:
+        cursor.execute("ALTER TABLE schedule_presets ADD COLUMN created_at TEXT")
+    if "updated_at" not in existing_cols_schedule_presets:
+        cursor.execute("ALTER TABLE schedule_presets ADD COLUMN updated_at TEXT")
+    existing_cols_schedule_history = [row[1] for row in cursor.execute("PRAGMA table_info(employee_schedule_history)").fetchall()]
+    if "department" not in existing_cols_schedule_history:
+        cursor.execute("ALTER TABLE employee_schedule_history ADD COLUMN department TEXT")
+    if "position" not in existing_cols_schedule_history:
+        cursor.execute("ALTER TABLE employee_schedule_history ADD COLUMN position TEXT")
+    if "schedule_days" not in existing_cols_schedule_history:
+        cursor.execute(f"ALTER TABLE employee_schedule_history ADD COLUMN schedule_days TEXT NOT NULL DEFAULT '{DEFAULT_SCHEDULE_DAYS}'")
+    if "shift_start" not in existing_cols_schedule_history:
+        cursor.execute(f"ALTER TABLE employee_schedule_history ADD COLUMN shift_start TEXT NOT NULL DEFAULT '{DEFAULT_SHIFT_START}'")
+    if "shift_end" not in existing_cols_schedule_history:
+        cursor.execute(f"ALTER TABLE employee_schedule_history ADD COLUMN shift_end TEXT NOT NULL DEFAULT '{DEFAULT_SHIFT_END}'")
+    if "break_limit_minutes" not in existing_cols_schedule_history:
+        cursor.execute("ALTER TABLE employee_schedule_history ADD COLUMN break_limit_minutes INTEGER NOT NULL DEFAULT 15")
+    if "schedule_preset_id" not in existing_cols_schedule_history:
+        cursor.execute("ALTER TABLE employee_schedule_history ADD COLUMN schedule_preset_id INTEGER")
+    if "created_by" not in existing_cols_schedule_history:
+        cursor.execute("ALTER TABLE employee_schedule_history ADD COLUMN created_by INTEGER")
+    if "created_at" not in existing_cols_schedule_history:
+        cursor.execute("ALTER TABLE employee_schedule_history ADD COLUMN created_at TEXT")
+
     cursor.execute("""
         INSERT OR IGNORE INTO company_settings (
             id, id_signatory_name, id_signatory_title, id_signature_file,
@@ -1178,6 +1314,8 @@ def init_postgres_db():
                 schedule_days TEXT DEFAULT 'Mon,Tue,Wed,Thu,Fri',
                 shift_start TEXT DEFAULT '09:00',
                 shift_end TEXT DEFAULT '18:00',
+                schedule_preset_id INTEGER,
+                admin_permissions TEXT,
                 break_window_start TEXT DEFAULT '12:00',
                 break_window_end TEXT DEFAULT '12:15',
                 break_limit_minutes INTEGER NOT NULL DEFAULT 15,
@@ -1199,9 +1337,61 @@ def init_postgres_db():
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS paid_leave_used_manual INTEGER NOT NULL DEFAULT 0")
         cur.execute(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS schedule_days TEXT DEFAULT '{DEFAULT_SCHEDULE_DAYS}'")
         cur.execute(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS shift_end TEXT DEFAULT '{DEFAULT_SHIFT_END}'")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS schedule_preset_id INTEGER")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_permissions TEXT")
         cur.execute(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS break_window_start TEXT DEFAULT '{DEFAULT_BREAK_WINDOW_START}'")
         cur.execute(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS break_window_end TEXT DEFAULT '{DEFAULT_BREAK_WINDOW_END}'")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS break_limit_minutes INTEGER NOT NULL DEFAULT 15")
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS schedule_presets (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                department_scope TEXT,
+                schedule_days TEXT NOT NULL DEFAULT 'Mon,Tue,Wed,Thu,Fri',
+                shift_start TEXT NOT NULL DEFAULT '09:00',
+                shift_end TEXT NOT NULL DEFAULT '18:00',
+                break_limit_minutes INTEGER NOT NULL DEFAULT 15,
+                notes TEXT,
+                created_by INTEGER,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        cur.execute("ALTER TABLE schedule_presets ADD COLUMN IF NOT EXISTS department_scope TEXT")
+        cur.execute("ALTER TABLE schedule_presets ADD COLUMN IF NOT EXISTS schedule_days TEXT NOT NULL DEFAULT 'Mon,Tue,Wed,Thu,Fri'")
+        cur.execute("ALTER TABLE schedule_presets ADD COLUMN IF NOT EXISTS shift_start TEXT NOT NULL DEFAULT '09:00'")
+        cur.execute("ALTER TABLE schedule_presets ADD COLUMN IF NOT EXISTS shift_end TEXT NOT NULL DEFAULT '18:00'")
+        cur.execute("ALTER TABLE schedule_presets ADD COLUMN IF NOT EXISTS break_limit_minutes INTEGER NOT NULL DEFAULT 15")
+        cur.execute("ALTER TABLE schedule_presets ADD COLUMN IF NOT EXISTS notes TEXT")
+        cur.execute("ALTER TABLE schedule_presets ADD COLUMN IF NOT EXISTS created_by INTEGER")
+        cur.execute("ALTER TABLE schedule_presets ADD COLUMN IF NOT EXISTS created_at TEXT")
+        cur.execute("ALTER TABLE schedule_presets ADD COLUMN IF NOT EXISTS updated_at TEXT")
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS employee_schedule_history (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                effective_at TEXT NOT NULL,
+                department TEXT,
+                position TEXT,
+                schedule_days TEXT NOT NULL DEFAULT 'Mon,Tue,Wed,Thu,Fri',
+                shift_start TEXT NOT NULL DEFAULT '09:00',
+                shift_end TEXT NOT NULL DEFAULT '18:00',
+                break_limit_minutes INTEGER NOT NULL DEFAULT 15,
+                schedule_preset_id INTEGER,
+                created_by INTEGER,
+                created_at TEXT NOT NULL
+            )
+        """)
+        cur.execute("ALTER TABLE employee_schedule_history ADD COLUMN IF NOT EXISTS department TEXT")
+        cur.execute("ALTER TABLE employee_schedule_history ADD COLUMN IF NOT EXISTS position TEXT")
+        cur.execute("ALTER TABLE employee_schedule_history ADD COLUMN IF NOT EXISTS schedule_days TEXT NOT NULL DEFAULT 'Mon,Tue,Wed,Thu,Fri'")
+        cur.execute("ALTER TABLE employee_schedule_history ADD COLUMN IF NOT EXISTS shift_start TEXT NOT NULL DEFAULT '09:00'")
+        cur.execute("ALTER TABLE employee_schedule_history ADD COLUMN IF NOT EXISTS shift_end TEXT NOT NULL DEFAULT '18:00'")
+        cur.execute("ALTER TABLE employee_schedule_history ADD COLUMN IF NOT EXISTS break_limit_minutes INTEGER NOT NULL DEFAULT 15")
+        cur.execute("ALTER TABLE employee_schedule_history ADD COLUMN IF NOT EXISTS schedule_preset_id INTEGER")
+        cur.execute("ALTER TABLE employee_schedule_history ADD COLUMN IF NOT EXISTS created_by INTEGER")
+        cur.execute("ALTER TABLE employee_schedule_history ADD COLUMN IF NOT EXISTS created_at TEXT")
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS attendance (
@@ -1740,6 +1930,366 @@ def get_company_settings():
     }
 
 
+def normalize_admin_permissions(values):
+    if isinstance(values, str):
+        raw_values = values.split(",")
+    else:
+        raw_values = values or []
+    cleaned = []
+    seen = set()
+    for raw_value in raw_values:
+        code = str(raw_value or "").strip().lower()
+        if code not in ADMIN_PERMISSION_CODES or code in seen:
+            continue
+        seen.add(code)
+        cleaned.append(code)
+    return ",".join(cleaned)
+
+
+def get_admin_permission_codes(user_row):
+    if not user_row or user_row.get("role") != "admin":
+        return set()
+    raw_permissions = (user_row.get("admin_permissions") or "").strip()
+    if not raw_permissions:
+        return set(ADMIN_PERMISSION_CODES)
+    return set(part for part in raw_permissions.split(",") if part in ADMIN_PERMISSION_CODES)
+
+
+def admin_has_permission(user_row, permission_code):
+    if permission_code not in ADMIN_PERMISSION_CODES:
+        return True
+    return permission_code in get_admin_permission_codes(user_row)
+
+
+def admin_can_permission(permission_code):
+    if session.get("role") != "admin" or not session.get("user_id"):
+        return False
+    return admin_has_permission(get_user_by_id(session["user_id"]), permission_code)
+
+
+def describe_admin_permissions(user_row):
+    codes = get_admin_permission_codes(user_row)
+    if not codes:
+        return "No Access"
+    if codes == ADMIN_PERMISSION_CODES:
+        return "Full Access"
+    return ", ".join(ADMIN_PERMISSION_LABELS[code] for code, _ in ADMIN_PERMISSION_OPTIONS if code in codes)
+
+
+ADMIN_ENDPOINT_PERMISSIONS = {
+    "admin_dashboard": "dashboard",
+    "admin_live_status": "dashboard",
+    "export_admin_exceptions_excel": "dashboard",
+    "send_admin_notification": "dashboard",
+    "manage_employees": "employees",
+    "edit_employee": "employees",
+    "print_employee_id": "employees",
+    "delete_employee": "employees",
+    "admin_corrections": "attendance",
+    "update_correction_request": "attendance",
+    "admin_history": "attendance",
+    "export_admin_history_excel": "attendance",
+    "admin_attendance_audit": "attendance",
+    "admin_scanner_logs": "attendance",
+    "scanner_kiosk_unlock": "attendance",
+    "scanner_kiosk_scan": "attendance",
+    "admin_leave_dashboard": "workflows",
+    "export_admin_leave_dashboard_excel": "workflows",
+    "admin_error_reports": "workflows",
+    "export_admin_error_reports_excel": "workflows",
+    "admin_disciplinary_dashboard": "workflows",
+    "export_admin_disciplinary_excel": "workflows",
+    "admin_incident_report": "workflows",
+    "create_incident_route": "workflows",
+    "create_disciplinary_action_route": "workflows",
+    "update_disciplinary_action_route": "workflows",
+    "delete_disciplinary_action_route": "workflows",
+    "update_incident_report": "workflows",
+    "edit_incident_report": "workflows",
+    "delete_incident_report": "workflows",
+    "admin_payroll": "payroll",
+    "add_payroll_adjustment": "payroll",
+    "delete_payroll_adjustment": "payroll",
+    "save_payroll_recurring_rule": "payroll",
+    "toggle_payroll_recurring_rule": "payroll",
+    "delete_payroll_recurring_rule": "payroll",
+    "save_payroll_run": "payroll",
+    "delete_payroll_run": "payroll",
+    "bulk_release_payroll_runs": "payroll",
+    "export_admin_payroll_excel": "payroll",
+    "print_admin_payroll": "payroll",
+    "admin_reports": "reports",
+    "export_admin_reports_excel": "reports",
+    "admin_data_tools": "settings",
+    "download_recovery_pack": "settings",
+    "update_employee_id_signatory": "settings",
+}
+
+
+@app.before_request
+def enforce_admin_endpoint_permissions():
+    if session.get("role") != "admin" or not session.get("user_id"):
+        return None
+    permission_code = ADMIN_ENDPOINT_PERMISSIONS.get(request.endpoint or "")
+    if not permission_code:
+        return None
+    admin_user = get_user_by_id(session["user_id"])
+    if admin_has_permission(admin_user, permission_code):
+        return None
+    flash(f"Your admin account does not have access to {ADMIN_PERMISSION_LABELS.get(permission_code, 'this section')}.", "danger")
+    return redirect(get_home_route_for_user(admin_user))
+
+
+def get_admin_accounts():
+    return fetchall("""
+        SELECT *
+        FROM users
+        WHERE role = 'admin'
+        ORDER BY id ASC
+    """)
+
+
+def get_schedule_presets(department_filter=""):
+    sql = """
+        SELECT sp.*, creator.full_name AS created_by_name
+        FROM schedule_presets sp
+        LEFT JOIN users creator ON creator.id = sp.created_by
+        WHERE 1 = 1
+    """
+    params = []
+    if department_filter:
+        sql += " AND (COALESCE(sp.department_scope, '') = '' OR sp.department_scope = ?)"
+        params.append(department_filter)
+    sql += " ORDER BY sp.name ASC"
+    return fetchall(sql, params)
+
+
+def get_schedule_preset(preset_id):
+    raw_value = str(preset_id or "").strip()
+    if not raw_value.isdigit():
+        return None
+    return fetchone("""
+        SELECT *
+        FROM schedule_presets
+        WHERE id = ?
+    """, (int(raw_value),))
+
+
+def resolve_schedule_assignment(form, fallback_user=None):
+    preset = get_schedule_preset(form.get("schedule_preset_id", ""))
+    if preset:
+        return {
+            "schedule_preset_id": preset["id"],
+            "schedule_days": normalize_schedule_days(get_schedule_day_codes(preset["schedule_days"] or DEFAULT_SCHEDULE_DAYS)),
+            "shift_start": parse_shift_start(preset["shift_start"] or DEFAULT_SHIFT_START),
+            "shift_end": parse_shift_end(preset["shift_end"] or DEFAULT_SHIFT_END),
+            "break_limit_minutes": parse_break_limit_minutes(preset["break_limit_minutes"] if preset["break_limit_minutes"] is not None else BREAK_LIMIT_MINUTES),
+            "schedule_source_label": preset["name"],
+        }
+
+    default_shift_start = fallback_user["shift_start"] if fallback_user else DEFAULT_SHIFT_START
+    default_shift_end = fallback_user["shift_end"] if fallback_user else DEFAULT_SHIFT_END
+    default_break_limit = fallback_user["break_limit_minutes"] if fallback_user and fallback_user["break_limit_minutes"] is not None else BREAK_LIMIT_MINUTES
+    return {
+        "schedule_preset_id": None,
+        "schedule_days": normalize_schedule_days(form.getlist("schedule_days")),
+        "shift_start": parse_shift_start(form.get("shift_start", default_shift_start)),
+        "shift_end": parse_shift_end(form.get("shift_end", default_shift_end)),
+        "break_limit_minutes": parse_break_limit_minutes(form.get("break_limit_minutes", default_break_limit)),
+        "schedule_source_label": "Custom Manual Schedule",
+    }
+
+
+def schedule_preset_matches_department(preset, department_name):
+    if not preset:
+        return True
+    scope = (preset.get("department_scope") or "").strip().lower() if hasattr(preset, "get") else str(preset["department_scope"] or "").strip().lower()
+    if not scope:
+        return True
+    return scope == (department_name or "").strip().lower()
+
+
+def normalize_history_reference(reference_datetime=None, reference_date=""):
+    if isinstance(reference_datetime, datetime):
+        return reference_datetime.strftime("%Y-%m-%d %H:%M:%S")
+    raw_datetime = str(reference_datetime or "").strip()
+    if raw_datetime:
+        return raw_datetime[:19] if len(raw_datetime) >= 19 else f"{raw_datetime} 23:59:59"
+    raw_date = str(reference_date or "").strip()
+    if raw_date:
+        return f"{raw_date} 23:59:59"
+    return now_str()
+
+
+def get_employee_schedule_history_row(user_id, reference_datetime=None, reference_date=""):
+    ref_text = normalize_history_reference(reference_datetime=reference_datetime, reference_date=reference_date)
+    return fetchone("""
+        SELECT *
+        FROM employee_schedule_history
+        WHERE user_id = ?
+          AND effective_at <= ?
+        ORDER BY effective_at DESC, id DESC
+        LIMIT 1
+    """, (user_id, ref_text))
+
+
+def get_effective_employee_context(user_row=None, user_id=None, reference_datetime=None, reference_date=""):
+    base_user = None
+    if user_row:
+        base_user = dict(user_row)
+    elif user_id:
+        fetched = get_user_by_id(user_id)
+        base_user = dict(fetched) if fetched else None
+
+    if not base_user:
+        return None
+
+    history_row = get_employee_schedule_history_row(
+        base_user["id"],
+        reference_datetime=reference_datetime,
+        reference_date=reference_date
+    )
+    if not history_row:
+        return base_user
+    history_row = dict(history_row)
+
+    context_user = dict(base_user)
+    context_user["department"] = history_row.get("department") if history_row.get("department") is not None else context_user.get("department")
+    context_user["position"] = history_row.get("position") if history_row.get("position") is not None else context_user.get("position")
+    context_user["schedule_days"] = history_row.get("schedule_days") or context_user.get("schedule_days") or DEFAULT_SCHEDULE_DAYS
+    context_user["shift_start"] = history_row.get("shift_start") or context_user.get("shift_start") or DEFAULT_SHIFT_START
+    context_user["shift_end"] = history_row.get("shift_end") or context_user.get("shift_end") or DEFAULT_SHIFT_END
+    if history_row.get("break_limit_minutes") is not None:
+        context_user["break_limit_minutes"] = history_row.get("break_limit_minutes")
+    if "schedule_preset_id" in history_row.keys():
+        context_user["schedule_preset_id"] = history_row.get("schedule_preset_id")
+    return context_user
+
+
+def get_attendance_reference_datetime(attendance_row):
+    if not attendance_row:
+        return now_str()
+    if hasattr(attendance_row, "get"):
+        return (
+            attendance_row.get("time_in")
+            or attendance_row.get("created_at")
+            or normalize_history_reference(reference_date=attendance_row.get("work_date"))
+        )
+    return (
+        attendance_row["time_in"]
+        or attendance_row["created_at"]
+        or normalize_history_reference(reference_date=attendance_row["work_date"])
+    )
+
+
+def get_overtime_reference_datetime(overtime_row):
+    if not overtime_row:
+        return now_str()
+    if hasattr(overtime_row, "get"):
+        return (
+            overtime_row.get("overtime_start")
+            or overtime_row.get("created_at")
+            or normalize_history_reference(reference_date=overtime_row.get("work_date"))
+        )
+    return (
+        overtime_row["overtime_start"]
+        or overtime_row["created_at"]
+        or normalize_history_reference(reference_date=overtime_row["work_date"])
+    )
+
+
+def record_employee_schedule_history(user_row, actor_id=None, effective_at=None, commit=False):
+    if not user_row:
+        return
+    user_row = dict(user_row)
+    if user_row.get("role") != "employee":
+        return
+
+    snapshot = {
+        "department": (user_row.get("department") or "").strip() or None,
+        "position": (user_row.get("position") or "").strip() or None,
+        "schedule_days": normalize_schedule_days(user_row.get("schedule_days") or DEFAULT_SCHEDULE_DAYS),
+        "shift_start": parse_shift_start(user_row.get("shift_start") or DEFAULT_SHIFT_START),
+        "shift_end": parse_shift_end(user_row.get("shift_end") or DEFAULT_SHIFT_END),
+        "break_limit_minutes": parse_break_limit_minutes(
+            user_row.get("break_limit_minutes") if user_row.get("break_limit_minutes") is not None else BREAK_LIMIT_MINUTES
+        ),
+        "schedule_preset_id": user_row.get("schedule_preset_id"),
+    }
+    history_effective_at = normalize_history_reference(reference_datetime=effective_at)
+    latest_row = fetchone("""
+        SELECT *
+        FROM employee_schedule_history
+        WHERE user_id = ?
+        ORDER BY effective_at DESC, id DESC
+        LIMIT 1
+    """, (user_row["id"],))
+    if latest_row:
+        latest_row = dict(latest_row)
+        latest_snapshot = {
+            "department": (latest_row.get("department") or "").strip() or None,
+            "position": (latest_row.get("position") or "").strip() or None,
+            "schedule_days": normalize_schedule_days(latest_row.get("schedule_days") or DEFAULT_SCHEDULE_DAYS),
+            "shift_start": parse_shift_start(latest_row.get("shift_start") or DEFAULT_SHIFT_START),
+            "shift_end": parse_shift_end(latest_row.get("shift_end") or DEFAULT_SHIFT_END),
+            "break_limit_minutes": parse_break_limit_minutes(
+                latest_row.get("break_limit_minutes") if latest_row.get("break_limit_minutes") is not None else BREAK_LIMIT_MINUTES
+            ),
+            "schedule_preset_id": latest_row.get("schedule_preset_id"),
+        }
+        if latest_snapshot == snapshot:
+            return
+
+    execute_db("""
+        INSERT INTO employee_schedule_history (
+            user_id, effective_at, department, position, schedule_days, shift_start,
+            shift_end, break_limit_minutes, schedule_preset_id, created_by, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        user_row["id"],
+        history_effective_at,
+        snapshot["department"],
+        snapshot["position"],
+        snapshot["schedule_days"],
+        snapshot["shift_start"],
+        snapshot["shift_end"],
+        snapshot["break_limit_minutes"],
+        snapshot["schedule_preset_id"],
+        actor_id,
+        now_str()
+    ), commit=commit)
+
+
+def ensure_employee_schedule_history_seeded():
+    if not table_exists("employee_schedule_history"):
+        return
+    rows = fetchall("""
+        SELECT *
+        FROM users
+        WHERE role = 'employee'
+        ORDER BY id ASC
+    """)
+    for row in rows:
+        row = dict(row)
+        existing_history = fetchone("""
+            SELECT id
+            FROM employee_schedule_history
+            WHERE user_id = ?
+            LIMIT 1
+        """, (row["id"],))
+        if existing_history:
+            continue
+        record_employee_schedule_history(
+            row,
+            actor_id=None,
+            effective_at=row.get("created_at") or now_str()
+        )
+    db = g.get("db")
+    if db is not None:
+        db.commit()
+
+
 def is_scanner_attendance_mode_enabled():
     settings = get_company_settings()
     return int(settings.get("scanner_attendance_mode") or 0) == 1
@@ -1870,6 +2420,7 @@ def auto_close_stale_overtime_session(user_id, overtime_row, actor_id=None, sour
         SET overtime_end = ?
         WHERE id = ? AND overtime_end IS NULL
     """, (forced_end_dt.strftime("%Y-%m-%d %H:%M:%S"), overtime_row["id"]), commit=True)
+    invalidate_admin_employee_rows_cache()
 
     user = get_user_by_id(user_id)
     employee_name = user["full_name"] if user else f"User {user_id}"
@@ -1934,7 +2485,12 @@ def auto_close_stale_attendance(user_row, attendance_row, actor_id=None, source_
     if not attendance_row["time_in"] or attendance_row["time_out"]:
         return attendance_row
 
-    _, shift_end_dt = get_shift_bounds_for_work_date(user_row, attendance_row["work_date"])
+    effective_user = get_effective_employee_context(
+        user_row=user_row,
+        reference_datetime=get_attendance_reference_datetime(attendance_row),
+        reference_date=attendance_row["work_date"]
+    )
+    _, shift_end_dt = get_shift_bounds_for_work_date(effective_user, attendance_row["work_date"])
     stale_cutoff_dt = shift_end_dt + timedelta(minutes=LATE_GRACE_MINUTES)
     if now_dt() < stale_cutoff_dt:
         return attendance_row
@@ -1962,6 +2518,7 @@ def auto_close_stale_attendance(user_row, attendance_row, actor_id=None, source_
         SET time_out = ?, status = ?, updated_at = ?
         WHERE id = ?
     """, (forced_time_out, "Timed Out", now_str(), attendance_row["id"]), commit=True)
+    invalidate_admin_employee_rows_cache()
 
     log_activity(
         actor_id or user_row["id"],
@@ -2052,6 +2609,7 @@ def perform_attendance_action(user_id, action_type, actor_id=None, source_label=
         else:
             create_notification(user_id, "Timed In", f"You timed in at {now_str()} ET.")
         log_activity(actor_id or user_id, "KIOSK TIME IN", f"{source_label} time in for {user['full_name']}")
+        invalidate_admin_employee_rows_cache()
         return True, "Time in successful.", user
 
     if action_key == "start_break":
@@ -2077,6 +2635,7 @@ def perform_attendance_action(user_id, action_type, actor_id=None, source_label=
         remaining_break = max(break_limit_minutes - used_break_minutes, 0)
         create_notification(user_id, "Break Started", f"You started break at {now_str()} ET. Remaining break allowance: {remaining_break} minute(s).")
         log_activity(actor_id or user_id, "KIOSK BREAK START", f"{source_label} break start for {user['full_name']}")
+        invalidate_admin_employee_rows_cache()
         return True, "Break started.", user
 
     if action_key == "end_break":
@@ -2106,6 +2665,7 @@ def perform_attendance_action(user_id, action_type, actor_id=None, source_label=
                 f"Your total break time for today is {minutes_to_hm(total_break)}, which is over your {break_limit_minutes} minute limit."
             )
         log_activity(actor_id or user_id, "KIOSK BREAK END", f"{source_label} break end for {user['full_name']}")
+        invalidate_admin_employee_rows_cache()
         return True, "Break ended.", user
 
     if action_key == "time_out":
@@ -2144,6 +2704,7 @@ def perform_attendance_action(user_id, action_type, actor_id=None, source_label=
                 f"Your total break time for today is {minutes_to_hm(total_break)}, which is over your {break_limit_minutes} minute limit."
             )
         log_activity(actor_id or user_id, "KIOSK TIME OUT", f"{source_label} time out for {user['full_name']}. Sheets sync: {msg if ok else 'Skipped/Failed'}")
+        invalidate_admin_employee_rows_cache()
         return True, "Time out successful.", user
 
     if action_key == "overtime_start":
@@ -2160,7 +2721,12 @@ def perform_attendance_action(user_id, action_type, actor_id=None, source_label=
         if not latest_reference or not latest_reference["time_out"]:
             return False, "Employee must complete the regular shift before starting overtime.", user
 
-        _, shift_end_dt = get_shift_bounds_for_work_date(user, latest_reference["work_date"])
+        effective_user = get_effective_employee_context(
+            user_row=user,
+            reference_datetime=get_attendance_reference_datetime(latest_reference),
+            reference_date=latest_reference["work_date"]
+        )
+        _, shift_end_dt = get_shift_bounds_for_work_date(effective_user, latest_reference["work_date"])
         shift_end_naive = shift_end_dt.replace(tzinfo=None)
         regular_time_out_dt = parse_db_datetime(latest_reference["time_out"])
 
@@ -2203,6 +2769,7 @@ def perform_attendance_action(user_id, action_type, actor_id=None, source_label=
             f"{source_label} overtime start for {user['full_name']} after regular shift ending {shift_end_naive.strftime('%Y-%m-%d %H:%M:%S')}",
             target_user_id=user_id
         )
+        invalidate_admin_employee_rows_cache()
         return True, "Overtime started.", user
 
     if action_key == "overtime_end":
@@ -2219,6 +2786,7 @@ def perform_attendance_action(user_id, action_type, actor_id=None, source_label=
         overtime_minutes = overtime_minutes_for_session(closed_session)
         create_notification(user_id, "Overtime Ended", f"Overtime ended at {now_str()} ET.")
         log_activity(actor_id or user_id, "KIOSK OVERTIME END", f"{source_label} overtime end for {user['full_name']} ({minutes_to_hm(overtime_minutes)})", target_user_id=user_id)
+        invalidate_admin_employee_rows_cache()
         return True, "Overtime ended.", user
 
     return False, "Invalid attendance action.", user
@@ -2294,12 +2862,17 @@ def get_schedule_summary(schedule_days):
     return ", ".join(labels[code] for code in codes if code in labels)
 
 
-def get_schedule_window_summary(user_row):
+def get_schedule_window_summary(user_row, reference_datetime=None, reference_date=""):
     if not user_row:
         return f"{DEFAULT_SHIFT_START} - {DEFAULT_SHIFT_END}"
 
-    shift_start = parse_shift_start(user_row["shift_start"] if user_row["shift_start"] else DEFAULT_SHIFT_START)
-    shift_end = parse_shift_end(user_row["shift_end"] if user_row["shift_end"] else DEFAULT_SHIFT_END)
+    effective_user = get_effective_employee_context(
+        user_row=user_row,
+        reference_datetime=reference_datetime,
+        reference_date=reference_date
+    )
+    shift_start = parse_shift_start(effective_user["shift_start"] if effective_user["shift_start"] else DEFAULT_SHIFT_START)
+    shift_end = parse_shift_end(effective_user["shift_end"] if effective_user["shift_end"] else DEFAULT_SHIFT_END)
     return f"{shift_start} - {shift_end}"
 
 
@@ -2399,7 +2972,12 @@ def is_missing_timeout_today(user_row, attendance_row):
     if not attendance_row["time_in"] or attendance_row["time_out"]:
         return False
 
-    _, shift_end_dt = get_shift_bounds_for_work_date(user_row, attendance_row["work_date"])
+    effective_user = get_effective_employee_context(
+        user_row=user_row,
+        reference_datetime=get_attendance_reference_datetime(attendance_row),
+        reference_date=attendance_row["work_date"]
+    )
+    _, shift_end_dt = get_shift_bounds_for_work_date(effective_user, attendance_row["work_date"])
     return now_dt() >= (shift_end_dt + timedelta(minutes=LATE_GRACE_MINUTES))
 
 
@@ -2416,7 +2994,12 @@ def is_undertime_record(user_row, attendance_row):
     if not actual_time_in or not actual_time_out:
         return False
 
-    shift_start_dt, shift_end_dt = get_shift_bounds_for_work_date(user_row, attendance_row["work_date"])
+    effective_user = get_effective_employee_context(
+        user_row=user_row,
+        reference_datetime=get_attendance_reference_datetime(attendance_row),
+        reference_date=attendance_row["work_date"]
+    )
+    shift_start_dt, shift_end_dt = get_shift_bounds_for_work_date(effective_user, attendance_row["work_date"])
     shift_start_naive = shift_start_dt.replace(tzinfo=None)
     shift_end_naive = shift_end_dt.replace(tzinfo=None)
     worked_minutes = max(int((actual_time_out - actual_time_in).total_seconds() // 60), 0)
@@ -2429,7 +3012,24 @@ def is_undertime_record(user_row, attendance_row):
 
 
 def get_scheduled_shift_minutes(user_row, work_date):
-    shift_start_dt, shift_end_dt = get_shift_bounds_for_work_date(user_row, work_date)
+    if user_row and not hasattr(user_row, "get") and hasattr(user_row, "keys"):
+        user_row = dict(user_row)
+    effective_user = user_row
+    lookup_user_id = None
+    if user_row:
+        if hasattr(user_row, "get"):
+            if user_row.get("user_id"):
+                lookup_user_id = user_row.get("user_id")
+            elif user_row.get("role") == "employee" and user_row.get("id"):
+                lookup_user_id = user_row.get("id")
+            if lookup_user_id:
+                effective_user = get_effective_employee_context(
+                    user_row=user_row if user_row.get("role") == "employee" else None,
+                    user_id=lookup_user_id,
+                    reference_datetime=user_row.get("time_in") or user_row.get("created_at"),
+                    reference_date=work_date
+                ) or user_row
+    shift_start_dt, shift_end_dt = get_shift_bounds_for_work_date(effective_user, work_date)
     return max(int((shift_end_dt - shift_start_dt).total_seconds() // 60), 0)
 
 
@@ -2602,7 +3202,12 @@ def get_matching_attendance_context_for_request(user_id, work_date, request_type
         candidate_time_out_dt = parse_db_datetime(candidate_time_out)
         if not candidate_time_out_dt:
             continue
-        _, shift_end_dt = get_shift_bounds_for_work_date(user_row, candidate["work_date"])
+        effective_user = get_effective_employee_context(
+            user_row=user_row,
+            reference_datetime=get_attendance_reference_datetime(candidate),
+            reference_date=candidate["work_date"]
+        )
+        _, shift_end_dt = get_shift_bounds_for_work_date(effective_user, candidate["work_date"])
         shift_end_naive = shift_end_dt.replace(tzinfo=None)
         existing_time_out_dt = parse_db_datetime(candidate["time_out"]) or shift_end_naive
         if candidate_time_out_dt < start_dt or candidate_time_out_dt > shift_end_naive:
@@ -3014,10 +3619,23 @@ def perform_log_cleanup_for_date_range(date_from_value, date_to_value):
     return removed_counts
 
 
-def get_employee_break_limit(user_row):
+def get_employee_break_limit(user_row, reference_datetime=None, reference_date=""):
     if not user_row:
         return BREAK_LIMIT_MINUTES
-    return parse_break_limit_minutes(user_row["break_limit_minutes"])
+    if not hasattr(user_row, "get") and hasattr(user_row, "keys"):
+        user_row = dict(user_row)
+
+    effective_user = user_row
+    if hasattr(user_row, "get"):
+        lookup_user_id = user_row.get("user_id") or (user_row.get("id") if user_row.get("role") == "employee" else None)
+        if lookup_user_id:
+            effective_user = get_effective_employee_context(
+                user_row=user_row if user_row.get("role") == "employee" else None,
+                user_id=lookup_user_id,
+                reference_datetime=reference_datetime or user_row.get("time_in") or user_row.get("created_at"),
+                reference_date=reference_date or user_row.get("work_date") or today_str()
+            ) or user_row
+    return parse_break_limit_minutes(effective_user["break_limit_minutes"])
 
 
 def get_overbreak_minutes(break_minutes, break_limit_minutes=BREAK_LIMIT_MINUTES):
@@ -3657,6 +4275,7 @@ def summarize_employee_admin_changes(before_row, after_values):
         "paid_leave_days": "Paid Leave Allotment",
         "sick_leave_used_manual": "Sick Leave Already Used",
         "paid_leave_used_manual": "Paid Leave Already Used",
+        "schedule_preset_id": "Schedule Preset",
         "shift_start": "Shift Start",
         "shift_end": "Shift End",
         "break_limit_minutes": "Break Limit",
@@ -3676,6 +4295,348 @@ def parse_iso_date(value, fallback=None):
         return datetime.strptime(str(value).strip(), "%Y-%m-%d").date()
     except Exception:
         return fallback
+
+
+def workbook_to_response(workbook, filename):
+    output = BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    return Response(
+        output.getvalue(),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+
+def autosize_workbook_sheet(sheet):
+    width_map = {}
+    for row in sheet.iter_rows():
+        for cell in row:
+            if cell.value is None:
+                continue
+            width_map[cell.column_letter] = max(width_map.get(cell.column_letter, 0), len(str(cell.value)))
+    for column_letter, width in width_map.items():
+        sheet.column_dimensions[column_letter].width = min(max(width + 2, 12), 40)
+
+
+def append_workbook_rows(workbook, title, rows):
+    sheet = workbook.create_sheet(title=title[:31])
+    normalized_rows = [dict(row) for row in (rows or [])]
+    if not normalized_rows:
+        sheet.append(["Message"])
+        sheet.append(["No rows exported for this sheet."])
+        autosize_workbook_sheet(sheet)
+        return sheet
+
+    headers = list(normalized_rows[0].keys())
+    sheet.append(headers)
+    for row in normalized_rows:
+        sheet.append([row.get(header) for header in headers])
+    autosize_workbook_sheet(sheet)
+    return sheet
+
+
+def build_recovery_pack_workbook():
+    try:
+        from openpyxl import Workbook
+    except Exception as exc:
+        raise ValueError("Recovery pack export requires openpyxl.") from exc
+
+    workbook = Workbook()
+    overview = workbook.active
+    overview.title = "Overview"
+    overview.append(["Recovery Pack", "Stellar Seats Attendance"])
+    overview.append(["Generated At", now_str()])
+    overview.append(["Environment", "Postgres" if using_postgres() else "SQLite"])
+    overview.append(["Purpose", "Operational recovery reference and export workbook"])
+    overview.append(["Note", "This workbook is not a one-click restore. Keep it with upload/file backups."])
+    autosize_workbook_sheet(overview)
+
+    append_workbook_rows(workbook, "Users", fetchall("""
+        SELECT id, full_name, username, role, department, position, barcode_id,
+               hourly_rate, schedule_days, shift_start, shift_end, schedule_preset_id,
+               admin_permissions, is_active, created_at
+        FROM users
+        ORDER BY role ASC, full_name ASC
+    """))
+    append_workbook_rows(workbook, "Company Settings", [get_company_settings()])
+    append_workbook_rows(workbook, "Schedule Presets", fetchall("""
+        SELECT sp.*, creator.full_name AS created_by_name
+        FROM schedule_presets sp
+        LEFT JOIN users creator ON creator.id = sp.created_by
+        ORDER BY sp.name ASC
+    """))
+    append_workbook_rows(workbook, "Attendance", fetchall("SELECT * FROM attendance ORDER BY work_date DESC, id DESC"))
+    append_workbook_rows(workbook, "Breaks", fetchall("SELECT * FROM breaks ORDER BY work_date DESC, id DESC"))
+    append_workbook_rows(workbook, "Corrections", fetchall("SELECT * FROM correction_requests ORDER BY created_at DESC, id DESC"))
+    append_workbook_rows(workbook, "Scanner Logs", fetchall("SELECT * FROM scanner_logs ORDER BY created_at DESC, id DESC"))
+    append_workbook_rows(workbook, "Overtime", fetchall("SELECT * FROM overtime_sessions ORDER BY created_at DESC, id DESC"))
+    append_workbook_rows(workbook, "Payroll Runs", fetchall("SELECT * FROM payroll_runs ORDER BY updated_at DESC, id DESC"))
+    append_workbook_rows(workbook, "Payroll Items", fetchall("SELECT * FROM payroll_run_items ORDER BY payroll_run_id DESC, id DESC"))
+    append_workbook_rows(workbook, "Payroll Item Adjustments", fetchall("SELECT * FROM payroll_run_item_adjustments ORDER BY payroll_run_id DESC, id DESC"))
+    append_workbook_rows(workbook, "Payroll Adjustments", fetchall("SELECT * FROM payroll_adjustments ORDER BY created_at DESC, id DESC"))
+    append_workbook_rows(workbook, "Recurring Rules", fetchall("SELECT * FROM payroll_recurring_rules ORDER BY updated_at DESC, id DESC"))
+    append_workbook_rows(workbook, "Incident Reports", fetchall("SELECT * FROM incident_reports ORDER BY created_at DESC, id DESC"))
+    append_workbook_rows(workbook, "Disciplinary", fetchall("SELECT * FROM disciplinary_actions ORDER BY created_at DESC, id DESC"))
+    return workbook
+
+
+def normalize_admin_report_filters(date_from_value="", date_to_value="", department_filter=""):
+    today = now_dt().date()
+    default_from = today.replace(day=1)
+    date_from = parse_iso_date(date_from_value, default_from)
+    date_to = parse_iso_date(date_to_value, today)
+    if date_to < date_from:
+        date_from, date_to = date_to, date_from
+    return {
+        "date_from": date_from,
+        "date_to": date_to,
+        "date_from_text": date_from.strftime("%Y-%m-%d"),
+        "date_to_text": date_to.strftime("%Y-%m-%d"),
+        "department_filter": (department_filter or "").strip(),
+    }
+
+
+def build_admin_reports_data(date_from, date_to, department_filter=""):
+    date_from_text = date_from.strftime("%Y-%m-%d")
+    date_to_text = date_to.strftime("%Y-%m-%d")
+    employees_sql = """
+        SELECT id, full_name, department, position, is_active
+        FROM users
+        WHERE role = 'employee'
+    """
+    employees_sql += " ORDER BY full_name ASC"
+    employees = [dict(row) for row in fetchall(employees_sql)]
+    employee_lookup = {int(employee["id"]): employee for employee in employees}
+
+    attendance_sql = """
+        SELECT a.*, u.full_name
+        FROM attendance a
+        JOIN users u ON u.id = a.user_id
+        WHERE u.role = 'employee'
+          AND a.work_date BETWEEN ? AND ?
+    """
+    attendance_params = [date_from_text, date_to_text]
+    attendance_sql += " ORDER BY a.work_date ASC, a.id ASC"
+    attendance_rows = [dict(row) for row in fetchall(attendance_sql, attendance_params)]
+
+    overtime_sql = """
+        SELECT o.*, u.full_name
+        FROM overtime_sessions o
+        JOIN users u ON u.id = o.user_id
+        WHERE o.work_date BETWEEN ? AND ?
+    """
+    overtime_params = [date_from_text, date_to_text]
+    overtime_sql += " ORDER BY o.work_date ASC, o.id ASC"
+    overtime_rows = [dict(row) for row in fetchall(overtime_sql, overtime_params)]
+
+    department_map = {}
+    employee_counts = {}
+    for employee in employees:
+        effective_employee = get_effective_employee_context(
+            user_row=employee,
+            reference_date=date_to_text
+        )
+        department_name = (effective_employee.get("department") if effective_employee else employee.get("department")) or "Unassigned"
+        if department_filter and department_name != department_filter:
+            continue
+        employee_counts[department_name] = employee_counts.get(department_name, 0) + 1
+        department_map.setdefault(department_name, {
+            "department": department_name,
+            "employee_count": 0,
+            "attendance_days": 0,
+            "attendance_hours": 0.0,
+            "late_punches": 0,
+            "overtime_hours": 0.0,
+        })
+
+    daily_map = {}
+    total_hours = 0.0
+    late_punches = 0
+    total_break_minutes_value = 0
+    attendance_days_count = 0
+    for attendance in attendance_rows:
+        employee = employee_lookup.get(int(attendance["user_id"]))
+        effective_employee = get_effective_employee_context(
+            user_row=employee,
+            user_id=attendance["user_id"],
+            reference_datetime=get_attendance_reference_datetime(attendance),
+            reference_date=attendance["work_date"]
+        )
+        department_name = (effective_employee.get("department") if effective_employee else "") or "Unassigned"
+        if department_filter and department_name != department_filter:
+            continue
+        attendance_days_count += 1
+        minutes_worked = max(total_work_minutes(attendance), 0)
+        break_minutes = total_break_minutes(attendance["id"])
+        hours_worked = round(minutes_worked / 60, 2)
+        total_hours += hours_worked
+        total_break_minutes_value += break_minutes
+        late_punches += int(attendance.get("late_flag") or 0)
+        dept_row = department_map.setdefault(department_name, {
+            "department": department_name,
+            "employee_count": 0,
+            "attendance_days": 0,
+            "attendance_hours": 0.0,
+            "late_punches": 0,
+            "overtime_hours": 0.0,
+        })
+        dept_row["attendance_days"] += 1
+        dept_row["attendance_hours"] = round(dept_row["attendance_hours"] + hours_worked, 2)
+        dept_row["late_punches"] += int(attendance.get("late_flag") or 0)
+
+        day_row = daily_map.setdefault(attendance["work_date"], {
+            "work_date": attendance["work_date"],
+            "attendance_days": 0,
+            "late_punches": 0,
+            "overtime_hours": 0.0,
+        })
+        day_row["attendance_days"] += 1
+        day_row["late_punches"] += int(attendance.get("late_flag") or 0)
+
+    total_overtime_hours = 0.0
+    for overtime in overtime_rows:
+        overtime_hours = round(overtime_minutes_for_session(overtime) / 60, 2)
+        employee = employee_lookup.get(int(overtime["user_id"]))
+        effective_employee = get_effective_employee_context(
+            user_row=employee,
+            user_id=overtime["user_id"],
+            reference_datetime=get_overtime_reference_datetime(overtime),
+            reference_date=overtime["work_date"]
+        )
+        department_name = (effective_employee.get("department") if effective_employee else "") or "Unassigned"
+        if department_filter and department_name != department_filter:
+            continue
+        total_overtime_hours += overtime_hours
+        dept_row = department_map.setdefault(department_name, {
+            "department": department_name,
+            "employee_count": 0,
+            "attendance_days": 0,
+            "attendance_hours": 0.0,
+            "late_punches": 0,
+            "overtime_hours": 0.0,
+        })
+        dept_row["overtime_hours"] = round(dept_row["overtime_hours"] + overtime_hours, 2)
+        day_row = daily_map.setdefault(overtime["work_date"], {
+            "work_date": overtime["work_date"],
+            "attendance_days": 0,
+            "late_punches": 0,
+            "overtime_hours": 0.0,
+        })
+        day_row["overtime_hours"] = round(day_row["overtime_hours"] + overtime_hours, 2)
+
+    for department_name, count in employee_counts.items():
+        department_map.setdefault(department_name, {
+            "department": department_name,
+            "employee_count": 0,
+            "attendance_days": 0,
+            "attendance_hours": 0.0,
+            "late_punches": 0,
+            "overtime_hours": 0.0,
+        })
+        department_map[department_name]["employee_count"] = count
+
+    correction_rows = [
+        dict(row)
+        for row in fetchall("""
+            SELECT c.*, u.full_name, u.department, u.position
+            FROM correction_requests c
+            JOIN users u ON u.id = c.user_id
+            WHERE c.work_date <= ?
+              AND COALESCE(c.end_work_date, c.work_date) >= ?
+              AND u.role = 'employee'
+            ORDER BY c.work_date ASC, c.id ASC
+        """, (date_to_text, date_from_text))
+    ]
+    pending_corrections_count = 0
+    leave_summary_map = {}
+    for request_row in correction_rows:
+        effective_employee = get_effective_employee_context(
+            user_row=employee_lookup.get(int(request_row["user_id"])),
+            user_id=request_row["user_id"],
+            reference_date=request_row["work_date"]
+        )
+        department_name = (effective_employee.get("department") if effective_employee else request_row.get("department")) or "Unassigned"
+        if department_filter and department_name != department_filter:
+            continue
+        if request_row["status"] == "Pending":
+            pending_corrections_count += 1
+        if request_row["request_type"] in {"Sick Leave", "Paid Leave"}:
+            summary_key = (request_row["request_type"], request_row["status"])
+            leave_summary_map[summary_key] = leave_summary_map.get(summary_key, 0) + 1
+    leave_summary_rows = [
+        {
+            "request_type": request_type,
+            "status": status,
+            "request_count": request_count,
+        }
+        for (request_type, status), request_count in sorted(
+            leave_summary_map.items(),
+            key=lambda item: (item[0][0], item[0][1])
+        )
+    ]
+    incident_row = fetchone("""
+        SELECT COUNT(*) AS cnt
+        FROM incident_reports r
+        LEFT JOIN users u ON u.id = r.user_id
+        WHERE COALESCE(r.report_date, r.incident_date) BETWEEN ? AND ?
+          {department_clause}
+    """.replace("{department_clause}", "AND COALESCE(r.report_department, u.department, '') = ?" if department_filter else ""), (
+        date_from_text,
+        date_to_text,
+        *((department_filter,) if department_filter else ())
+    ))
+    released_runs = [
+        dict(row)
+        for row in fetchall("""
+            SELECT pr.*, creator.full_name AS created_by_name
+            FROM payroll_runs pr
+            LEFT JOIN users creator ON creator.id = pr.created_by
+            WHERE pr.status = 'Released'
+              AND pr.date_from <= ?
+              AND pr.date_to >= ?
+              {department_clause}
+            ORDER BY COALESCE(pr.released_at, pr.updated_at) DESC, pr.id DESC
+            LIMIT 12
+        """.replace("{department_clause}", "AND COALESCE(pr.department_filter, '') = ?" if department_filter else ""), (
+            date_to_text,
+            date_from_text,
+            *((department_filter,) if department_filter else ())
+        ))
+    ]
+
+    for run in released_runs:
+        run["period_label"] = f"{run['date_from']} to {run['date_to']}"
+        run["scope_label"] = run["department_filter"] or "All Departments"
+
+    summary = {
+        "employee_count": sum(employee_counts.values()),
+        "attendance_days": attendance_days_count,
+        "attendance_hours": round(total_hours, 2),
+        "late_punches": late_punches,
+        "overtime_hours": round(total_overtime_hours, 2),
+        "break_minutes": total_break_minutes_value,
+        "pending_corrections": pending_corrections_count,
+        "incident_reports": int(incident_row["cnt"] or 0) if incident_row else 0,
+    }
+    leave_rows = [
+        {
+            "request_type": row["request_type"],
+            "status": row["status"],
+            "request_count": int(row["request_count"] or 0),
+        }
+        for row in leave_summary_rows
+    ]
+    department_rows = sorted(department_map.values(), key=lambda item: (item["department"] or "").lower())
+    daily_rows = [daily_map[key] for key in sorted(daily_map.keys())]
+
+    return {
+        "summary": summary,
+        "department_rows": department_rows,
+        "daily_rows": daily_rows,
+        "leave_rows": leave_rows,
+        "released_runs": released_runs,
+    }
 
 
 def get_payroll_period_dates(period, date_from_value="", date_to_value=""):
@@ -5084,6 +6045,9 @@ def inject_globals():
         company_settings=get_company_settings(),
         unread_count=unread_count,
         latest_notifications=latest_notifications,
+        admin_can=admin_can_permission,
+        admin_permission_options=ADMIN_PERMISSION_OPTIONS,
+        describe_admin_permissions=describe_admin_permissions,
         is_image=is_image,
         static_file_exists=static_file_exists,
         uploaded_file_exists=uploaded_file_exists,
@@ -5111,7 +6075,7 @@ def home():
         if not user:
             session.clear()
             return redirect(url_for("login"))
-        return redirect(get_home_route_for_role(session.get("role")))
+        return redirect(get_home_route_for_user(user))
     return redirect(url_for("login"))
 
 
@@ -5142,7 +6106,7 @@ def login():
 
             if user["role"] == "admin":
                 flash("Welcome Admin.", "success")
-                return redirect(url_for("admin_dashboard"))
+                return redirect(get_home_route_for_user(user))
 
             if user["role"] == "scanner":
                 flash("Scanner kiosk ready.", "success")
@@ -5444,7 +6408,115 @@ def admin_profile():
     if request.method == "POST":
         form_action = request.form.get("form_action", "admin_profile").strip()
 
+        if form_action == "create_admin_account":
+            if not admin_has_permission(user, "settings"):
+                flash("Your admin account cannot manage other admin accounts.", "danger")
+                return redirect(url_for("admin_profile"))
+            admin_full_name = (request.form.get("admin_full_name", "") or "").strip()
+            admin_username = (request.form.get("admin_username", "") or "").strip()
+            admin_password = (request.form.get("admin_password", "") or "").strip()
+            admin_permissions = normalize_admin_permissions(request.form.getlist("admin_permissions"))
+
+            if not admin_full_name or not admin_username or not admin_password:
+                flash("Admin name, username, and password are required.", "danger")
+                return redirect(url_for("admin_profile"))
+            if not admin_permissions:
+                flash("Choose at least one permission for the new admin account.", "danger")
+                return redirect(url_for("admin_profile"))
+            if fetchone("SELECT id FROM users WHERE username = ?", (admin_username,)):
+                flash("That username is already in use.", "warning")
+                return redirect(url_for("admin_profile"))
+
+            execute_db("""
+                INSERT INTO users (
+                    full_name, username, password_hash, role, department, position,
+                    admin_permissions, shift_start, break_limit_minutes, is_active, created_at
+                )
+                VALUES (?, ?, ?, 'admin', ?, ?, ?, ?, ?, 1, ?)
+            """, (
+                admin_full_name,
+                admin_username,
+                generate_password_hash(admin_password),
+                "Stellar Seats",
+                "Operations Admin",
+                admin_permissions,
+                DEFAULT_SHIFT_START,
+                BREAK_LIMIT_MINUTES,
+                now_str()
+            ), commit=True)
+            log_activity(session["user_id"], "CREATE ADMIN ACCOUNT", f"Created admin account {admin_username} with {admin_permissions}")
+            flash("Admin account created.", "success")
+            return redirect(url_for("admin_profile"))
+
+        if form_action == "update_admin_account":
+            if not admin_has_permission(user, "settings"):
+                flash("Your admin account cannot manage other admin accounts.", "danger")
+                return redirect(url_for("admin_profile"))
+            admin_id_raw = (request.form.get("admin_id", "") or "").strip()
+            if not admin_id_raw.isdigit():
+                flash("Admin account not found.", "warning")
+                return redirect(url_for("admin_profile"))
+
+            target_admin = fetchone("SELECT * FROM users WHERE id = ? AND role = 'admin'", (int(admin_id_raw),))
+            if not target_admin:
+                flash("Admin account not found.", "warning")
+                return redirect(url_for("admin_profile"))
+
+            if int(target_admin["id"]) == int(session["user_id"]):
+                flash("Use the profile form above to update your own main account details.", "info")
+                return redirect(url_for("admin_profile"))
+
+            admin_full_name = (request.form.get("admin_full_name", "") or "").strip()
+            admin_username = (request.form.get("admin_username", "") or "").strip()
+            admin_password = (request.form.get("admin_password", "") or "").strip()
+            admin_permissions = normalize_admin_permissions(request.form.getlist("admin_permissions"))
+            is_active = 1 if request.form.get("is_active") == "1" else 0
+
+            if not admin_full_name or not admin_username:
+                flash("Admin name and username are required.", "danger")
+                return redirect(url_for("admin_profile"))
+            if not admin_permissions:
+                flash("Choose at least one permission for the admin account.", "danger")
+                return redirect(url_for("admin_profile"))
+
+            username_owner = fetchone("SELECT id FROM users WHERE username = ? AND id != ?", (admin_username, target_admin["id"]))
+            if username_owner:
+                flash("That username is already in use by another account.", "warning")
+                return redirect(url_for("admin_profile"))
+
+            if admin_password:
+                execute_db("""
+                    UPDATE users
+                    SET full_name = ?, username = ?, password_hash = ?, admin_permissions = ?, is_active = ?
+                    WHERE id = ?
+                """, (
+                    admin_full_name,
+                    admin_username,
+                    generate_password_hash(admin_password),
+                    admin_permissions,
+                    is_active,
+                    target_admin["id"]
+                ), commit=True)
+            else:
+                execute_db("""
+                    UPDATE users
+                    SET full_name = ?, username = ?, admin_permissions = ?, is_active = ?
+                    WHERE id = ?
+                """, (
+                    admin_full_name,
+                    admin_username,
+                    admin_permissions,
+                    is_active,
+                    target_admin["id"]
+                ), commit=True)
+            log_activity(session["user_id"], "UPDATE ADMIN ACCOUNT", f"Updated admin account {admin_username} with {admin_permissions}")
+            flash("Admin account updated.", "success")
+            return redirect(url_for("admin_profile"))
+
         if form_action == "scanner_account":
+            if not admin_has_permission(user, "settings"):
+                flash("Your admin account cannot change scanner settings.", "danger")
+                return redirect(url_for("admin_profile"))
             scanner_full_name = request.form.get("scanner_full_name", "").strip() or "Scanner Kiosk"
             scanner_username = request.form.get("scanner_username", "").strip()
             scanner_password = request.form.get("scanner_password", "").strip()
@@ -5499,6 +6571,9 @@ def admin_profile():
             return redirect(url_for("admin_profile"))
 
         if form_action == "attendance_settings":
+            if not admin_has_permission(user, "settings"):
+                flash("Your admin account cannot change attendance settings.", "danger")
+                return redirect(url_for("admin_profile"))
             scanner_attendance_mode = 1 if request.form.get("scanner_attendance_mode") == "1" else 0
             scanner_lock_timeout_seconds = parse_positive_int(request.form.get("scanner_lock_timeout_seconds", "90"), 90)
             scanner_lock_timeout_seconds = max(min(scanner_lock_timeout_seconds, 900), 15)
@@ -5586,6 +6661,7 @@ def admin_profile():
     return render_template(
         "admin_profile.html",
         user=user,
+        admin_accounts=get_admin_accounts(),
         scanner_account=get_scanner_account(),
         company_settings=get_company_settings(),
         scanner_exit_pin_configured=has_scanner_exit_pin()
@@ -5768,6 +6844,7 @@ def time_in():
         create_notification(user_id, "Timed In", f"You timed in at {now_str()} ET.")
 
     log_activity(user_id, "TIME IN", f"Employee timed in. Shift: {shift_start}")
+    invalidate_admin_employee_rows_cache()
     flash("Time in successful.", "success")
     return redirect(url_for("dashboard"))
 
@@ -5817,6 +6894,7 @@ def start_break():
     remaining_break = max(break_limit_minutes - used_break_minutes, 0)
     create_notification(user_id, "Break Started", f"You started break at {now_str()} ET. Remaining break allowance: {remaining_break} minute(s).")
     log_activity(user_id, "BREAK START", "Employee started break")
+    invalidate_admin_employee_rows_cache()
     flash("Break started.", "info")
     return redirect(url_for("dashboard"))
 
@@ -5866,6 +6944,7 @@ def end_break():
                 f"Your total break time for today is {minutes_to_hm(total_break)}, which is over your {break_limit_minutes} minute limit."
             )
     log_activity(user_id, "BREAK END", "Employee ended break")
+    invalidate_admin_employee_rows_cache()
     flash("Break ended.", "success")
     return redirect(url_for("dashboard"))
 
@@ -5922,6 +7001,7 @@ def time_out():
             f"Your total break time for today is {minutes_to_hm(total_break)}, which is over your {break_limit_minutes} minute limit."
         )
     log_activity(user_id, "TIME OUT", f"Employee timed out. Sheets sync: {msg if ok else 'Skipped/Failed'}")
+    invalidate_admin_employee_rows_cache()
     flash("Time out successful.", "success")
     return redirect(url_for("dashboard"))
 
@@ -5982,7 +7062,12 @@ def service_worker():
 # =========================
 # ADMIN
 # =========================
-def get_admin_employee_rows(status_filter="", search="", department_filter="", over_break_only=""):
+def invalidate_admin_employee_rows_cache():
+    _admin_employee_rows_cache["stamp"] = 0
+    _admin_employee_rows_cache["rows"] = []
+
+
+def build_admin_employee_rows_snapshot():
     users = fetchall("""
         SELECT * FROM users
         WHERE role = 'employee'
@@ -6055,25 +7140,46 @@ def get_admin_employee_rows(status_filter="", search="", department_filter="", o
         row["undertime_flag"] = undertime_today
         row["avatar_initials"] = get_avatar_initials(user["full_name"])
         row["attention_score"] = int(row["absent_flag"]) + int(row["late_flag"]) + int(row["over_break_flag"]) + int(row["missing_timeout_flag"]) + int(row["undertime_flag"])
+        employees.append(row)
 
+    return employees
+
+
+def filter_admin_employee_rows(rows, status_filter="", search="", department_filter="", over_break_only=""):
+    employees = []
+    normalized_search = search.lower().strip()
+    for row in rows:
         if status_filter and row["status_display"] != status_filter:
             continue
 
         if over_break_only == "1" and row["over_break_flag"] != 1:
             continue
 
-        if search:
-            s = search.lower()
+        if normalized_search:
             hay = f"{row['full_name']} {row['username']} {row['department']} {row['position']} {row['shift_start']} {row['schedule_summary']}".lower()
-            if s not in hay:
+            if normalized_search not in hay:
                 continue
 
         if department_filter and (row["department"] or "").strip() != department_filter:
             continue
 
         employees.append(row)
-
     return employees
+
+
+def get_admin_employee_rows(status_filter="", search="", department_filter="", over_break_only=""):
+    cache_age = now_timestamp() - int(_admin_employee_rows_cache.get("stamp") or 0)
+    if cache_age > ADMIN_STATUS_CACHE_TTL_SECONDS or not _admin_employee_rows_cache.get("rows"):
+        _admin_employee_rows_cache["rows"] = build_admin_employee_rows_snapshot()
+        _admin_employee_rows_cache["stamp"] = now_timestamp()
+
+    return filter_admin_employee_rows(
+        _admin_employee_rows_cache["rows"],
+        status_filter=status_filter,
+        search=search,
+        department_filter=department_filter,
+        over_break_only=over_break_only
+    )
 
 
 def get_incident_reports(report_employee="", report_department="", report_type="", report_date_from="", report_date_to=""):
@@ -6171,10 +7277,15 @@ def update_attendance_record_by_admin(attendance_id, time_in_value="", time_out_
     user = get_user_by_id(attendance["user_id"])
     final_time_in = parse_datetime_local_input(time_in_value) if time_in_value else attendance["time_in"]
     final_time_out = parse_datetime_local_input(time_out_value) if time_out_value else attendance["time_out"]
+    effective_user = get_effective_employee_context(
+        user_row=user,
+        reference_datetime=final_time_in or attendance["time_in"] or normalize_history_reference(reference_date=attendance["work_date"]),
+        reference_date=attendance["work_date"]
+    ) or user
 
     if final_time_in and final_time_out and final_time_out < final_time_in:
-        shift_start = parse_shift_start(user["shift_start"] if user else DEFAULT_SHIFT_START)
-        shift_end = parse_shift_end(user["shift_end"] if user else DEFAULT_SHIFT_END)
+        shift_start = parse_shift_start(effective_user["shift_start"] if effective_user else DEFAULT_SHIFT_START)
+        shift_end = parse_shift_end(effective_user["shift_end"] if effective_user else DEFAULT_SHIFT_END)
         overnight_shift = shift_end <= shift_start
         if overnight_shift:
             adjusted_time_out = parse_db_datetime(final_time_out) + timedelta(days=1)
@@ -6183,7 +7294,7 @@ def update_attendance_record_by_admin(attendance_id, time_in_value="", time_out_
     if final_time_in and final_time_out and final_time_out < final_time_in:
         raise ValueError("Time out cannot be earlier than time in.")
 
-    late_flag, late_minutes = calculate_late_info(final_time_in, parse_shift_start(user["shift_start"] if user else DEFAULT_SHIFT_START))
+    late_flag, late_minutes = calculate_late_info(final_time_in, parse_shift_start(effective_user["shift_start"] if effective_user else DEFAULT_SHIFT_START))
     open_break = get_open_break_for_attendance(attendance_id)
     if final_time_out:
         final_status = "Timed Out"
@@ -6221,6 +7332,7 @@ def update_attendance_record_by_admin(attendance_id, time_in_value="", time_out_
             WHERE attendance_id = ?
         """, (final_time_out, final_time_out, attendance_id), commit=True)
 
+    invalidate_admin_employee_rows_cache()
     return get_attendance_by_id(attendance_id)
 
 
@@ -6429,6 +7541,12 @@ def enrich_history_record(row, break_limit_minutes, employee_row=None):
     row = dict(row)
     record_type = row.get("request_type") or "Attendance"
     is_attendance = row.get("source_type", "attendance") == "attendance"
+    if employee_row:
+        break_limit_minutes = get_employee_break_limit(
+            employee_row,
+            reference_datetime=row.get("time_in") or row.get("created_at"),
+            reference_date=row.get("work_date")
+        )
     break_minutes = total_break_minutes(row["id"]) if is_attendance and row.get("id") else 0
     work_row = dict(row)
     if record_type == "Undertime" and row.get("requested_time_out"):
@@ -6991,7 +8109,12 @@ def apply_attendance_correction(user_id, work_date, time_in_value="", break_star
         raise ValueError("Break end cannot be later than time out.")
 
     user = get_user_by_id(user_id)
-    late_flag, late_minutes = calculate_late_info(final_time_in, parse_shift_start(user["shift_start"] if user else DEFAULT_SHIFT_START))
+    effective_user = get_effective_employee_context(
+        user_row=user,
+        reference_datetime=final_time_in or normalize_history_reference(reference_date=target_work_date),
+        reference_date=target_work_date
+    )
+    late_flag, late_minutes = calculate_late_info(final_time_in, parse_shift_start(effective_user["shift_start"] if effective_user else DEFAULT_SHIFT_START))
 
     if final_time_out:
         final_status = "Timed Out"
@@ -7067,6 +8190,7 @@ def apply_attendance_correction(user_id, work_date, time_in_value="", break_star
         "break_end": final_break_end,
         "time_out": final_time_out,
     }
+    invalidate_admin_employee_rows_cache()
     return build_correction_change_summary(before_values, after_values)
 
 
@@ -7086,13 +8210,14 @@ def admin_dashboard():
     page = parse_positive_int(request.args.get("page", "1"), 1)
     page_size = parse_positive_int(request.args.get("page_size", "25"), 25)
 
-    filtered_rows = get_admin_employee_rows(
+    all_employee_rows = get_admin_employee_rows()
+    filtered_rows = filter_admin_employee_rows(
+        all_employee_rows,
         status_filter=status_filter,
         search=search,
         department_filter=department_filter,
         over_break_only=over_break_only
     )
-    all_employee_rows = get_admin_employee_rows()
     pagination = paginate_items(filtered_rows, page, page_size)
     employees = pagination["items"]
     all_users = fetchall("""
@@ -7838,6 +8963,78 @@ def print_admin_payroll():
     )
 
 
+@app.route("/admin/reports")
+@login_required(role="admin")
+def admin_reports():
+    filters = normalize_admin_report_filters(
+        request.args.get("date_from", "").strip(),
+        request.args.get("date_to", "").strip(),
+        request.args.get("department", "").strip()
+    )
+    report_data = build_admin_reports_data(
+        filters["date_from"],
+        filters["date_to"],
+        department_filter=filters["department_filter"]
+    )
+    return render_template(
+        "admin_reports.html",
+        departments=get_department_options(),
+        date_from=filters["date_from_text"],
+        date_to=filters["date_to_text"],
+        department_filter=filters["department_filter"],
+        report_data=report_data,
+        minutes_to_hm=minutes_to_hm
+    )
+
+
+@app.route("/admin/reports/export.xlsx")
+@login_required(role="admin")
+def export_admin_reports_excel():
+    filters = normalize_admin_report_filters(
+        request.args.get("date_from", "").strip(),
+        request.args.get("date_to", "").strip(),
+        request.args.get("department", "").strip()
+    )
+    report_data = build_admin_reports_data(
+        filters["date_from"],
+        filters["date_to"],
+        department_filter=filters["department_filter"]
+    )
+    try:
+        from openpyxl import Workbook
+    except Exception:
+        flash("Excel export requires openpyxl. Install dependencies and try again.", "danger")
+        return redirect(url_for("admin_reports", date_from=filters["date_from_text"], date_to=filters["date_to_text"], department=filters["department_filter"]))
+
+    workbook = Workbook()
+    summary_sheet = workbook.active
+    summary_sheet.title = "Summary"
+    summary_sheet.append(["Date From", filters["date_from_text"]])
+    summary_sheet.append(["Date To", filters["date_to_text"]])
+    summary_sheet.append(["Department", filters["department_filter"] or "All Departments"])
+    summary_sheet.append([])
+    summary_sheet.append(["Metric", "Value"])
+    for label, value in [
+        ("Employees in scope", report_data["summary"]["employee_count"]),
+        ("Attendance days", report_data["summary"]["attendance_days"]),
+        ("Attendance hours", report_data["summary"]["attendance_hours"]),
+        ("Late punches", report_data["summary"]["late_punches"]),
+        ("Overtime hours", report_data["summary"]["overtime_hours"]),
+        ("Break minutes", report_data["summary"]["break_minutes"]),
+        ("Pending corrections", report_data["summary"]["pending_corrections"]),
+        ("Incident reports", report_data["summary"]["incident_reports"]),
+    ]:
+        summary_sheet.append([label, value])
+    autosize_workbook_sheet(summary_sheet)
+
+    append_workbook_rows(workbook, "Department Summary", report_data["department_rows"])
+    append_workbook_rows(workbook, "Daily Trend", report_data["daily_rows"])
+    append_workbook_rows(workbook, "Leave Summary", report_data["leave_rows"])
+    append_workbook_rows(workbook, "Released Payroll", report_data["released_runs"])
+    filename = f"admin-reports-{filters['date_from_text']}-to-{filters['date_to_text']}.xlsx"
+    return workbook_to_response(workbook, filename)
+
+
 @app.route("/admin/leave")
 @login_required(role="admin")
 def admin_leave_dashboard():
@@ -8066,6 +9263,18 @@ def admin_data_tools():
         format_datetime_12h=format_datetime_12h,
         minutes_to_hm=minutes_to_hm
     )
+
+
+@app.route("/admin/data-tools/recovery-pack.xlsx")
+@login_required(role="admin")
+def download_recovery_pack():
+    try:
+        workbook = build_recovery_pack_workbook()
+    except ValueError as exc:
+        flash(str(exc), "danger")
+        return redirect(url_for("admin_data_tools"))
+    log_activity(session["user_id"], "DOWNLOAD RECOVERY PACK", "Downloaded the operational recovery workbook.")
+    return workbook_to_response(workbook, f"recovery-pack-{today_str()}.xlsx")
 
 
 @app.route("/admin/exceptions/export.xlsx")
@@ -8728,7 +9937,165 @@ def normalize_employee_id_dates(id_issue_date_raw, id_expiration_date_raw):
 @app.route("/admin/employees", methods=["GET", "POST"])
 @login_required(role="admin")
 def manage_employees():
+    employee_search = request.values.get("search", "").strip()
+
     if request.method == "POST":
+        form_action = (request.form.get("form_action", "add_employee") or "add_employee").strip()
+
+        if form_action == "create_schedule_preset":
+            preset_name = (request.form.get("preset_name", "") or "").strip()
+            department_scope = (request.form.get("preset_department_scope", "") or "").strip()
+            notes = (request.form.get("preset_notes", "") or "").strip()
+            schedule_days = normalize_schedule_days(request.form.getlist("preset_schedule_days"))
+            shift_start = parse_shift_start(request.form.get("preset_shift_start", DEFAULT_SHIFT_START))
+            shift_end = parse_shift_end(request.form.get("preset_shift_end", DEFAULT_SHIFT_END))
+            break_limit_minutes = parse_break_limit_minutes(request.form.get("preset_break_limit_minutes", BREAK_LIMIT_MINUTES))
+
+            if not preset_name:
+                flash("Schedule preset name is required.", "danger")
+                return redirect(url_for("manage_employees", search=employee_search))
+
+            existing_preset = fetchone("SELECT id FROM schedule_presets WHERE LOWER(name) = LOWER(?)", (preset_name,))
+            if existing_preset:
+                flash("A schedule preset with that name already exists.", "warning")
+                return redirect(url_for("manage_employees", search=employee_search))
+
+            execute_db("""
+                INSERT INTO schedule_presets (
+                    name, department_scope, schedule_days, shift_start, shift_end,
+                    break_limit_minutes, notes, created_by, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                preset_name,
+                department_scope or None,
+                schedule_days,
+                shift_start,
+                shift_end,
+                break_limit_minutes,
+                notes or None,
+                session["user_id"],
+                now_str(),
+                now_str()
+            ), commit=True)
+            log_activity(session["user_id"], "CREATE SCHEDULE PRESET", f"Created preset {preset_name} ({schedule_days} | {shift_start}-{shift_end} | break {break_limit_minutes}m)")
+            flash("Schedule preset created.", "success")
+            return redirect(url_for("manage_employees", search=employee_search))
+
+        if form_action == "delete_schedule_preset":
+            preset = get_schedule_preset(request.form.get("schedule_preset_id", ""))
+            if not preset:
+                flash("Schedule preset not found.", "warning")
+                return redirect(url_for("manage_employees", search=employee_search))
+
+            affected_employees = [
+                dict(row)
+                for row in fetchall(
+                    "SELECT * FROM users WHERE role = 'employee' AND schedule_preset_id = ?",
+                    (preset["id"],)
+                )
+            ]
+
+            db = get_db()
+            try:
+                execute_db("UPDATE users SET schedule_preset_id = NULL WHERE schedule_preset_id = ?", (preset["id"],))
+                for employee in affected_employees:
+                    employee["schedule_preset_id"] = None
+                    record_employee_schedule_history(employee, actor_id=session["user_id"])
+                execute_db("DELETE FROM schedule_presets WHERE id = ?", (preset["id"],))
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+
+            log_activity(session["user_id"], "DELETE SCHEDULE PRESET", f"Deleted preset {preset['name']}")
+            flash("Schedule preset deleted. Employees keep their last saved schedule values.", "info")
+            return redirect(url_for("manage_employees", search=employee_search))
+
+        if form_action == "apply_schedule_preset_bulk":
+            preset = get_schedule_preset(request.form.get("bulk_schedule_preset_id", ""))
+            employee_ids = []
+            for raw_id in request.form.getlist("employee_ids"):
+                raw_text = str(raw_id or "").strip()
+                if raw_text.isdigit():
+                    employee_ids.append(int(raw_text))
+            employee_ids = sorted(set(employee_ids))
+
+            if not preset:
+                flash("Choose a valid schedule preset to apply.", "danger")
+                return redirect(url_for("manage_employees", search=employee_search))
+            if not employee_ids:
+                flash("Select at least one employee before applying a schedule preset.", "warning")
+                return redirect(url_for("manage_employees", search=employee_search))
+
+            placeholders = ", ".join(["?"] * len(employee_ids))
+            existing_ids = [
+                int(row["id"])
+                for row in fetchall(
+                    f"SELECT id FROM users WHERE role = 'employee' AND id IN ({placeholders})",
+                    tuple(employee_ids)
+                )
+            ]
+            if not existing_ids:
+                flash("No valid employees were selected.", "warning")
+                return redirect(url_for("manage_employees", search=employee_search))
+
+            update_placeholders = ", ".join(["?"] * len(existing_ids))
+            selected_employees = [
+                dict(row)
+                for row in fetchall(
+                    f"SELECT * FROM users WHERE role = 'employee' AND id IN ({update_placeholders})",
+                    tuple(existing_ids)
+                )
+            ]
+            scope_conflicts = [
+                employee["full_name"]
+                for employee in selected_employees
+                if not schedule_preset_matches_department(preset, employee.get("department"))
+            ]
+            if scope_conflicts:
+                flash(
+                    f"Preset {preset['name']} is scoped to {preset['department_scope']} and cannot be applied to: {', '.join(scope_conflicts[:3])}" +
+                    ("..." if len(scope_conflicts) > 3 else ""),
+                    "danger"
+                )
+                return redirect(url_for("manage_employees", search=employee_search))
+
+            db = get_db()
+            try:
+                execute_db(f"""
+                    UPDATE users
+                    SET schedule_preset_id = ?,
+                        schedule_days = ?,
+                        shift_start = ?,
+                        shift_end = ?,
+                        break_limit_minutes = ?
+                    WHERE role = 'employee' AND id IN ({update_placeholders})
+                """, (
+                    preset["id"],
+                    preset["schedule_days"],
+                    preset["shift_start"],
+                    preset["shift_end"],
+                    preset["break_limit_minutes"],
+                    *existing_ids
+                ))
+                for employee in selected_employees:
+                    employee["schedule_preset_id"] = preset["id"]
+                    employee["schedule_days"] = preset["schedule_days"]
+                    employee["shift_start"] = preset["shift_start"]
+                    employee["shift_end"] = preset["shift_end"]
+                    employee["break_limit_minutes"] = preset["break_limit_minutes"]
+                    record_employee_schedule_history(employee, actor_id=session["user_id"])
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+
+            invalidate_admin_employee_rows_cache()
+            log_activity(session["user_id"], "BULK APPLY SCHEDULE PRESET", f"Applied preset {preset['name']} to {len(existing_ids)} employee(s)")
+            flash(f"Applied {preset['name']} to {len(existing_ids)} employee(s).", "success")
+            return redirect(url_for("manage_employees", search=employee_search))
+
         full_name = request.form.get("full_name", "").strip()
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "").strip()
@@ -8746,10 +10113,13 @@ def manage_employees():
         paid_leave_days = parse_non_negative_int(request.form.get("paid_leave_days", DEFAULT_PAID_LEAVE_DAYS), DEFAULT_PAID_LEAVE_DAYS)
         sick_leave_used_manual = parse_non_negative_int(request.form.get("sick_leave_used_manual", "0"), 0)
         paid_leave_used_manual = parse_non_negative_int(request.form.get("paid_leave_used_manual", "0"), 0)
-        schedule_days = normalize_schedule_days(request.form.getlist("schedule_days"))
-        shift_start = parse_shift_start(request.form.get("shift_start", DEFAULT_SHIFT_START))
-        shift_end = parse_shift_end(request.form.get("shift_end", DEFAULT_SHIFT_END))
-        break_limit_minutes = parse_break_limit_minutes(request.form.get("break_limit_minutes", BREAK_LIMIT_MINUTES))
+        schedule_assignment = resolve_schedule_assignment(request.form)
+        schedule_days = schedule_assignment["schedule_days"]
+        shift_start = schedule_assignment["shift_start"]
+        shift_end = schedule_assignment["shift_end"]
+        break_limit_minutes = schedule_assignment["break_limit_minutes"]
+        schedule_preset_id = schedule_assignment["schedule_preset_id"]
+        selected_preset = get_schedule_preset(schedule_preset_id) if schedule_preset_id else None
 
         if not full_name or not username or not password:
             flash("Full name, username, and password are required.", "danger")
@@ -8762,6 +10132,10 @@ def manage_employees():
 
         if id_date_error:
             flash(id_date_error, "danger")
+            return redirect(url_for("manage_employees"))
+
+        if selected_preset and not schedule_preset_matches_department(selected_preset, department):
+            flash(f"Preset {selected_preset['name']} is scoped to {selected_preset['department_scope']}. Choose a matching department or use a custom schedule.", "danger")
             return redirect(url_for("manage_employees"))
 
         if barcode_id:
@@ -8781,9 +10155,9 @@ def manage_employees():
         execute_db("""
             INSERT INTO users (
                 full_name, username, password_hash, role, profile_image,
-                department, position, emergency_contact_name, emergency_contact_phone, id_issue_date, id_expiration_date, barcode_id, hourly_rate, sick_leave_days, paid_leave_days, sick_leave_used_manual, paid_leave_used_manual, schedule_days, shift_start, shift_end, break_window_start, break_window_end, break_limit_minutes, is_active, created_at
+                department, position, emergency_contact_name, emergency_contact_phone, id_issue_date, id_expiration_date, barcode_id, hourly_rate, sick_leave_days, paid_leave_days, sick_leave_used_manual, paid_leave_used_manual, schedule_days, shift_start, shift_end, schedule_preset_id, break_window_start, break_window_end, break_limit_minutes, is_active, created_at
             )
-            VALUES (?, ?, ?, 'employee', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+            VALUES (?, ?, ?, 'employee', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
         """, (
             full_name,
             username,
@@ -8804,6 +10178,7 @@ def manage_employees():
             schedule_days,
             shift_start,
             shift_end,
+            schedule_preset_id,
             DEFAULT_BREAK_WINDOW_START,
             DEFAULT_BREAK_WINDOW_END,
             break_limit_minutes,
@@ -8812,6 +10187,14 @@ def manage_employees():
 
         new_user = fetchone("SELECT id FROM users WHERE username = ?", (username,))
         if new_user:
+            created_employee = get_user_by_id(new_user["id"])
+            if created_employee:
+                record_employee_schedule_history(
+                    created_employee,
+                    actor_id=session["user_id"],
+                    effective_at=created_employee["created_at"] if created_employee["created_at"] else now_str(),
+                    commit=True
+                )
             create_notification(new_user["id"], "Account Created", "Your account has been created by admin.")
             log_activity(
                 session["user_id"],
@@ -8828,20 +10211,23 @@ def manage_employees():
                     "sick_leave_days": sick_leave_days,
                     "paid_leave_days": paid_leave_days,
                     "sick_leave_used_manual": sick_leave_used_manual,
-                    "paid_leave_used_manual": paid_leave_used_manual,
-                    "shift_start": shift_start,
-                    "shift_end": shift_end,
-                    "break_limit_minutes": break_limit_minutes,
-                    "is_active": 1,
-                })
-            )
+                        "paid_leave_used_manual": paid_leave_used_manual,
+                        "shift_start": shift_start,
+                        "shift_end": shift_end,
+                        "schedule_preset_id": schedule_preset_id or "(custom)",
+                        "break_limit_minutes": break_limit_minutes,
+                        "is_active": 1,
+                    })
+                )
 
+        invalidate_admin_employee_rows_cache()
         flash("Employee added successfully.", "success")
         return redirect(url_for("manage_employees"))
 
-    employee_search = request.args.get("search", "").strip()
     sql = """
-        SELECT * FROM users
+        SELECT u.*, sp.name AS schedule_preset_name
+        FROM users u
+        LEFT JOIN schedule_presets sp ON sp.id = u.schedule_preset_id
         WHERE role = 'employee'
     """
     params = []
@@ -8858,14 +10244,30 @@ def manage_employees():
         search_like = f"%{employee_search.lower()}%"
         params.extend([search_like, search_like, search_like, search_like])
 
-    sql += " ORDER BY id DESC"
+    sql += " ORDER BY u.id DESC"
     employees = fetchall(sql, params)
+    schedule_presets = []
+    preset_assignment_counts = {}
+    for row in fetchall("""
+        SELECT schedule_preset_id, COUNT(*) AS cnt
+        FROM users
+        WHERE role = 'employee' AND schedule_preset_id IS NOT NULL
+        GROUP BY schedule_preset_id
+    """):
+        preset_assignment_counts[int(row["schedule_preset_id"])] = int(row["cnt"] or 0)
+    for preset in get_schedule_presets():
+        item = dict(preset)
+        item["schedule_summary"] = get_schedule_summary(item["schedule_days"] or DEFAULT_SCHEDULE_DAYS)
+        item["window_summary"] = f"{item['shift_start'] or DEFAULT_SHIFT_START} - {item['shift_end'] or DEFAULT_SHIFT_END}"
+        item["assigned_count"] = preset_assignment_counts.get(int(item["id"]), 0)
+        schedule_presets.append(item)
 
     return render_template(
         "manage_employees.html",
         employees=employees,
         weekday_options=WEEKDAY_OPTIONS,
-        employee_search=employee_search
+        employee_search=employee_search,
+        schedule_presets=schedule_presets
     )
 
 
@@ -8899,10 +10301,13 @@ def edit_employee(user_id):
         paid_leave_days = parse_non_negative_int(request.form.get("paid_leave_days", user["paid_leave_days"] if user["paid_leave_days"] is not None else DEFAULT_PAID_LEAVE_DAYS), DEFAULT_PAID_LEAVE_DAYS)
         sick_leave_used_manual = parse_non_negative_int(request.form.get("sick_leave_used_manual", user["sick_leave_used_manual"] if user["sick_leave_used_manual"] is not None else 0), 0)
         paid_leave_used_manual = parse_non_negative_int(request.form.get("paid_leave_used_manual", user["paid_leave_used_manual"] if user["paid_leave_used_manual"] is not None else 0), 0)
-        schedule_days = normalize_schedule_days(request.form.getlist("schedule_days"))
-        shift_start = parse_shift_start(request.form.get("shift_start", user["shift_start"] or DEFAULT_SHIFT_START))
-        shift_end = parse_shift_end(request.form.get("shift_end", user["shift_end"] or DEFAULT_SHIFT_END))
-        break_limit_minutes = parse_break_limit_minutes(request.form.get("break_limit_minutes", user["break_limit_minutes"]))
+        schedule_assignment = resolve_schedule_assignment(request.form, fallback_user=user)
+        schedule_days = schedule_assignment["schedule_days"]
+        shift_start = schedule_assignment["shift_start"]
+        shift_end = schedule_assignment["shift_end"]
+        break_limit_minutes = schedule_assignment["break_limit_minutes"]
+        schedule_preset_id = schedule_assignment["schedule_preset_id"]
+        selected_preset = get_schedule_preset(schedule_preset_id) if schedule_preset_id else None
         is_active = 1 if request.form.get("is_active") == "1" else 0
         password = request.form.get("password", "").strip()
 
@@ -8921,6 +10326,10 @@ def edit_employee(user_id):
 
         if id_date_error:
             flash(id_date_error, "danger")
+            return redirect(url_for("edit_employee", user_id=user_id))
+
+        if selected_preset and not schedule_preset_matches_department(selected_preset, department):
+            flash(f"Preset {selected_preset['name']} is scoped to {selected_preset['department_scope']}. Choose a matching department or use a custom schedule.", "danger")
             return redirect(url_for("edit_employee", user_id=user_id))
 
         if barcode_id:
@@ -8945,21 +10354,21 @@ def edit_employee(user_id):
             execute_db("""
                 UPDATE users
                 SET full_name = ?, username = ?, password_hash = ?, profile_image = ?,
-                    department = ?, position = ?, emergency_contact_name = ?, emergency_contact_phone = ?, id_issue_date = ?, id_expiration_date = ?, barcode_id = ?, hourly_rate = ?, sick_leave_days = ?, paid_leave_days = ?, sick_leave_used_manual = ?, paid_leave_used_manual = ?, schedule_days = ?, shift_start = ?, shift_end = ?, break_window_start = ?, break_window_end = ?, break_limit_minutes = ?, is_active = ?
+                    department = ?, position = ?, emergency_contact_name = ?, emergency_contact_phone = ?, id_issue_date = ?, id_expiration_date = ?, barcode_id = ?, hourly_rate = ?, sick_leave_days = ?, paid_leave_days = ?, sick_leave_used_manual = ?, paid_leave_used_manual = ?, schedule_days = ?, shift_start = ?, shift_end = ?, schedule_preset_id = ?, break_window_start = ?, break_window_end = ?, break_limit_minutes = ?, is_active = ?
                 WHERE id = ?
             """, (
                 full_name, username, generate_password_hash(password), profile_image,
-                department, position, emergency_contact_name, emergency_contact_phone, id_issue_date, id_expiration_date, barcode_id, hourly_rate, sick_leave_days, paid_leave_days, sick_leave_used_manual, paid_leave_used_manual, schedule_days, shift_start, shift_end, user["break_window_start"] or DEFAULT_BREAK_WINDOW_START, user["break_window_end"] or DEFAULT_BREAK_WINDOW_END, break_limit_minutes, is_active, user_id
+                department, position, emergency_contact_name, emergency_contact_phone, id_issue_date, id_expiration_date, barcode_id, hourly_rate, sick_leave_days, paid_leave_days, sick_leave_used_manual, paid_leave_used_manual, schedule_days, shift_start, shift_end, schedule_preset_id, user["break_window_start"] or DEFAULT_BREAK_WINDOW_START, user["break_window_end"] or DEFAULT_BREAK_WINDOW_END, break_limit_minutes, is_active, user_id
             ), commit=True)
         else:
             execute_db("""
                 UPDATE users
                 SET full_name = ?, username = ?, profile_image = ?,
-                    department = ?, position = ?, emergency_contact_name = ?, emergency_contact_phone = ?, id_issue_date = ?, id_expiration_date = ?, barcode_id = ?, hourly_rate = ?, sick_leave_days = ?, paid_leave_days = ?, sick_leave_used_manual = ?, paid_leave_used_manual = ?, schedule_days = ?, shift_start = ?, shift_end = ?, break_window_start = ?, break_window_end = ?, break_limit_minutes = ?, is_active = ?
+                    department = ?, position = ?, emergency_contact_name = ?, emergency_contact_phone = ?, id_issue_date = ?, id_expiration_date = ?, barcode_id = ?, hourly_rate = ?, sick_leave_days = ?, paid_leave_days = ?, sick_leave_used_manual = ?, paid_leave_used_manual = ?, schedule_days = ?, shift_start = ?, shift_end = ?, schedule_preset_id = ?, break_window_start = ?, break_window_end = ?, break_limit_minutes = ?, is_active = ?
                 WHERE id = ?
             """, (
                 full_name, username, profile_image,
-                department, position, emergency_contact_name, emergency_contact_phone, id_issue_date, id_expiration_date, barcode_id, hourly_rate, sick_leave_days, paid_leave_days, sick_leave_used_manual, paid_leave_used_manual, schedule_days, shift_start, shift_end, user["break_window_start"] or DEFAULT_BREAK_WINDOW_START, user["break_window_end"] or DEFAULT_BREAK_WINDOW_END, break_limit_minutes, is_active, user_id
+                department, position, emergency_contact_name, emergency_contact_phone, id_issue_date, id_expiration_date, barcode_id, hourly_rate, sick_leave_days, paid_leave_days, sick_leave_used_manual, paid_leave_used_manual, schedule_days, shift_start, shift_end, schedule_preset_id, user["break_window_start"] or DEFAULT_BREAK_WINDOW_START, user["break_window_end"] or DEFAULT_BREAK_WINDOW_END, break_limit_minutes, is_active, user_id
             ), commit=True)
 
         log_activity(
@@ -8980,14 +10389,25 @@ def edit_employee(user_id):
                 "paid_leave_used_manual": paid_leave_used_manual,
                 "shift_start": shift_start,
                 "shift_end": shift_end,
+                "schedule_preset_id": schedule_preset_id or "(custom)",
                 "break_limit_minutes": break_limit_minutes,
                 "is_active": is_active,
             })
         )
+        updated_user = get_user_by_id(user_id)
+        if updated_user:
+            record_employee_schedule_history(updated_user, actor_id=session["user_id"], commit=True)
+        invalidate_admin_employee_rows_cache()
         flash("Employee updated successfully.", "success")
         return redirect(url_for("manage_employees"))
 
-    return render_template("edit_employee.html", employee=user, weekday_options=WEEKDAY_OPTIONS, employee_schedule_days=get_schedule_day_codes(user["schedule_days"] if user["schedule_days"] else DEFAULT_SCHEDULE_DAYS))
+    return render_template(
+        "edit_employee.html",
+        employee=user,
+        weekday_options=WEEKDAY_OPTIONS,
+        employee_schedule_days=get_schedule_day_codes(user["schedule_days"] if user["schedule_days"] else DEFAULT_SCHEDULE_DAYS),
+        schedule_presets=get_schedule_presets()
+    )
 
 
 @app.route("/admin/employee-id/<int:user_id>")
@@ -9352,6 +10772,7 @@ def delete_employee(user_id):
         delete_uploaded_file_if_unused(filename)
 
     log_activity(session["user_id"], "DELETE EMPLOYEE", f"Deleted employee: {user['full_name']}")
+    invalidate_admin_employee_rows_cache()
     flash("Employee deleted successfully.", "info")
     return redirect(url_for("manage_employees"))
 
