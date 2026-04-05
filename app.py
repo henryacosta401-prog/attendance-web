@@ -1878,8 +1878,6 @@ def init_postgres_db():
 os.makedirs(os.path.dirname(SQLITE_DATABASE), exist_ok=True)
 os.makedirs(BACKUP_FOLDER, exist_ok=True)
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-with app.app_context():
-    init_db()
 
 
 # =========================
@@ -11959,6 +11957,13 @@ def delete_disciplinary_action_route(action_id):
     log_activity(session["user_id"], "DELETE DISCIPLINARY ACTION", f"Deleted {action['action_type']} for {employee_name}")
     flash("Disciplinary record deleted.", "info")
     return redirect(url_for("admin_disciplinary_dashboard"))
+
+
+# =========================
+# STARTUP
+# =========================
+with app.app_context():
+    init_db()
 
 
 # =========================
