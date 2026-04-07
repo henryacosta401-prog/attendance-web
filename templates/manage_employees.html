@@ -11,7 +11,7 @@
 
 <div class="grid grid-2" style="align-items:start;">
     <div style="display:grid; gap:18px;">
-        <div class="card">
+        <div class="card" data-tour-id="employee-add-form">
             <div class="section-title">Add Employee</div>
             <form method="POST" enctype="multipart/form-data">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -107,7 +107,7 @@
             </form>
         </div>
 
-        <div class="card">
+        <div class="card" data-tour-id="schedule-preset-library">
             <div class="section-title">Schedule Preset Library</div>
             <p class="muted" style="margin-bottom:14px;">Create reusable weekly schedules, then apply them to new hires or selected employees in one step.</p>
 
@@ -197,7 +197,7 @@
             </form>
         </div>
 
-        <form id="bulkPresetForm" method="POST" style="margin-bottom:16px;">
+        <form id="bulkPresetForm" method="POST" style="margin-bottom:16px;" data-tour-id="bulk-schedule-apply">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <input type="hidden" name="form_action" value="apply_schedule_preset_bulk">
             <input type="hidden" name="search" value="{{ employee_search }}">
@@ -226,42 +226,44 @@
             <div class="small muted" style="margin-top:10px;">Leave the effective date blank to apply immediately. Choose a future date to queue a rollout without changing the live shift today.</div>
         </form>
 
-        <div class="divider"></div>
-        <h4 style="margin-top:0;">Upcoming Schedule Rollout</h4>
-        {% if future_schedule_changes %}
-            <div style="display:grid; gap:12px; margin-bottom:16px;">
-                {% for change in future_schedule_changes %}
-                    <div style="padding:14px; border-radius:16px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);">
-                        <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:flex-start;">
-                            <div>
-                                <div style="font-weight:800; color:#fff;">{{ change.full_name }}</div>
-                                <div class="small muted" style="margin-top:6px;">Effective {{ change.effective_date }} | {{ change.schedule_summary }} | {{ change.window_summary }}</div>
-                                <div class="small muted" style="margin-top:4px;">
-                                    {% if change.preset_name %}
-                                        Preset: {{ change.preset_name }}
-                                    {% else %}
-                                        Custom queued schedule
-                                    {% endif %}
-                                    {% if change.notes %} | {{ change.notes }}{% endif %}
+        <div data-tour-id="upcoming-schedule-rollout">
+            <div class="divider"></div>
+            <h4 style="margin-top:0;">Upcoming Schedule Rollout</h4>
+            {% if future_schedule_changes %}
+                <div style="display:grid; gap:12px; margin-bottom:16px;">
+                    {% for change in future_schedule_changes %}
+                        <div style="padding:14px; border-radius:16px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);">
+                            <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:flex-start;">
+                                <div>
+                                    <div style="font-weight:800; color:#fff;">{{ change.full_name }}</div>
+                                    <div class="small muted" style="margin-top:6px;">Effective {{ change.effective_date }} | {{ change.schedule_summary }} | {{ change.window_summary }}</div>
+                                    <div class="small muted" style="margin-top:4px;">
+                                        {% if change.preset_name %}
+                                            Preset: {{ change.preset_name }}
+                                        {% else %}
+                                            Custom queued schedule
+                                        {% endif %}
+                                        {% if change.notes %} | {{ change.notes }}{% endif %}
+                                    </div>
+                                </div>
+                                <div style="display:grid; gap:8px; justify-items:end;">
+                                    <span class="status status-blue">Queued</span>
+                                    <form method="POST" action="{{ url_for('delete_future_schedule_change', change_id=change.id) }}" style="margin:0;" onsubmit="return confirm('Delete this queued schedule rollout?');">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                        <button class="btn btn-danger" type="submit">Delete</button>
+                                    </form>
                                 </div>
                             </div>
-                            <div style="display:grid; gap:8px; justify-items:end;">
-                                <span class="status status-blue">Queued</span>
-                                <form method="POST" action="{{ url_for('delete_future_schedule_change', change_id=change.id) }}" style="margin:0;" onsubmit="return confirm('Delete this queued schedule rollout?');">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                    <button class="btn btn-danger" type="submit">Delete</button>
-                                </form>
-                            </div>
                         </div>
-                    </div>
-                {% endfor %}
-            </div>
-        {% else %}
-            <p class="muted" style="margin-bottom:16px;">No future-dated schedule rollouts are queued right now.</p>
-        {% endif %}
+                    {% endfor %}
+                </div>
+            {% else %}
+                <p class="muted" style="margin-bottom:16px;">No future-dated schedule rollouts are queued right now.</p>
+            {% endif %}
+        </div>
 
         {% if employees %}
-            <div style="overflow-x:auto;">
+            <div style="overflow-x:auto;" data-tour-id="employee-table">
                 <table>
                     <thead>
                         <tr>
@@ -334,7 +336,7 @@
                                 <div class="top-actions">
                                     <a class="btn btn-gray" href="{{ url_for('print_employee_id', user_id=emp.id) }}" target="_blank" rel="noopener">Print ID</a>
                                     <a class="btn btn-primary" href="{{ url_for('edit_employee', user_id=emp.id) }}">Edit</a>
-                                    <form method="POST" action="{{ url_for('delete_employee', user_id=emp.id) }}" onsubmit="return confirm('Delete this employee?')">
+                                    <form method="POST" action="{{ url_for('delete_employee', user_id=emp.id) }}" onsubmit="return confirm('Delete this employee permanently? Only use delete for accounts with no historical attendance or payroll records.')">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                         <button class="btn btn-danger" type="submit">Delete</button>
                                     </form>
