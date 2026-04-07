@@ -336,7 +336,8 @@
 
         .tour-card {
             position: fixed;
-            width: min(360px, calc(100vw - 28px));
+            width: min(392px, calc(100vw - 28px));
+            max-height: min(440px, calc(100dvh - 28px));
             padding: 20px;
             border-radius: 24px;
             background: linear-gradient(180deg, rgba(17, 24, 39, 0.98), rgba(15, 23, 42, 0.98));
@@ -347,6 +348,8 @@
             pointer-events: none;
             transform: translateY(10px);
             transition: opacity 0.18s ease, transform 0.18s ease;
+            display: flex;
+            flex-direction: column;
         }
 
         .tour-card.open {
@@ -376,6 +379,9 @@
             color: #cbd5e1;
             font-size: 14px;
             line-height: 1.55;
+            overflow-y: auto;
+            max-height: min(28vh, 220px);
+            padding-right: 4px;
         }
 
         .tour-progress {
@@ -386,17 +392,47 @@
         }
 
         .tour-actions {
-            margin-top: 18px;
+            margin-top: auto;
+            padding-top: 18px;
             display: flex;
             justify-content: space-between;
             gap: 10px;
             flex-wrap: wrap;
+            border-top: 1px solid rgba(148, 163, 184, 0.14);
         }
 
         .tour-actions-group {
             display: flex;
             gap: 10px;
             flex-wrap: wrap;
+        }
+
+        @media (max-width: 760px) {
+            .tour-card {
+                width: auto;
+                left: 14px !important;
+                right: 14px !important;
+                bottom: max(14px, env(safe-area-inset-bottom)) !important;
+                max-height: min(72dvh, calc(100dvh - 20px));
+            }
+
+            .tour-body {
+                max-height: min(32vh, 220px);
+            }
+
+            .tour-actions,
+            .tour-actions-group {
+                width: 100%;
+            }
+
+            .tour-actions {
+                justify-content: stretch;
+            }
+
+            .tour-actions .btn,
+            .tour-actions-group .btn {
+                flex: 1 1 0;
+            }
         }
 
         .tour-highlight {
@@ -1096,10 +1132,10 @@
                     <a class="pill-link {% if request.endpoint == 'manage_employees' or request.endpoint == 'edit_employee' %}active{% endif %}" data-tour-id="nav-employees" href="{{ url_for('manage_employees') }}">Employees</a>
                 {% endif %}
                 {% if admin_can('payroll') %}
-                    <a class="pill-link {% if request.endpoint == 'admin_payroll' %}active{% endif %}" href="{{ url_for('admin_payroll') }}">Payroll</a>
+                    <a class="pill-link {% if request.endpoint == 'admin_payroll' %}active{% endif %}" data-tour-id="nav-payroll" href="{{ url_for('admin_payroll') }}">Payroll</a>
                 {% endif %}
                 {% if admin_can('reports') %}
-                    <a class="pill-link {% if request.endpoint in report_endpoints %}active{% endif %}" href="{{ url_for('admin_reports') }}">Reports</a>
+                    <a class="pill-link {% if request.endpoint in report_endpoints %}active{% endif %}" data-tour-id="nav-reports" href="{{ url_for('admin_reports') }}">Reports</a>
                 {% endif %}
 
                 {% if admin_can('attendance') %}
@@ -1161,7 +1197,7 @@
                 {% endif %}
 
                 <div class="nav-group" data-nav-group>
-                    <button class="pill-link nav-group-toggle {% if request.endpoint in admin_endpoints %}active{% endif %}" data-nav-toggle type="button" aria-expanded="false">
+                    <button class="pill-link nav-group-toggle {% if request.endpoint in admin_endpoints %}active{% endif %}" data-nav-toggle data-tour-id="nav-admin" type="button" aria-expanded="false">
                         Admin <span class="nav-caret">v</span>
                     </button>
                     <div class="nav-menu">
@@ -1188,8 +1224,8 @@
         {% else %}
             <div class="nav-primary">
                 <a class="pill-link {% if request.endpoint == 'dashboard' %}active{% endif %}" data-tour-id="nav-dashboard" href="{{ url_for('dashboard') }}">Dashboard</a>
-                <a class="pill-link {% if request.endpoint == 'employee_payroll_history' or request.endpoint == 'employee_payslip' %}active{% endif %}" href="{{ url_for('employee_payroll_history') }}">Payslips</a>
-                <a class="pill-link {% if request.endpoint == 'employee_attendance_calendar' %}active{% endif %}" href="{{ url_for('employee_attendance_calendar') }}">Calendar</a>
+                <a class="pill-link {% if request.endpoint == 'employee_payroll_history' or request.endpoint == 'employee_payslip' %}active{% endif %}" data-tour-id="nav-payslips" href="{{ url_for('employee_payroll_history') }}">Payslips</a>
+                <a class="pill-link {% if request.endpoint == 'employee_attendance_calendar' %}active{% endif %}" data-tour-id="nav-calendar" href="{{ url_for('employee_attendance_calendar') }}">Calendar</a>
                 <a class="pill-link {% if request.endpoint == 'employee_history' %}active{% endif %}" data-tour-id="nav-history" href="{{ url_for('employee_history') }}">History</a>
                 <a class="pill-link {% if request.endpoint == 'employee_corrections' %}active{% endif %}" data-tour-id="nav-corrections" href="{{ url_for('employee_corrections') }}">Corrections</a>
                 <a class="pill-link {% if request.endpoint == 'employee_profile' %}active{% endif %}" data-tour-id="nav-profile" href="{{ url_for('employee_profile') }}">Profile</a>
@@ -1370,24 +1406,76 @@ document.addEventListener("DOMContentLoaded", function () {
     const launchBtn = document.querySelector("[data-tour-launch='manual']");
     const tourDefinitions = {
         admin_dashboard: [
-            { selector: "[data-tour-id='nav-dashboard']", title: "Start from the dashboard", body: "This is your home base for daily monitoring. Come back here any time you need the big picture." },
-            { selector: "[data-tour-id='admin-stats']", title: "Read the headline numbers first", body: "These top cards are the quickest way to spot absences, undertime, overbreaks, and missing time-outs." },
-            { selector: "[data-tour-id='admin-exceptions']", title: "Work from the exception cards", body: "These cards help you focus on what needs follow-up today and let you export each exception group fast." },
-            { selector: "[data-tour-id='admin-live-status']", title: "Use the live roster for day-to-day review", body: "Search, filter, and monitor each employee's current shift status here without jumping around the app." },
-            { selector: "[data-tour-id='admin-history-link']", title: "History is your detailed audit view", body: "Open full history when you need exports, past records, undertime, leave, and deeper attendance review." },
-            { selector: "[data-tour-id='admin-exception-queue']", title: "Keep the queue in sight", body: "This panel keeps urgent people visible so they do not get buried while you review other pages." },
-            { selector: "[data-tour-id='nav-attendance']", title: "Attendance tools are grouped together", body: "Use this menu for corrections, full history, the attendance audit, and scanner logs instead of hunting through a long nav bar." }
+            { selector: "[data-tour-id='nav-dashboard']", title: "Start from the dashboard", body: "This is still the fastest place to start each day. Use it as your control center before diving into deeper admin pages." },
+            { selector: "[data-tour-id='admin-stats']", title: "Headline numbers show the daily risk first", body: "These top cards quickly surface missing time-outs, follow-ups, and on-shift totals so you can spot issues in seconds." },
+            { selector: "[data-tour-id='admin-live-status']", title: "The live roster is your working table", body: "Search, filter, and review who is active, offline, on break, or missing time-outs from this main roster." },
+            { selector: "[data-tour-id='admin-exceptions']", title: "Today's Focus keeps exception work visible", body: "Use these exception cards when you need quick export buttons and a short list of what needs action today." },
+            { selector: "[data-tour-id='nav-employees']", title: "Employees is where account and schedule changes live", body: "Open Employees when you need to add people, edit barcode accounts, assign schedule presets, or queue rollout changes." },
+            { selector: "[data-tour-id='nav-payroll']", title: "Payroll now includes more than release only", body: "Use Payroll to build a run, manage recurring deductions and allowances, save drafts, bulk release, and publish payslips." },
+            { selector: "[data-tour-id='nav-reports']", title: "Reports gathers your exports and summaries", body: "Use Reports for attendance and overtime summaries when you need a broader date-range view instead of one live roster." },
+            { selector: "[data-tour-id='nav-attendance']", title: "Attendance tools stay grouped here", body: "Corrections, full history, attendance audit, and scanner logs are all inside this menu so the top nav stays cleaner." },
+            { selector: "[data-tour-id='nav-admin']", title: "Admin holds the safety and settings tools", body: "Open Admin for data tools, recovery steps, kiosk settings, and your admin account controls." }
+        ],
+        admin_payroll: [
+            { selector: "[data-tour-id='nav-payroll']", title: "Payroll is now its own workspace", body: "This page is where you build the active payroll view, confirm the numbers, and move toward release." },
+            { selector: "[data-tour-id='payroll-overview']", title: "Read the payroll totals before editing", body: "These summary cards show final pay, overtime, adjustment balance, and missing-rate blockers for the current filter." },
+            { selector: "[data-tour-id='payroll-build']", title: "Build the exact payroll slice you need", body: "Choose the period, employee or department scope, then save or release that exact filtered snapshot." },
+            { selector: "[data-tour-id='payroll-current-run']", title: "Current Run shows the saved snapshot state", body: "This panel tells you whether the view is unsaved, draft, or released, and it is where bulk release work starts." },
+            { selector: "[data-tour-id='payroll-table-section']", title: "The payroll table is the release source", body: "Review the employee rows here before you release. This table is the core breakdown behind exports and payslips." },
+            { selector: "[data-tour-id='payroll-recurring-rules']", title: "Recurring rules save repetitive deductions and allowances", body: "Use recurring payroll rules for SSS, PhilHealth, allowances, or other repeating adjustments so you do not add them every cutoff." },
+            { selector: "[data-tour-id='payroll-one-time-adjustments']", title: "One-time adjustments stay separate", body: "Use this section for bonuses, cash advances, temporary deductions, or any one-off payroll changes for the current period." }
+        ],
+        manage_employees: [
+            { selector: "[data-tour-id='nav-employees']", title: "Employees is the people and schedule workspace", body: "This page handles employee accounts, barcode records, profiles, and schedule changes from one place." },
+            { selector: "[data-tour-id='employee-add-form']", title: "Add Employee creates the account and default schedule", body: "Use this form for new hires when you need to save their login, barcode, rate, leave balances, and initial schedule." },
+            { selector: "[data-tour-id='schedule-preset-library']", title: "Schedule presets reduce repeated manual setup", body: "Build reusable schedule presets here, then apply them to new hires or multiple existing employees in one step." },
+            { selector: "[data-tour-id='bulk-schedule-apply']", title: "Bulk Apply handles multiple employees together", body: "Select employees below, choose a preset here, and either apply it now or queue it with an effective date for later rollout." },
+            { selector: "[data-tour-id='upcoming-schedule-rollout']", title: "Queued rollouts keep future schedule changes organized", body: "If a schedule should start later, it stays here until the effective date instead of changing the employee live shift immediately." },
+            { selector: "[data-tour-id='employee-table']", title: "The employee table is where you pick who changes", body: "Use the checkboxes to choose employees for bulk schedule work, then use edit actions when one employee needs a manual update." }
+        ],
+        admin_data_tools: [
+            { selector: "[data-tour-id='nav-admin']", title: "Data Tools lives under Admin", body: "This is the page for recovery help, safe cleanup, suspicious-row repair, and the guarded reset tools." },
+            { selector: "[data-tour-id='recovery-center']", title: "Start with recovery before destructive work", body: "Download the recovery pack or external backup first so cleanup, reset, or troubleshooting does not leave you without a reference copy." },
+            { selector: "[data-tour-id='log-cleanup']", title: "Log cleanup trims operational clutter only", body: "Weekly, monthly, and custom cleanup only target lighter operational logs so attendance, payroll, and employee records stay intact." },
+            { selector: "[data-tour-id='go-live-reset']", title: "Go-Live Reset is the serious clean-slate action", body: "This reset clears live operational history but keeps employee accounts, barcodes, schedules, rates, and company settings." },
+            { selector: "[data-tour-id='suspicious-attendance']", title: "Suspicious rows can be repaired inside the app", body: "Use this section when an attendance row looks impossible or out of order and you need to fix it without touching the database manually." }
         ],
         dashboard: [
             { selector: "[data-tour-id='nav-dashboard']", title: "Your dashboard is home base", body: "This page summarizes your shift, break use, work hours, and recent updates in one place." },
             { selector: "[data-tour-id='employee-summary']", title: "Check your live shift status here", body: "This summary shows whether you are timed in, on break, timed out, and how your totals look today." },
             { selector: "[data-tour-id='employee-today-panel']", title: "Review today's timeline", body: "Use this section to confirm your time in, time out, break sessions, and work summary for the current shift." },
+            { selector: "[data-tour-id='nav-payslips']", title: "Payslips now have their own history page", body: "Open Payslips to review released payroll periods, check deduction details, and download a clean PDF copy." },
+            { selector: "[data-tour-id='nav-calendar']", title: "Calendar turns attendance into a monthly view", body: "Use Calendar to check worked days, absences, leave, suspension, and lateness without opening each day one by one." },
             { selector: "[data-tour-id='nav-history']", title: "History keeps your past records", body: "Use History to review earlier shifts, work hours, break details, and uploaded proofs." },
-            { selector: "[data-tour-id='nav-corrections']", title: "Corrections is for requests", body: "Submit missed punches, undertime, sick leave, or paid leave requests here whenever something needs approval." },
+            { selector: "[data-tour-id='nav-corrections']", title: "Corrections is now a full tracker", body: "Submit missed punches, undertime, sick leave, or paid leave requests here and then track each one through review." },
+            { selector: "[data-tour-id='nav-profile']", title: "Profile keeps your account details together", body: "Open Profile when you need to review your employee information, image, and personal account details." },
             { selector: "[data-tour-id='nav-notifications']", title: "Notifications keep you updated", body: "Open Notifications to see approvals, attendance alerts, and other important account updates." }
+        ],
+        employee_payroll_history: [
+            { selector: "[data-tour-id='nav-payslips']", title: "Payslips is your payroll home", body: "This page shows released payroll only, so you only see finalized periods that include your account." },
+            { selector: "[data-tour-id='employee-payslip-history']", title: "Released history keeps each payroll period together", body: "Each card shows the final pay, pay-period range, and the released snapshot used to generate your payslip." },
+            { selector: "[data-tour-id='employee-payslip-actions']", title: "Open or download each payslip from here", body: "Use Open Payslip for the on-screen breakdown and Download PDF when you need a shareable or printable copy." }
+        ],
+        employee_payslip: [
+            { selector: "[data-tour-id='nav-payslips']", title: "You are viewing the released payslip itself", body: "This page is the detailed released snapshot for one payroll period and is safe to print or export as PDF." },
+            { selector: "[data-tour-id='payslip-summary']", title: "The top cards show the released headline totals", body: "Check final pay, regular pay, overtime pay, and adjustment balance first before reading the line-by-line breakdown below." },
+            { selector: "[data-tour-id='payslip-breakdown']", title: "The breakdown lists what affected this salary", body: "Allowances and deductions shown here come from the released payroll snapshot so the employee can see what each amount was for." }
+        ],
+        employee_attendance_calendar: [
+            { selector: "[data-tour-id='nav-calendar']", title: "Calendar turns attendance into a monthly map", body: "Use this page when you want a fast month-level view instead of opening each attendance record one at a time." },
+            { selector: "[data-tour-id='calendar-summary']", title: "The top counts summarize the month", body: "These cards total worked, late, leave, absent, and suspension days using the same records used elsewhere in the app." },
+            { selector: "[data-tour-id='calendar-grid']", title: "The month grid shows what happened each day", body: "Review the labels inside each day to understand attendance status, leave, or schedule context at a glance." }
+        ],
+        employee_corrections: [
+            { selector: "[data-tour-id='nav-corrections']", title: "Corrections is now a tracker, not just a form", body: "This page combines request submission with a timeline so you can see what is pending, approved, or rejected." },
+            { selector: "[data-tour-id='correction-summary']", title: "Read the request counts first", body: "These cards quickly tell you how many requests are pending, approved, or rejected before you scroll through details." },
+            { selector: "[data-tour-id='correction-request-form']", title: "Submit Request handles punches, undertime, and leave", body: "Use this form for missed attendance, wrong break times, undertime, and leave requests, including multi-day leave." },
+            { selector: "[data-tour-id='correction-request-list']", title: "My Requests shows the review timeline", body: "Each request card keeps your submitted details, the current record, the review steps, and any admin notes in one place." }
         ]
     };
-    const steps = tourDefinitions[endpoint] || [];
+    const steps = (tourDefinitions[endpoint] || []).filter(function (step) {
+        return document.querySelector(step.selector);
+    });
     let activeElement = null;
     let currentStepIndex = 0;
 
@@ -1418,18 +1506,30 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     function positionCard(target) {
+        const viewportPadding = window.innerWidth <= 760 ? 14 : 20;
+        const compactHeight = window.innerHeight < 760;
         const rect = target.getBoundingClientRect();
-        const cardWidth = Math.min(360, window.innerWidth - 28);
-        let top = rect.bottom + 18;
-        let left = Math.min(rect.left, window.innerWidth - cardWidth - 14);
-        if (top + card.offsetHeight > window.innerHeight - 14) {
-            top = Math.max(14, rect.top - card.offsetHeight - 18);
+        const dockLeft = window.innerWidth > 920 && rect.left > (window.innerWidth * 0.5);
+
+        card.style.top = "auto";
+        card.style.bottom = `${compactHeight ? 14 : 20}px`;
+
+        if (window.innerWidth <= 760) {
+            card.style.left = `${viewportPadding}px`;
+            card.style.right = `${viewportPadding}px`;
+            card.style.width = "auto";
+            return;
         }
-        if (left < 14) {
-            left = 14;
+
+        const cardWidth = Math.min(392, window.innerWidth - (viewportPadding * 2));
+        card.style.width = `${cardWidth}px`;
+        if (dockLeft) {
+            card.style.left = `${viewportPadding}px`;
+            card.style.right = "auto";
+        } else {
+            card.style.right = `${viewportPadding}px`;
+            card.style.left = "auto";
         }
-        card.style.top = `${top}px`;
-        card.style.left = `${left}px`;
     }
 
     function renderStep() {
@@ -1441,9 +1541,10 @@ document.addEventListener("DOMContentLoaded", function () {
         clearHighlight();
         activeElement = target;
         activeElement.classList.add("tour-highlight");
-        activeElement.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+        activeElement.scrollIntoView({ behavior: "smooth", block: window.innerWidth <= 760 ? "start" : "center", inline: "nearest" });
         title.textContent = step.title;
         body.textContent = step.body;
+        body.scrollTop = 0;
         progress.textContent = `Step ${currentStepIndex + 1} of ${steps.length}`;
         backBtn.disabled = currentStepIndex === 0;
         nextBtn.textContent = currentStepIndex === steps.length - 1 ? "Finish" : "Next";

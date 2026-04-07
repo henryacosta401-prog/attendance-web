@@ -76,7 +76,7 @@
         </div>
     </div>
 
-    <section class="card soft">
+    <section class="card soft" data-tour-id="employee-payslip-history">
         <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;">
             <div>
                 <div class="section-title" style="margin-bottom:0;">Released Payroll History</div>
@@ -125,7 +125,7 @@
                             <div class="small muted">Prepared by {{ run.created_by_name }}</div>
                         </div>
 
-                        <div class="payslip-history-actions" style="margin-top:18px;">
+                        <div class="payslip-history-actions" style="margin-top:18px;" data-tour-id="employee-payslip-actions">
                             <a class="btn btn-primary" href="{{ url_for('employee_payslip', payroll_run_id=run.payroll_run_id) }}">Open Payslip</a>
                             <a class="btn btn-gray" href="{{ url_for('download_employee_payslip_pdf', payroll_run_id=run.payroll_run_id) }}">Download PDF</a>
                         </div>

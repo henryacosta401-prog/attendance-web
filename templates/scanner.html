@@ -1184,6 +1184,7 @@
             state.isLocked = true;
             state.scanInFlight = false;
             clearTimeout(state.inactivityTimer);
+            setSelectedAction("time_in");
             stopCamera();
             lockOverlay.classList.add("is-open");
             lockMessage.textContent = message;
@@ -1339,7 +1340,7 @@
             return labels[actionType] || "Attendance Updated";
         }
 
-        function resetEmployeeDisplay() {
+        function resetEmployeeDisplay(resetAction = false) {
             state.scanInFlight = false;
             employeeCard.classList.remove("is-success", "is-error");
             employeeName.textContent = "Ready for Attendance";
@@ -1355,7 +1356,11 @@
             metaEmployee.textContent = "-";
             statusBanner.className = "status-banner";
             statusBanner.textContent = "Waiting for barcode scan...";
-            resetInactivityTimer();
+            if (resetAction) {
+                setSelectedAction("time_in");
+            } else {
+                resetInactivityTimer();
+            }
         }
 
         function showEmployee(payload, ok) {
@@ -1390,7 +1395,7 @@
 
             clearTimeout(state.resetTimer);
             state.resetTimer = setTimeout(() => {
-                resetEmployeeDisplay();
+                resetEmployeeDisplay(true);
                 scannerInput.value = "";
                 keepScannerFocused();
             }, 2600);

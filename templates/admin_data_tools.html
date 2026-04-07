@@ -10,7 +10,7 @@
 </div>
 
 <div class="grid grid-2" style="align-items:start;">
-    <div class="card">
+    <div class="card" data-tour-id="recovery-center">
         <h3 style="margin-top:0;">Backup and Recovery</h3>
         <div class="grid grid-4" style="margin-bottom:16px;">
             <div class="stat-box">
@@ -90,7 +90,7 @@
     </div>
 </div>
 
-<div class="card" style="margin-top:18px;">
+<div class="card" style="margin-top:18px;" data-tour-id="log-cleanup">
     <h3 style="margin-top:0;">Log Cleanup</h3>
     <p class="muted">Use this to reduce old operational logs without deleting important business records like attendance, payroll, employee accounts, incidents, or disciplinary history.</p>
 
@@ -155,7 +155,7 @@
     <div class="small muted" style="margin-top:10px;">The selected range is inclusive from the start date through the end date.</div>
 </div>
 
-<div class="card" style="margin-top:18px; border-color:rgba(239,68,68,0.28); background:linear-gradient(180deg, rgba(78, 20, 20, 0.18), rgba(255,255,255,0.04));">
+<div class="card" style="margin-top:18px; border-color:rgba(239,68,68,0.28); background:linear-gradient(180deg, rgba(78, 20, 20, 0.18), rgba(255,255,255,0.04));" data-tour-id="go-live-reset">
     <h3 style="margin-top:0;">Go-Live Reset</h3>
     <p class="muted">Use this only when you are ready to start permanent use with clean records.</p>
     <div class="small muted" style="margin-top:10px;">
@@ -190,7 +190,7 @@
     </form>
 </div>
 
-<div class="card" style="margin-top:18px;">
+<div class="card" style="margin-top:18px;" data-tour-id="suspicious-attendance">
     <h3 style="margin-top:0;">Suspicious Attendance Rows</h3>
     {% if candidates %}
         <div style="display:grid; gap:16px;">

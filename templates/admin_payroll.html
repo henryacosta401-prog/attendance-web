@@ -184,7 +184,7 @@
         <a class="payroll-jump-link" href="#payroll-one-time-adjustments">One-Time Adjustments</a>
     </div>
 
-    <div class="payroll-stats">
+    <div class="payroll-stats" data-tour-id="payroll-overview">
         <div class="payroll-card"><div class="payroll-label">Final Payroll</div><div class="payroll-value">{{ format_currency(stats.total_final_pay) }}</div><div class="payroll-note">Gross + overtime + allowances - deductions</div></div>
         <div class="payroll-card"><div class="payroll-label">Gross Payroll</div><div class="payroll-value">{{ format_currency(stats.total_gross) }}</div><div class="payroll-note">Base pay from recorded worked hours</div></div>
         <div class="payroll-card"><div class="payroll-label">Overtime Pay</div><div class="payroll-value">{{ format_currency(stats.total_overtime_pay) }}</div><div class="payroll-note">Using {{ "%.2f"|format(stats.overtime_multiplier) }}x overtime multiplier</div></div>
@@ -194,7 +194,7 @@
     </div>
 
     <div class="payroll-grid">
-        <section class="payroll-panel" id="payroll-build">
+        <section class="payroll-panel" id="payroll-build" data-tour-id="payroll-build">
             <h2 style="margin:0;color:#f8fbff;">Build Payroll View</h2>
             <p class="payroll-subtitle" style="margin-top:6px;">Pick the period and scope first, then save or release exactly the payroll view you are looking at.</p>
             <form method="GET" class="payroll-toolbar">
@@ -279,7 +279,7 @@
             </form>
         </section>
 
-        <section class="payroll-run-card" id="payroll-current-run">
+        <section class="payroll-run-card" id="payroll-current-run" data-tour-id="payroll-current-run">
             <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
                 <div>
                     <h2 style="margin:0;color:#f8fbff;">Current Payroll Run</h2>
@@ -402,7 +402,7 @@
         </section>
     </div>
 
-    <section class="payroll-panel" id="payroll-table-section">
+    <section class="payroll-panel" id="payroll-table-section" data-tour-id="payroll-table-section">
         <h2 style="margin:0;color:#f8fbff;">Payroll Table</h2>
         <p class="payroll-subtitle" style="margin-top:6px;">Final pay is the amount currently ready for export or release in this payroll view.</p>
         <div class="payroll-table-wrap">
@@ -464,7 +464,7 @@
         </div>
     </section>
 
-    <section class="payroll-adjustment-card" id="payroll-recurring-rules">
+    <section class="payroll-adjustment-card" id="payroll-recurring-rules" data-tour-id="payroll-recurring-rules">
         <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
             <div>
                 <h2 style="margin:0;color:#f8fbff;">Recurring Payroll Rules</h2>
@@ -594,7 +594,7 @@
         </div>
     </section>
 
-    <section class="payroll-adjustment-card" id="payroll-one-time-adjustments">
+    <section class="payroll-adjustment-card" id="payroll-one-time-adjustments" data-tour-id="payroll-one-time-adjustments">
         <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
             <div>
                 <h2 style="margin:0;color:#f8fbff;">One-Time Adjustments</h2>

@@ -239,7 +239,7 @@
         </div>
     </div>
 
-    <section class="correction-stats">
+    <section class="correction-stats" data-tour-id="correction-summary">
         <div class="correction-stat-card">
             <div class="correction-stat-label">Total Requests</div>
             <div class="correction-stat-value">{{ request_summary.total }}</div>
@@ -259,7 +259,7 @@
     </section>
 
     <div class="correction-layout">
-        <section class="correction-panel">
+        <section class="correction-panel" data-tour-id="correction-request-form">
             <div class="section-title" style="margin-bottom:10px;">Submit Request</div>
             <div class="section-subtitle" style="margin-bottom:16px;">Use this form for missed attendance, wrong break times, undertime, or leave requests. Leave requests can cover multiple days.</div>
 
@@ -327,7 +327,7 @@
             </form>
         </section>
 
-        <section class="correction-panel">
+        <section class="correction-panel" data-tour-id="correction-request-list">
             <div class="section-title" style="margin-bottom:10px;">My Requests</div>
             <div class="section-subtitle" style="margin-bottom:16px;">Each request shows what you submitted, what is currently on record, and where the review stands.</div>
 
