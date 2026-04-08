@@ -68,7 +68,7 @@
                 <select class="input" name="department">
                     <option value="">All Departments</option>
                     {% for dept in departments %}
-                        <option value="{{ dept.department }}" {% if department == dept.department %}selected{% endif %}>{{ dept.department }}</option>
+                        <option value="{{ dept }}" {% if department == dept %}selected{% endif %}>{{ dept }}</option>
                     {% endfor %}
                 </select>
             </div>
