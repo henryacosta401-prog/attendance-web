@@ -54,6 +54,20 @@ from attendance_core.reporting import (
     build_report_highlights,
 )
 from attendance_core.scanner import resolve_client_ip
+from attendance_core.workflows import (
+    build_correction_change_summary,
+    build_schedule_special_rule_label,
+    calculate_suspension_end_date,
+    describe_request_review_result,
+    expand_request_dates,
+    expand_suspension_dates,
+    format_request_date_range,
+    normalize_request_date_range,
+    normalize_schedule_special_rule_type,
+    resolve_correction_datetimes,
+    schedule_preset_matches_department,
+    split_datetime_to_time,
+)
 
 
 class ArchitectureHelpersTestCase(unittest.TestCase):
@@ -285,6 +299,69 @@ class ArchitectureHelpersTestCase(unittest.TestCase):
     def test_resolve_client_ip(self):
         self.assertEqual(resolve_client_ip(" 127.0.0.1 "), "127.0.0.1")
         self.assertEqual(resolve_client_ip(""), "unknown")
+
+    def test_schedule_special_rule_helpers(self):
+        self.assertEqual(normalize_schedule_special_rule_type("rest_day"), "rest_day")
+        self.assertEqual(normalize_schedule_special_rule_type("bad"), "holiday")
+        self.assertEqual(build_schedule_special_rule_label("holiday", " Company Holiday "), "Company Holiday")
+
+    def test_schedule_preset_matches_department(self):
+        self.assertTrue(schedule_preset_matches_department({"department_scope": ""}, "Ops"))
+        self.assertTrue(schedule_preset_matches_department({"department_scope": "ops"}, "Ops"))
+        self.assertFalse(schedule_preset_matches_department({"department_scope": "HR"}, "Ops"))
+
+    def test_request_date_helpers(self):
+        self.assertEqual(
+            normalize_request_date_range("2026-04-10", "2026-04-08"),
+            ("2026-04-08", "2026-04-10"),
+        )
+        self.assertEqual(
+            expand_request_dates("2026-04-08", "2026-04-10"),
+            ["2026-04-08", "2026-04-09", "2026-04-10"],
+        )
+        self.assertEqual(
+            format_request_date_range("2026-04-08", "2026-04-10"),
+            "2026-04-08 to 2026-04-10",
+        )
+
+    def test_calculate_and_expand_suspension_dates(self):
+        self.assertEqual(calculate_suspension_end_date("2026-04-08", 3), "2026-04-10")
+        self.assertEqual(
+            expand_suspension_dates(
+                {"action_type": "Suspension", "action_date": "2026-04-08", "end_date": "2026-04-10"}
+            ),
+            ["2026-04-08", "2026-04-09", "2026-04-10"],
+        )
+
+    def test_correction_workflow_helpers(self):
+        resolved = resolve_correction_datetimes(
+            "2026-04-07",
+            time_in_value="16:00",
+            break_start_value="20:00",
+            break_end_value="20:15",
+            time_out_value="00:00",
+        )
+        self.assertEqual(
+            resolved,
+            (
+                "2026-04-07 16:00:00",
+                "2026-04-07 20:00:00",
+                "2026-04-07 20:15:00",
+                "2026-04-08 00:00:00",
+            ),
+        )
+        self.assertEqual(split_datetime_to_time("2026-04-07 16:00:00"), "16:00")
+        self.assertEqual(
+            build_correction_change_summary(
+                {"time_in": "2026-04-07 16:00:00", "time_out": "2026-04-08 00:00:00"},
+                {"time_in": "2026-04-07 17:00:00", "time_out": "2026-04-08 01:00:00"},
+            ),
+            "Time In: 16:00 -> 17:00; Time Out: 00:00 -> 01:00",
+        )
+        self.assertEqual(
+            describe_request_review_result("Paid Leave", "2026-04-08"),
+            "Paid Leave approved for 2026-04-08.",
+        )
 
     def test_is_production_environment_detects_render(self):
         with patch.dict("os.environ", {"RENDER": "true"}, clear=True):

@@ -114,6 +114,20 @@ from attendance_core.reporting import (
     build_report_highlights,
 )
 from attendance_core.scanner import resolve_client_ip
+from attendance_core.workflows import (
+    build_correction_change_summary,
+    build_schedule_special_rule_label,
+    calculate_suspension_end_date,
+    describe_request_review_result,
+    expand_request_dates,
+    expand_suspension_dates,
+    format_request_date_range,
+    normalize_request_date_range,
+    normalize_schedule_special_rule_type,
+    resolve_correction_datetimes,
+    schedule_preset_matches_department,
+    split_datetime_to_time,
+)
 
 # Optional Postgres support
 POSTGRES_ENABLED = False
@@ -2069,15 +2083,6 @@ def create_incident(user_id, error_type, report_date, message, admin_id, inciden
     ), commit=True)
 
 
-def calculate_suspension_end_date(action_date, duration_days):
-    try:
-        start_date = datetime.strptime(action_date, "%Y-%m-%d").date()
-    except Exception:
-        return ""
-    total_days = max(int(duration_days or 1), 1)
-    return (start_date + timedelta(days=total_days - 1)).strftime("%Y-%m-%d")
-
-
 def create_disciplinary_action(user_id, action_type, action_date, details, created_by, duration_days=1):
     duration_days = max(int(duration_days or 1), 1)
     end_date = calculate_suspension_end_date(action_date, duration_days) if action_type == "Suspension" else action_date
@@ -2501,17 +2506,6 @@ def invalidate_schedule_special_rule_cache():
     _options_cache["schedule_special_dates"] = {"stamp": 0, "rows": []}
 
 
-def normalize_schedule_special_rule_type(rule_type):
-    raw_value = (rule_type or "").strip().lower()
-    return raw_value if raw_value in SCHEDULE_SPECIAL_RULE_LABELS else "holiday"
-
-
-def build_schedule_special_rule_label(rule_type, custom_label=""):
-    default_label = SCHEDULE_SPECIAL_RULE_LABELS[normalize_schedule_special_rule_type(rule_type)]
-    custom_text = (custom_label or "").strip()
-    return custom_text or default_label
-
-
 def enrich_schedule_special_rule(row):
     item = dict(row)
     item["rule_type"] = normalize_schedule_special_rule_type(item.get("rule_type"))
@@ -2620,15 +2614,6 @@ def resolve_schedule_assignment(form, fallback_user=None):
         "break_limit_minutes": parse_break_limit_minutes(form.get("break_limit_minutes", default_break_limit)),
         "schedule_source_label": "Custom Manual Schedule",
     }
-
-
-def schedule_preset_matches_department(preset, department_name):
-    if not preset:
-        return True
-    scope = (preset.get("department_scope") or "").strip().lower() if hasattr(preset, "get") else str(preset["department_scope"] or "").strip().lower()
-    if not scope:
-        return True
-    return scope == (department_name or "").strip().lower()
 
 
 def apply_schedule_history_snapshot(base_user, history_row):
@@ -3925,78 +3910,6 @@ def get_matching_attendance_context_for_request(user_id, work_date, request_type
     return None, None
 
 
-def resolve_correction_datetimes(
-    work_date,
-    time_in_value="",
-    break_start_value="",
-    break_end_value="",
-    time_out_value="",
-    existing_time_in=None,
-    existing_break_start=None,
-    existing_break_end=None,
-    existing_time_out=None,
-    use_existing_values=True
-):
-    final_time_in = combine_work_date_and_time(work_date, time_in_value) if time_in_value else None
-    resolved_time_in = final_time_in if time_in_value else (existing_time_in if use_existing_values else None)
-
-    break_start_reference = resolved_time_in or existing_break_start
-    final_break_start = (
-        combine_work_date_and_time(work_date, break_start_value, not_before=break_start_reference)
-        if break_start_value else None
-    )
-    resolved_break_start = final_break_start if break_start_value else (existing_break_start if use_existing_values else None)
-
-    break_end_reference = resolved_break_start or existing_break_end or break_start_reference
-    final_break_end = (
-        combine_work_date_and_time(work_date, break_end_value, not_before=break_end_reference)
-        if break_end_value else None
-    )
-    resolved_break_end = final_break_end if break_end_value else (existing_break_end if use_existing_values else None)
-
-    time_out_reference = resolved_break_end or resolved_break_start or resolved_time_in or existing_time_out
-    final_time_out = (
-        combine_work_date_and_time(work_date, time_out_value, not_before=time_out_reference)
-        if time_out_value else None
-    )
-    resolved_time_out = final_time_out if time_out_value else (existing_time_out if use_existing_values else None)
-
-    return resolved_time_in, resolved_break_start, resolved_break_end, resolved_time_out
-
-
-def split_datetime_to_time(datetime_str):
-    if not datetime_str:
-        return ""
-    try:
-        return datetime.strptime(datetime_str, "%Y-%m-%d %H:%M:%S").strftime("%H:%M")
-    except Exception:
-        return ""
-
-
-def build_correction_change_summary(before_values, after_values):
-    labels = [
-        ("time_in", "Time In"),
-        ("break_start", "Break Start"),
-        ("break_end", "Break End"),
-        ("time_out", "Time Out"),
-    ]
-    parts = []
-    for key, label in labels:
-        before_text = split_datetime_to_time(before_values.get(key)) or "-"
-        after_text = split_datetime_to_time(after_values.get(key)) or "-"
-        if before_text != after_text:
-            parts.append(f"{label}: {before_text} -> {after_text}")
-    return "; ".join(parts) if parts else "No attendance times changed."
-
-
-def describe_request_review_result(request_type, work_date, requested_time_out=""):
-    if request_type in LEAVE_REQUEST_TYPES:
-        return f"{request_type} approved for {work_date}."
-    if request_type == "Undertime":
-        return f"Undertime request approved for {work_date}" + (f" at {requested_time_out}." if requested_time_out else ".")
-    return ""
-
-
 def calculate_late_info(time_in_str, shift_start):
     if not time_in_str:
         return 0, 0
@@ -4583,36 +4496,10 @@ def get_leave_usage_rows(user_id=None, year=None, department=""):
     return rows
 
 
-def normalize_request_date_range(work_date, end_work_date=""):
-    start_date = parse_iso_date(work_date)
-    end_date = parse_iso_date(end_work_date, start_date)
-    if not start_date:
-        raise ValueError("Please choose a valid leave date.")
-    if not end_date:
-        end_date = start_date
-    if end_date < start_date:
-        start_date, end_date = end_date, start_date
-    return start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")
-
-
-def expand_request_dates(work_date, end_work_date=""):
-    start_str, end_str = normalize_request_date_range(work_date, end_work_date)
-    start_date = parse_iso_date(start_str)
-    end_date = parse_iso_date(end_str, start_date)
-    total_days = (end_date - start_date).days
-    return [(start_date + timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(total_days + 1)]
-
-
 def get_request_day_count(row_or_work_date, end_work_date=""):
     if isinstance(row_or_work_date, dict):
         return len(expand_request_dates(row_or_work_date.get("work_date"), row_or_work_date.get("end_work_date")))
     return len(expand_request_dates(row_or_work_date, end_work_date))
-
-
-def format_request_date_range(work_date, end_work_date=""):
-    start_str, end_str = normalize_request_date_range(work_date, end_work_date)
-    return start_str if start_str == end_str else f"{start_str} to {end_str}"
-
 
 def has_overlapping_leave_request(user_id, request_type, work_date, end_work_date, exclude_id=None):
     start_str, end_str = normalize_request_date_range(work_date, end_work_date)
@@ -4732,23 +4619,6 @@ def get_suspension_for_date(user_id, work_date):
           AND COALESCE(end_date, action_date) >= ?
         ORDER BY id DESC LIMIT 1
     """, (user_id, work_date, work_date))
-
-
-def expand_suspension_dates(row):
-    if not row:
-        return []
-    row = dict(row)
-    if row.get("action_type") != "Suspension":
-        return []
-    try:
-        start_date = datetime.strptime(row["action_date"], "%Y-%m-%d").date()
-        end_date = datetime.strptime((row.get("end_date") or row["action_date"]), "%Y-%m-%d").date()
-    except Exception:
-        return []
-    if end_date < start_date:
-        end_date = start_date
-    total_days = (end_date - start_date).days
-    return [(start_date + timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(total_days + 1)]
 
 
 def get_pending_leave_requests(user_id=None, department="", year=None):
