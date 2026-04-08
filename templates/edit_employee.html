@@ -114,10 +114,15 @@
     {% for preset in schedule_presets %}
         <option
             value="{{ preset.id }}"
+            data-preset-name="{{ preset.name }}"
             data-schedule-days="{{ preset.schedule_days }}"
             data-shift-start="{{ preset.shift_start }}"
             data-shift-end="{{ preset.shift_end }}"
             data-break-limit="{{ preset.break_limit_minutes }}"
+            data-schedule-summary="{{ preset.schedule_summary }}"
+            data-window-summary="{{ preset.window_summary }}"
+            data-department-scope="{{ preset.department_scope or '' }}"
+            data-notes="{{ preset.notes or '' }}"
             {% if employee.schedule_preset_id == preset.id %}selected{% endif %}
         >
             {{ preset.name }}{% if preset.department_scope %} | {{ preset.department_scope }}{% endif %}
@@ -125,6 +130,7 @@
     {% endfor %}
 </select>
 <div class="small muted" style="margin-top:8px;">Choosing a preset will save its schedule, shift, and break limit for this employee.</div>
+<div class="js-schedule-preview small muted" style="margin-top:10px; padding:12px; border-radius:14px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);">{% if employee.schedule_preset_id %}Loading preset preview...{% else %}Choose a preset to preview the weekly schedule here.{% endif %}</div>
 
 <label style="display:block; margin-top:12px;">Work Schedule</label>
 <div class="schedule-picker js-schedule-day-picker">
@@ -177,7 +183,7 @@
             <input type="hidden" name="form_action" value="schedule_future_change">
 
             <label>Effective Date</label>
-            <input class="input" type="date" name="effective_date" required>
+            <input class="input" type="date" name="effective_date" min="{{ tomorrow_date }}" required>
 
             <label style="display:block; margin-top:12px;">Schedule Preset (Optional)</label>
             <select class="input js-schedule-preset-select" name="schedule_preset_id">
@@ -185,15 +191,21 @@
                 {% for preset in schedule_presets %}
                     <option
                         value="{{ preset.id }}"
+                        data-preset-name="{{ preset.name }}"
                         data-schedule-days="{{ preset.schedule_days }}"
                         data-shift-start="{{ preset.shift_start }}"
                         data-shift-end="{{ preset.shift_end }}"
                         data-break-limit="{{ preset.break_limit_minutes }}"
+                        data-schedule-summary="{{ preset.schedule_summary }}"
+                        data-window-summary="{{ preset.window_summary }}"
+                        data-department-scope="{{ preset.department_scope or '' }}"
+                        data-notes="{{ preset.notes or '' }}"
                     >
                         {{ preset.name }}{% if preset.department_scope %} | {{ preset.department_scope }}{% endif %}
                     </option>
                 {% endfor %}
             </select>
+            <div class="js-schedule-preview small muted" style="margin-top:10px; padding:12px; border-radius:14px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);">Choose a preset to preview the queued schedule here.</div>
 
             <label style="display:block; margin-top:12px;">Work Schedule</label>
             <div class="schedule-picker js-schedule-day-picker">
@@ -236,9 +248,11 @@
                             <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap;">
                                 <div>
                                     <div style="font-weight:800; color:#fff;">Effective {{ change.effective_date }}</div>
-                                    <div class="small muted" style="margin-top:6px;">{{ change.schedule_summary }} | {{ change.window_summary }} | Break {{ change.break_limit_minutes }} min</div>
+                                    <div class="small muted" style="margin-top:6px;">{% if change.countdown_label %}{{ change.countdown_label }} | {% endif %}{{ change.schedule_summary }} | {{ change.window_summary }} | Break {{ change.break_limit_minutes }} min</div>
                                     <div class="small muted" style="margin-top:4px;">
                                         {% if change.preset_name %}Preset: {{ change.preset_name }}{% else %}Custom queued schedule{% endif %}
+                                        | {{ change.department_label }} | {{ change.position_label }}
+                                        {% if change.created_by_name %} | Queued by {{ change.created_by_name }}{% endif %}
                                         {% if change.notes %} | {{ change.notes }}{% endif %}
                                     </div>
                                 </div>
@@ -281,16 +295,54 @@
 </div>
 <script>
 document.addEventListener("DOMContentLoaded", function () {
+    function escapeHtml(value) {
+        return String(value ?? "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;");
+    }
+
+    function buildPreviewMarkup(selectedOption, suffixLine) {
+        if (!selectedOption || !selectedOption.value) {
+            return "Choose a preset to preview the weekly schedule here.";
+        }
+        const lines = [
+            `<strong style="color:#fff;">${escapeHtml(selectedOption.dataset.presetName || selectedOption.textContent.trim())}</strong>`,
+            `${escapeHtml(selectedOption.dataset.scheduleSummary || "Schedule not available")} | ${escapeHtml(selectedOption.dataset.windowSummary || "Shift not available")}`,
+            `Break ${escapeHtml(selectedOption.dataset.breakLimit || "15")} minutes`
+        ];
+        if (selectedOption.dataset.departmentScope) {
+            lines.push(`Department scope: ${escapeHtml(selectedOption.dataset.departmentScope)}`);
+        }
+        if (selectedOption.dataset.notes) {
+            lines.push(escapeHtml(selectedOption.dataset.notes));
+        }
+        if (suffixLine) {
+            lines.push(escapeHtml(suffixLine));
+        }
+        return lines.join("<br>");
+    }
+
     document.querySelectorAll(".js-schedule-preset-select").forEach((presetSelect) => {
-        presetSelect.addEventListener("change", function () {
+        function applyPresetPreview() {
             const form = presetSelect.closest("form");
             if (!form) return;
             const selectedOption = presetSelect.options[presetSelect.selectedIndex];
-            if (!selectedOption || !selectedOption.value) return;
             const shiftStart = form.querySelector(".js-shift-start");
             const shiftEnd = form.querySelector(".js-shift-end");
             const breakLimit = form.querySelector(".js-break-limit");
+            const preview = form.querySelector(".js-schedule-preview");
             const checkboxes = form.querySelectorAll(".js-schedule-day-picker input[type='checkbox']");
+            if (!selectedOption || !selectedOption.value) {
+                if (preview) {
+                    preview.innerHTML = form.querySelector("input[name='form_action']")?.value === "schedule_future_change"
+                        ? "Choose a preset to preview the queued schedule here."
+                        : "Choose a preset to preview the weekly schedule here.";
+                }
+                return;
+            }
             if (shiftStart) shiftStart.value = selectedOption.dataset.shiftStart || shiftStart.value;
             if (shiftEnd) shiftEnd.value = selectedOption.dataset.shiftEnd || shiftEnd.value;
             if (breakLimit) breakLimit.value = selectedOption.dataset.breakLimit || breakLimit.value;
@@ -298,7 +350,20 @@ document.addEventListener("DOMContentLoaded", function () {
             checkboxes.forEach((checkbox) => {
                 checkbox.checked = selectedDays.has(checkbox.value);
             });
-        });
+            if (preview) {
+                preview.innerHTML = buildPreviewMarkup(
+                    selectedOption,
+                    form.querySelector("input[name='form_action']")?.value === "schedule_future_change"
+                        ? "This preview will be queued for the selected effective date."
+                        : "Selecting this preset will save these values for the employee."
+                );
+            }
+        }
+
+        presetSelect.addEventListener("change", applyPresetPreview);
+        if (presetSelect.value) {
+            applyPresetPreview();
+        }
     });
 });
 </script>

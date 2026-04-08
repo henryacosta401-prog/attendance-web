@@ -122,6 +122,11 @@ ADMIN_ROLE_PRESETS = {
     }
     for code, label, description, permissions in ADMIN_ROLE_PRESET_OPTIONS
 }
+SCHEDULE_SPECIAL_RULE_OPTIONS = [
+    ("holiday", "Holiday"),
+    ("rest_day", "Rest Day"),
+]
+SCHEDULE_SPECIAL_RULE_LABELS = {code: label for code, label in SCHEDULE_SPECIAL_RULE_OPTIONS}
 ADMIN_STATUS_CACHE_TTL_SECONDS = 12
 OPTION_CACHE_TTL_SECONDS = 60
 REPORT_CACHE_TTL_SECONDS = 90
@@ -969,6 +974,19 @@ def init_sqlite_db():
             FOREIGN KEY (applied_by) REFERENCES users (id)
         )
     """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS schedule_special_dates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            special_date TEXT NOT NULL UNIQUE,
+            rule_type TEXT NOT NULL DEFAULT 'holiday',
+            label TEXT NOT NULL,
+            notes TEXT,
+            created_by INTEGER,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (created_by) REFERENCES users (id)
+        )
+    """)
     existing_cols_schedule_presets = [row[1] for row in cursor.execute("PRAGMA table_info(schedule_presets)").fetchall()]
     if "department_scope" not in existing_cols_schedule_presets:
         cursor.execute("ALTER TABLE schedule_presets ADD COLUMN department_scope TEXT")
@@ -1032,6 +1050,21 @@ def init_sqlite_db():
         cursor.execute("ALTER TABLE employee_future_schedule_changes ADD COLUMN applied_at TEXT")
     if "applied_by" not in existing_cols_future_schedule_changes:
         cursor.execute("ALTER TABLE employee_future_schedule_changes ADD COLUMN applied_by INTEGER")
+    existing_cols_schedule_special_dates = [row[1] for row in cursor.execute("PRAGMA table_info(schedule_special_dates)").fetchall()]
+    if "special_date" not in existing_cols_schedule_special_dates:
+        cursor.execute("ALTER TABLE schedule_special_dates ADD COLUMN special_date TEXT")
+    if "rule_type" not in existing_cols_schedule_special_dates:
+        cursor.execute("ALTER TABLE schedule_special_dates ADD COLUMN rule_type TEXT NOT NULL DEFAULT 'holiday'")
+    if "label" not in existing_cols_schedule_special_dates:
+        cursor.execute("ALTER TABLE schedule_special_dates ADD COLUMN label TEXT")
+    if "notes" not in existing_cols_schedule_special_dates:
+        cursor.execute("ALTER TABLE schedule_special_dates ADD COLUMN notes TEXT")
+    if "created_by" not in existing_cols_schedule_special_dates:
+        cursor.execute("ALTER TABLE schedule_special_dates ADD COLUMN created_by INTEGER")
+    if "created_at" not in existing_cols_schedule_special_dates:
+        cursor.execute("ALTER TABLE schedule_special_dates ADD COLUMN created_at TEXT")
+    if "updated_at" not in existing_cols_schedule_special_dates:
+        cursor.execute("ALTER TABLE schedule_special_dates ADD COLUMN updated_at TEXT")
 
     cursor.execute("""
         INSERT OR IGNORE INTO company_settings (
@@ -1566,6 +1599,18 @@ def init_postgres_db():
                 applied_by INTEGER
             )
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS schedule_special_dates (
+                id SERIAL PRIMARY KEY,
+                special_date TEXT NOT NULL UNIQUE,
+                rule_type TEXT NOT NULL DEFAULT 'holiday',
+                label TEXT NOT NULL,
+                notes TEXT,
+                created_by INTEGER,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
         cur.execute("ALTER TABLE employee_future_schedule_changes ADD COLUMN IF NOT EXISTS department TEXT")
         cur.execute("ALTER TABLE employee_future_schedule_changes ADD COLUMN IF NOT EXISTS position TEXT")
         cur.execute("ALTER TABLE employee_future_schedule_changes ADD COLUMN IF NOT EXISTS schedule_days TEXT NOT NULL DEFAULT 'Mon,Tue,Wed,Thu,Fri'")
@@ -1578,6 +1623,13 @@ def init_postgres_db():
         cur.execute("ALTER TABLE employee_future_schedule_changes ADD COLUMN IF NOT EXISTS created_at TEXT")
         cur.execute("ALTER TABLE employee_future_schedule_changes ADD COLUMN IF NOT EXISTS applied_at TEXT")
         cur.execute("ALTER TABLE employee_future_schedule_changes ADD COLUMN IF NOT EXISTS applied_by INTEGER")
+        cur.execute("ALTER TABLE schedule_special_dates ADD COLUMN IF NOT EXISTS special_date TEXT")
+        cur.execute("ALTER TABLE schedule_special_dates ADD COLUMN IF NOT EXISTS rule_type TEXT NOT NULL DEFAULT 'holiday'")
+        cur.execute("ALTER TABLE schedule_special_dates ADD COLUMN IF NOT EXISTS label TEXT")
+        cur.execute("ALTER TABLE schedule_special_dates ADD COLUMN IF NOT EXISTS notes TEXT")
+        cur.execute("ALTER TABLE schedule_special_dates ADD COLUMN IF NOT EXISTS created_by INTEGER")
+        cur.execute("ALTER TABLE schedule_special_dates ADD COLUMN IF NOT EXISTS created_at TEXT")
+        cur.execute("ALTER TABLE schedule_special_dates ADD COLUMN IF NOT EXISTS updated_at TEXT")
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS attendance (
@@ -2438,6 +2490,95 @@ def get_schedule_presets(department_filter=""):
     return fetchall(sql, params)
 
 
+def invalidate_schedule_special_rule_cache():
+    _options_cache["schedule_special_dates"] = {"stamp": 0, "rows": []}
+
+
+def normalize_schedule_special_rule_type(rule_type):
+    raw_value = (rule_type or "").strip().lower()
+    return raw_value if raw_value in SCHEDULE_SPECIAL_RULE_LABELS else "holiday"
+
+
+def build_schedule_special_rule_label(rule_type, custom_label=""):
+    default_label = SCHEDULE_SPECIAL_RULE_LABELS[normalize_schedule_special_rule_type(rule_type)]
+    custom_text = (custom_label or "").strip()
+    return custom_text or default_label
+
+
+def enrich_schedule_special_rule(row):
+    item = dict(row)
+    item["rule_type"] = normalize_schedule_special_rule_type(item.get("rule_type"))
+    item["rule_type_label"] = SCHEDULE_SPECIAL_RULE_LABELS[item["rule_type"]]
+    item["label"] = build_schedule_special_rule_label(item["rule_type"], item.get("label"))
+    item["notes"] = (item.get("notes") or "").strip()
+    item["display_label"] = item["label"]
+    effective_date = parse_iso_date(item.get("special_date"))
+    if effective_date:
+        item["date_label"] = effective_date.strftime("%b %d, %Y")
+        day_delta = (effective_date - now_dt().date()).days
+        item["days_until"] = day_delta
+        if day_delta == 0:
+            item["countdown_label"] = "Today"
+        elif day_delta == 1:
+            item["countdown_label"] = "Tomorrow"
+        elif day_delta > 1:
+            item["countdown_label"] = f"In {day_delta} days"
+        else:
+            item["countdown_label"] = f"{abs(day_delta)} day(s) ago"
+    else:
+        item["date_label"] = item.get("special_date") or ""
+        item["days_until"] = None
+        item["countdown_label"] = ""
+    return item
+
+
+def get_schedule_special_dates(include_past=False, limit=60):
+    rows = get_cached_rows(
+        "schedule_special_dates",
+        OPTION_CACHE_TTL_SECONDS,
+        lambda: [dict(row) for row in fetchall("""
+            SELECT ssd.*, creator.full_name AS created_by_name
+            FROM schedule_special_dates ssd
+            LEFT JOIN users creator ON creator.id = ssd.created_by
+            ORDER BY ssd.special_date ASC, ssd.id ASC
+        """)]
+    )
+    today_value = today_str()
+    filtered = []
+    for row in rows:
+        if not include_past and row.get("special_date") and row["special_date"] < today_value:
+            continue
+        filtered.append(enrich_schedule_special_rule(row))
+    if limit:
+        return filtered[:max(int(limit or 1), 1)]
+    return filtered
+
+
+def get_schedule_special_rule_for_date(date_str):
+    lookup = None
+    if has_app_context():
+        lookup = getattr(g, "_schedule_special_rule_lookup", None)
+        if lookup is None:
+            lookup = {row["special_date"]: row for row in get_schedule_special_dates(include_past=True, limit=0)}
+            g._schedule_special_rule_lookup = lookup
+    else:
+        lookup = {row["special_date"]: row for row in get_schedule_special_dates(include_past=True, limit=0)}
+    return lookup.get(date_str)
+
+
+def get_schedule_special_rule_map(date_from="", date_to=""):
+    rows = get_schedule_special_dates(include_past=True, limit=0)
+    result = {}
+    for row in rows:
+        special_date = row.get("special_date") or ""
+        if date_from and special_date < date_from:
+            continue
+        if date_to and special_date > date_to:
+            continue
+        result[special_date] = row
+    return result
+
+
 def get_schedule_preset(preset_id):
     raw_value = str(preset_id or "").strip()
     if not raw_value.isdigit():
@@ -2751,8 +2892,72 @@ def get_future_schedule_changes(user_id=None, include_applied=False, limit=50):
         item["schedule_summary"] = get_schedule_summary(item.get("schedule_days") or DEFAULT_SCHEDULE_DAYS)
         item["window_summary"] = f"{item.get('shift_start') or DEFAULT_SHIFT_START} - {item.get('shift_end') or DEFAULT_SHIFT_END}"
         item["effective_label"] = item.get("effective_date") or ""
+        effective_date_value = parse_iso_date(item.get("effective_date"))
+        if effective_date_value:
+            day_delta = (effective_date_value - now_dt().date()).days
+            item["days_until_effective"] = day_delta
+            if day_delta == 0:
+                item["countdown_label"] = "Applies today"
+            elif day_delta == 1:
+                item["countdown_label"] = "Applies tomorrow"
+            elif day_delta > 1:
+                item["countdown_label"] = f"Applies in {day_delta} days"
+            else:
+                item["countdown_label"] = f"Effective {abs(day_delta)} day(s) ago"
+        else:
+            item["days_until_effective"] = None
+            item["countdown_label"] = ""
+        item["department_label"] = item.get("department") or item.get("current_department") or "Unassigned"
+        item["position_label"] = item.get("position") or item.get("current_position") or "Employee"
         items.append(item)
     return items
+
+
+def build_future_schedule_change_map(user_ids):
+    cleaned_ids = []
+    seen_ids = set()
+    for raw_id in user_ids or []:
+        try:
+            parsed = int(raw_id)
+        except Exception:
+            continue
+        if parsed in seen_ids:
+            continue
+        seen_ids.add(parsed)
+        cleaned_ids.append(parsed)
+    if not cleaned_ids:
+        return {}
+
+    placeholders = ", ".join(["?"] * len(cleaned_ids))
+    rows = fetchall(f"""
+        SELECT fsc.*, preset.name AS preset_name
+        FROM employee_future_schedule_changes fsc
+        LEFT JOIN schedule_presets preset ON preset.id = fsc.schedule_preset_id
+        WHERE fsc.applied_at IS NULL
+          AND fsc.user_id IN ({placeholders})
+        ORDER BY fsc.user_id ASC, fsc.effective_date ASC, fsc.id ASC
+    """, tuple(cleaned_ids))
+
+    change_map = {}
+    for row in rows:
+        item = dict(row)
+        item["schedule_summary"] = get_schedule_summary(item.get("schedule_days") or DEFAULT_SCHEDULE_DAYS)
+        item["window_summary"] = f"{item.get('shift_start') or DEFAULT_SHIFT_START} - {item.get('shift_end') or DEFAULT_SHIFT_END}"
+        effective_date_value = parse_iso_date(item.get("effective_date"))
+        if effective_date_value:
+            day_delta = (effective_date_value - now_dt().date()).days
+            if day_delta == 0:
+                item["countdown_label"] = "Today"
+            elif day_delta == 1:
+                item["countdown_label"] = "Tomorrow"
+            elif day_delta > 1:
+                item["countdown_label"] = f"In {day_delta} days"
+            else:
+                item["countdown_label"] = f"{abs(day_delta)} day(s) ago"
+        else:
+            item["countdown_label"] = ""
+        change_map.setdefault(int(item["user_id"]), item)
+    return change_map
 
 
 def queue_future_schedule_change(user_row, schedule_assignment, effective_date, actor_id=None, notes="", department=None, position=None, commit=False):
@@ -3539,13 +3744,16 @@ def get_schedule_code_for_date(date_str):
 
 
 def is_scheduled_on_date(user_row, date_str):
+    special_rule = get_schedule_special_rule_for_date(date_str)
+    if special_rule and special_rule.get("rule_type") in {"holiday", "rest_day"}:
+        return False
     return get_schedule_code_for_date(date_str) in get_schedule_day_codes(
         user_row["schedule_days"] if user_row else DEFAULT_SCHEDULE_DAYS
     )
 
 
 def is_scheduled_today(user_row):
-    return get_today_schedule_code() in get_schedule_day_codes(user_row["schedule_days"] if user_row else DEFAULT_SCHEDULE_DAYS)
+    return is_scheduled_on_date(user_row, today_str())
 
 
 def get_approved_leave_for_date(user_id, work_date):
@@ -4051,6 +4259,7 @@ def get_backup_recovery_snapshot():
         "scanner_logs": "SELECT COUNT(*) AS cnt FROM scanner_logs",
         "payroll_runs": "SELECT COUNT(*) AS cnt FROM payroll_runs",
         "future_schedule_changes": "SELECT COUNT(*) AS cnt FROM employee_future_schedule_changes WHERE applied_at IS NULL",
+        "schedule_special_rules": "SELECT COUNT(*) AS cnt FROM schedule_special_dates",
     }
     counts = {}
     for key, query in count_specs.items():
@@ -5065,6 +5274,7 @@ def build_recovery_pack_workbook():
     overview.append(["Scanner Logs", recovery_snapshot["counts"]["scanner_logs"]])
     overview.append(["Payroll Runs", recovery_snapshot["counts"]["payroll_runs"]])
     overview.append(["Pending Schedule Changes", recovery_snapshot["counts"]["future_schedule_changes"]])
+    overview.append(["Holiday / Rest-Day Rules", recovery_snapshot["counts"]["schedule_special_rules"]])
     overview.append(["Uploaded Files", recovery_snapshot["upload_count"]])
     autosize_workbook_sheet(overview)
 
@@ -5098,6 +5308,12 @@ def build_recovery_pack_workbook():
         LEFT JOIN schedule_presets preset ON preset.id = fsc.schedule_preset_id
         LEFT JOIN users creator ON creator.id = fsc.created_by
         ORDER BY fsc.effective_date ASC, fsc.id ASC
+    """))
+    append_workbook_rows(workbook, "Schedule Special Dates", fetchall("""
+        SELECT ssd.*, creator.full_name AS created_by_name
+        FROM schedule_special_dates ssd
+        LEFT JOIN users creator ON creator.id = ssd.created_by
+        ORDER BY ssd.special_date ASC, ssd.id ASC
     """))
     append_workbook_rows(workbook, "Attendance", fetchall("SELECT * FROM attendance ORDER BY work_date DESC, id DESC"))
     append_workbook_rows(workbook, "Breaks", fetchall("SELECT * FROM breaks ORDER BY work_date DESC, id DESC"))
@@ -6247,6 +6463,7 @@ def build_employee_attendance_calendar(user_row, year, month):
     date_to_text = month_end.strftime("%Y-%m-%d")
     today_value = now_dt().date()
     today_text = today_value.strftime("%Y-%m-%d")
+    special_rule_map = get_schedule_special_rule_map(date_from_text, date_to_text)
     attendance_map = {}
     for row in fetchall("""
         SELECT *
@@ -6416,6 +6633,17 @@ def build_employee_attendance_calendar(user_row, year, month):
                 "highlight": True,
             }
 
+        special_rule = special_rule_map.get(work_date)
+        if special_rule:
+            return {
+                "date": work_date,
+                "label": special_rule["rule_type_label"],
+                "tone": "gray",
+                "state_key": special_rule["rule_type"],
+                "details": special_rule["notes"] or special_rule["display_label"],
+                "highlight": False,
+            }
+
         scheduled = is_scheduled_on_date(effective_user, work_date)
         if scheduled:
             if work_date < today_text or (work_date == today_text and is_absent_today(effective_user, None)):
@@ -6482,7 +6710,7 @@ def build_employee_attendance_calendar(user_row, year, month):
                     counts["suspension"] += 1
                 elif entry["state_key"] == "absent":
                     counts["absent"] += 1
-                elif entry["state_key"] == "off_day":
+                elif entry["state_key"] in {"off_day", "holiday", "rest_day"}:
                     counts["off_day"] += 1
 
                 if entry["state_key"] == "late":
@@ -11093,6 +11321,86 @@ def manage_employees():
     if request.method == "POST":
         form_action = (request.form.get("form_action", "add_employee") or "add_employee").strip()
 
+        if form_action == "save_schedule_special_rule":
+            special_date = (request.form.get("special_date", "") or "").strip()
+            rule_type = normalize_schedule_special_rule_type(request.form.get("rule_type", "holiday"))
+            label = build_schedule_special_rule_label(rule_type, request.form.get("special_rule_label", ""))
+            notes = (request.form.get("special_rule_notes", "") or "").strip()
+            special_date_value = parse_iso_date(special_date)
+            if not special_date_value:
+                flash("Choose a valid holiday or rest-day date.", "danger")
+                return redirect(url_for("manage_employees", search=employee_search))
+            if special_date_value < now_dt().date():
+                flash("Holiday and rest-day rules can only be created for today or future dates.", "danger")
+                return redirect(url_for("manage_employees", search=employee_search))
+
+            existing_rule = fetchone("""
+                SELECT id
+                FROM schedule_special_dates
+                WHERE special_date = ?
+                LIMIT 1
+            """, (special_date_value.strftime("%Y-%m-%d"),))
+            if existing_rule:
+                execute_db("""
+                    UPDATE schedule_special_dates
+                    SET rule_type = ?, label = ?, notes = ?, created_by = ?, updated_at = ?
+                    WHERE id = ?
+                """, (
+                    rule_type,
+                    label,
+                    notes or None,
+                    session["user_id"],
+                    now_str(),
+                    existing_rule["id"]
+                ), commit=True)
+                log_activity(session["user_id"], "UPDATE SCHEDULE RULE", f"Updated {SCHEDULE_SPECIAL_RULE_LABELS[rule_type]} rule for {special_date_value.strftime('%Y-%m-%d')}.")
+                flash(f"Updated the {SCHEDULE_SPECIAL_RULE_LABELS[rule_type].lower()} rule for {special_date_value.strftime('%Y-%m-%d')}.", "success")
+            else:
+                execute_db("""
+                    INSERT INTO schedule_special_dates (
+                        special_date, rule_type, label, notes, created_by, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    special_date_value.strftime("%Y-%m-%d"),
+                    rule_type,
+                    label,
+                    notes or None,
+                    session["user_id"],
+                    now_str(),
+                    now_str()
+                ), commit=True)
+                log_activity(session["user_id"], "CREATE SCHEDULE RULE", f"Created {SCHEDULE_SPECIAL_RULE_LABELS[rule_type]} rule for {special_date_value.strftime('%Y-%m-%d')}.")
+                flash(f"Saved the {SCHEDULE_SPECIAL_RULE_LABELS[rule_type].lower()} rule for {special_date_value.strftime('%Y-%m-%d')}.", "success")
+
+            invalidate_schedule_special_rule_cache()
+            invalidate_admin_employee_rows_cache()
+            invalidate_reports_cache()
+            return redirect(url_for("manage_employees", search=employee_search))
+
+        if form_action == "delete_schedule_special_rule":
+            raw_rule_id = (request.form.get("schedule_special_rule_id", "") or "").strip()
+            if not raw_rule_id.isdigit():
+                flash("Schedule rule not found.", "warning")
+                return redirect(url_for("manage_employees", search=employee_search))
+            existing_rule = fetchone("""
+                SELECT *
+                FROM schedule_special_dates
+                WHERE id = ?
+                LIMIT 1
+            """, (int(raw_rule_id),))
+            if not existing_rule:
+                flash("Schedule rule not found.", "warning")
+                return redirect(url_for("manage_employees", search=employee_search))
+            existing_rule = dict(existing_rule)
+            execute_db("DELETE FROM schedule_special_dates WHERE id = ?", (int(raw_rule_id),), commit=True)
+            invalidate_schedule_special_rule_cache()
+            invalidate_admin_employee_rows_cache()
+            invalidate_reports_cache()
+            log_activity(session["user_id"], "DELETE SCHEDULE RULE", f"Deleted {build_schedule_special_rule_label(existing_rule.get('rule_type'), existing_rule.get('label'))} on {existing_rule.get('special_date')}.")
+            flash("Schedule rule deleted.", "info")
+            return redirect(url_for("manage_employees", search=employee_search))
+
         if form_action == "create_schedule_preset":
             preset_name = (request.form.get("preset_name", "") or "").strip()
             department_scope = (request.form.get("preset_department_scope", "") or "").strip()
@@ -11218,8 +11526,11 @@ def manage_employees():
             if effective_date and not effective_date_value:
                 flash("Choose a valid effective date for the bulk schedule change.", "danger")
                 return redirect(url_for("manage_employees", search=employee_search))
+            if effective_date_value and effective_date_value <= now_dt().date():
+                flash("Leave Effective Date blank to apply immediately, or choose a future date to queue the rollout.", "warning")
+                return redirect(url_for("manage_employees", search=employee_search))
 
-            if effective_date_value and effective_date_value > now_dt().date():
+            if effective_date_value:
                 db = get_db()
                 queued_count = 0
                 try:
@@ -11286,6 +11597,7 @@ def manage_employees():
                 raise
 
             invalidate_admin_employee_rows_cache()
+            invalidate_reports_cache()
             log_activity(session["user_id"], "BULK APPLY SCHEDULE PRESET", f"Applied preset {preset['name']} to {len(existing_ids)} employee(s)")
             flash(f"Applied {preset['name']} to {len(existing_ids)} employee(s).", "success")
             return redirect(url_for("manage_employees", search=employee_search))
@@ -11415,6 +11727,7 @@ def manage_employees():
                 )
 
         invalidate_admin_employee_rows_cache()
+        invalidate_reports_cache()
         flash("Employee added successfully.", "success")
         return redirect(url_for("manage_employees"))
 
@@ -11455,7 +11768,20 @@ def manage_employees():
         item["window_summary"] = f"{item['shift_start'] or DEFAULT_SHIFT_START} - {item['shift_end'] or DEFAULT_SHIFT_END}"
         item["assigned_count"] = preset_assignment_counts.get(int(item["id"]), 0)
         schedule_presets.append(item)
-    future_schedule_changes = get_future_schedule_changes(limit=12)
+    future_schedule_changes = get_future_schedule_changes(limit=18)
+    employee_future_change_map = build_future_schedule_change_map([int(emp["id"]) for emp in employees])
+    future_schedule_summary = {
+        "queued_total": len(future_schedule_changes),
+        "employee_count": len({int(change["user_id"]) for change in future_schedule_changes}),
+        "next_effective_date": future_schedule_changes[0]["effective_date"] if future_schedule_changes else "",
+    }
+    schedule_special_rules = get_schedule_special_dates(limit=18)
+    schedule_special_rule_summary = {
+        "total": len(schedule_special_rules),
+        "holiday_count": len([rule for rule in schedule_special_rules if rule["rule_type"] == "holiday"]),
+        "rest_day_count": len([rule for rule in schedule_special_rules if rule["rule_type"] == "rest_day"]),
+        "next_date": schedule_special_rules[0]["special_date"] if schedule_special_rules else "",
+    }
 
     return render_template(
         "manage_employees.html",
@@ -11463,7 +11789,14 @@ def manage_employees():
         weekday_options=WEEKDAY_OPTIONS,
         employee_search=employee_search,
         schedule_presets=schedule_presets,
-        future_schedule_changes=future_schedule_changes
+        future_schedule_changes=future_schedule_changes,
+        future_schedule_summary=future_schedule_summary,
+        employee_future_change_map=employee_future_change_map,
+        schedule_special_rules=schedule_special_rules,
+        schedule_special_rule_summary=schedule_special_rule_summary,
+        schedule_special_rule_options=SCHEDULE_SPECIAL_RULE_OPTIONS,
+        today_date=today_str(),
+        tomorrow_date=(now_dt().date() + timedelta(days=1)).strftime("%Y-%m-%d")
     )
 
 
@@ -11655,6 +11988,7 @@ def edit_employee(user_id):
         if updated_user:
             record_employee_schedule_history(updated_user, actor_id=session["user_id"], commit=True)
         invalidate_admin_employee_rows_cache()
+        invalidate_reports_cache()
         flash("Employee updated successfully.", "success")
         return redirect(url_for("manage_employees"))
 
@@ -11665,7 +11999,8 @@ def edit_employee(user_id):
         employee_schedule_days=get_schedule_day_codes(user["schedule_days"] if user["schedule_days"] else DEFAULT_SCHEDULE_DAYS),
         schedule_presets=get_schedule_presets(),
         schedule_history_rows=get_recent_employee_schedule_history(user_id, limit=8),
-        future_schedule_changes=get_future_schedule_changes(user_id=user_id, limit=8)
+        future_schedule_changes=get_future_schedule_changes(user_id=user_id, limit=8),
+        tomorrow_date=(now_dt().date() + timedelta(days=1)).strftime("%Y-%m-%d")
     )
 
 

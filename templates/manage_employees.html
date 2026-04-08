@@ -68,16 +68,22 @@
                     {% for preset in schedule_presets %}
                         <option
                             value="{{ preset.id }}"
+                            data-preset-name="{{ preset.name }}"
                             data-schedule-days="{{ preset.schedule_days }}"
                             data-shift-start="{{ preset.shift_start }}"
                             data-shift-end="{{ preset.shift_end }}"
                             data-break-limit="{{ preset.break_limit_minutes }}"
+                            data-schedule-summary="{{ preset.schedule_summary }}"
+                            data-window-summary="{{ preset.window_summary }}"
+                            data-department-scope="{{ preset.department_scope or '' }}"
+                            data-notes="{{ preset.notes or '' }}"
                         >
                             {{ preset.name }}{% if preset.department_scope %} | {{ preset.department_scope }}{% endif %}
                         </option>
                     {% endfor %}
                 </select>
                 <div class="small muted" style="margin-top:8px;">If you choose a preset, its schedule, shift, and break limit will be saved for this employee.</div>
+                <div class="js-schedule-preview small muted" style="margin-top:10px; padding:12px; border-radius:14px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);">Choose a preset to preview the weekly schedule here.</div>
 
                 <label style="display:block; margin-top:12px;">Work Schedule</label>
                 <div class="schedule-picker js-schedule-day-picker">
@@ -147,6 +153,7 @@
 
                 <label style="display:block; margin-top:12px;">Notes</label>
                 <textarea class="input" name="preset_notes" rows="3" placeholder="Optional note about this preset"></textarea>
+                <div class="js-custom-schedule-preview small muted" style="margin-top:10px; padding:12px; border-radius:14px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);">Build a preset and the preview will summarize the weekly schedule here.</div>
 
                 <button class="btn btn-primary" type="submit" style="width:100%; margin-top:16px;">Save Schedule Preset</button>
             </form>
@@ -183,6 +190,82 @@
                 <p class="muted">No schedule presets saved yet.</p>
             {% endif %}
         </div>
+
+        <div class="card">
+            <div class="section-title">Holiday / Rest-Day Rules</div>
+            <p class="muted" style="margin-bottom:14px;">Set company-wide schedule override dates so holidays and special rest days do not trigger absences or shift expectations.</p>
+
+            <form method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="form_action" value="save_schedule_special_rule">
+
+                <div class="grid grid-3" style="align-items:end;">
+                    <div>
+                        <label>Date</label>
+                        <input class="input" type="date" name="special_date" min="{{ today_date }}" required>
+                    </div>
+                    <div>
+                        <label>Rule Type</label>
+                        <select class="input" name="rule_type">
+                            {% for code, label in schedule_special_rule_options %}
+                                <option value="{{ code }}">{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <label>Label (Optional)</label>
+                        <input class="input" type="text" name="special_rule_label" placeholder="Defaults to Holiday or Rest Day">
+                    </div>
+                </div>
+
+                <label style="display:block; margin-top:12px;">Notes (Optional)</label>
+                <textarea class="input" name="special_rule_notes" rows="3" placeholder="Example: Company anniversary or post-event recovery day"></textarea>
+
+                <button class="btn btn-primary" type="submit" style="width:100%; margin-top:16px;">Save Schedule Rule</button>
+            </form>
+
+            <div class="divider"></div>
+            <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center;">
+                <h4 style="margin:0;">Upcoming Rules</h4>
+                <div class="small muted">
+                    {{ schedule_special_rule_summary.total }} total |
+                    {{ schedule_special_rule_summary.holiday_count }} holidays |
+                    {{ schedule_special_rule_summary.rest_day_count }} rest days
+                </div>
+            </div>
+            {% if schedule_special_rules %}
+                <div style="display:grid; gap:12px; margin-top:14px;">
+                    {% for rule in schedule_special_rules %}
+                        <div style="padding:14px; border-radius:16px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);">
+                            <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap;">
+                                <div>
+                                    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                                        <div style="font-weight:800; color:#fff;">{{ rule.display_label }}</div>
+                                        <span class="status {% if rule.rule_type == 'holiday' %}status-yellow{% else %}status-blue{% endif %}">{{ rule.rule_type_label }}</span>
+                                        {% if rule.countdown_label %}<span class="small muted">{{ rule.countdown_label }}</span>{% endif %}
+                                    </div>
+                                    <div class="small muted" style="margin-top:6px;">{{ rule.date_label }}</div>
+                                    {% if rule.notes %}
+                                        <div class="small muted" style="margin-top:4px;">{{ rule.notes }}</div>
+                                    {% endif %}
+                                    {% if rule.created_by_name %}
+                                        <div class="small muted" style="margin-top:4px;">Saved by {{ rule.created_by_name }}</div>
+                                    {% endif %}
+                                </div>
+                                <form method="POST" style="margin:0;" onsubmit="return confirm('Delete this schedule rule?');">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                    <input type="hidden" name="form_action" value="delete_schedule_special_rule">
+                                    <input type="hidden" name="schedule_special_rule_id" value="{{ rule.id }}">
+                                    <button class="btn btn-danger" type="submit">Delete</button>
+                                </form>
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <p class="muted" style="margin-top:14px;">No upcoming holiday or rest-day rules have been saved yet.</p>
+            {% endif %}
+        </div>
     </div>
 
     <div class="card">
@@ -197,6 +280,30 @@
             </form>
         </div>
 
+        <div class="grid grid-3" style="margin-bottom:16px;">
+            <div style="padding:14px; border-radius:16px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);">
+                <div class="small muted" style="text-transform:uppercase; letter-spacing:0.08em;">Saved Presets</div>
+                <div style="font-size:28px; font-weight:900; color:#fff; margin-top:6px;">{{ schedule_presets|length }}</div>
+                <div class="small muted">Reusable weekly schedules ready to preview and assign.</div>
+            </div>
+            <div style="padding:14px; border-radius:16px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);">
+                <div class="small muted" style="text-transform:uppercase; letter-spacing:0.08em;">Queued Rollouts</div>
+                <div style="font-size:28px; font-weight:900; color:#fff; margin-top:6px;">{{ future_schedule_summary.queued_total }}</div>
+                <div class="small muted">
+                    {{ future_schedule_summary.employee_count }} employee(s)
+                    {% if future_schedule_summary.next_effective_date %}| Next {{ future_schedule_summary.next_effective_date }}{% endif %}
+                </div>
+            </div>
+            <div style="padding:14px; border-radius:16px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);">
+                <div class="small muted" style="text-transform:uppercase; letter-spacing:0.08em;">Special Dates</div>
+                <div style="font-size:28px; font-weight:900; color:#fff; margin-top:6px;">{{ schedule_special_rule_summary.total }}</div>
+                <div class="small muted">
+                    {{ schedule_special_rule_summary.holiday_count }} holiday / {{ schedule_special_rule_summary.rest_day_count }} rest day
+                    {% if schedule_special_rule_summary.next_date %}| Next {{ schedule_special_rule_summary.next_date }}{% endif %}
+                </div>
+            </div>
+        </div>
+
         <form id="bulkPresetForm" method="POST" style="margin-bottom:16px;" data-tour-id="bulk-schedule-apply">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <input type="hidden" name="form_action" value="apply_schedule_preset_bulk">
@@ -204,16 +311,29 @@
             <div class="grid grid-4" style="align-items:end;">
                 <div>
                     <label>Bulk Apply Schedule Preset</label>
-                    <select class="input" name="bulk_schedule_preset_id">
+                    <select class="input js-schedule-preset-select" name="bulk_schedule_preset_id">
                         <option value="">Choose preset</option>
                         {% for preset in schedule_presets %}
-                            <option value="{{ preset.id }}">{{ preset.name }}{% if preset.department_scope %} | {{ preset.department_scope }}{% endif %}</option>
+                            <option
+                                value="{{ preset.id }}"
+                                data-preset-name="{{ preset.name }}"
+                                data-schedule-days="{{ preset.schedule_days }}"
+                                data-shift-start="{{ preset.shift_start }}"
+                                data-shift-end="{{ preset.shift_end }}"
+                                data-break-limit="{{ preset.break_limit_minutes }}"
+                                data-schedule-summary="{{ preset.schedule_summary }}"
+                                data-window-summary="{{ preset.window_summary }}"
+                                data-department-scope="{{ preset.department_scope or '' }}"
+                                data-notes="{{ preset.notes or '' }}"
+                            >
+                                {{ preset.name }}{% if preset.department_scope %} | {{ preset.department_scope }}{% endif %}
+                            </option>
                         {% endfor %}
                     </select>
                 </div>
                 <div>
                     <label>Effective Date (Optional)</label>
-                    <input class="input" type="date" name="bulk_effective_date">
+                    <input class="input" type="date" name="bulk_effective_date" min="{{ tomorrow_date }}">
                 </div>
                 <div>
                     <label>Rollout Notes (Optional)</label>
@@ -223,7 +343,8 @@
                     <button class="btn btn-secondary" type="submit" style="width:100%;">Apply to Selected Employees</button>
                 </div>
             </div>
-            <div class="small muted" style="margin-top:10px;">Leave the effective date blank to apply immediately. Choose a future date to queue a rollout without changing the live shift today.</div>
+            <div class="small muted" style="margin-top:10px;">Leave the effective date blank to apply immediately. Choose a future date to queue a rollout without changing the live shift today. A confirmation prompt will summarize the selected employees before the change is applied.</div>
+            <div class="js-schedule-preview small muted" style="margin-top:10px; padding:12px; border-radius:14px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);">Select a preset and employees to preview the rollout here.</div>
         </form>
 
         <div data-tour-id="upcoming-schedule-rollout">
@@ -236,13 +357,16 @@
                             <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:flex-start;">
                                 <div>
                                     <div style="font-weight:800; color:#fff;">{{ change.full_name }}</div>
-                                    <div class="small muted" style="margin-top:6px;">Effective {{ change.effective_date }} | {{ change.schedule_summary }} | {{ change.window_summary }}</div>
+                                    <div class="small muted" style="margin-top:6px;">Effective {{ change.effective_date }}{% if change.countdown_label %} | {{ change.countdown_label }}{% endif %}</div>
+                                    <div class="small muted" style="margin-top:4px;">{{ change.schedule_summary }} | {{ change.window_summary }} | Break {{ change.break_limit_minutes }} min</div>
                                     <div class="small muted" style="margin-top:4px;">
                                         {% if change.preset_name %}
                                             Preset: {{ change.preset_name }}
                                         {% else %}
                                             Custom queued schedule
                                         {% endif %}
+                                        | {{ change.department_label }} | {{ change.position_label }}
+                                        {% if change.created_by_name %} | Queued by {{ change.created_by_name }}{% endif %}
                                         {% if change.notes %} | {{ change.notes }}{% endif %}
                                     </div>
                                 </div>
@@ -286,7 +410,7 @@
                         {% for emp in employees %}
                         <tr>
                             <td>
-                                <input type="checkbox" class="employee-row-checkbox" name="employee_ids" value="{{ emp.id }}" form="bulkPresetForm">
+                                <input type="checkbox" class="employee-row-checkbox" name="employee_ids" value="{{ emp.id }}" data-employee-name="{{ emp.full_name }}" form="bulkPresetForm">
                             </td>
                             <td>
                                 <div class="row-user">
@@ -315,6 +439,10 @@
                                         Custom Manual Schedule
                                     {% endif %}
                                 </div>
+                                {% set next_change = employee_future_change_map.get(emp.id) %}
+                                {% if next_change %}
+                                    <div class="small muted" style="margin-top:4px;">Next: {{ next_change.effective_date }}{% if next_change.countdown_label %} ({{ next_change.countdown_label }}){% endif %}</div>
+                                {% endif %}
                             </td>
                             <td>{{ emp.shift_start if emp.shift_start else '09:00' }} - {{ emp.shift_end if emp.shift_end else '18:00' }}</td>
                             <td>{{ emp.barcode_id if emp.barcode_id else '-' }}</td>
@@ -355,6 +483,36 @@
 
 <script>
 document.addEventListener("DOMContentLoaded", function () {
+    function escapeHtml(value) {
+        return String(value ?? "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;");
+    }
+
+    function buildPreviewMarkup(selectedOption, extraLines) {
+        if (!selectedOption || !selectedOption.value) {
+            return "Choose a preset to preview the weekly schedule here.";
+        }
+        const lines = [
+            `<strong style="color:#fff;">${escapeHtml(selectedOption.dataset.presetName || selectedOption.textContent.trim())}</strong>`,
+            `${escapeHtml(selectedOption.dataset.scheduleSummary || "Schedule not available")} | ${escapeHtml(selectedOption.dataset.windowSummary || "Shift not available")}`,
+            `Break ${escapeHtml(selectedOption.dataset.breakLimit || "15")} minutes`
+        ];
+        if (selectedOption.dataset.departmentScope) {
+            lines.push(`Department scope: ${escapeHtml(selectedOption.dataset.departmentScope)}`);
+        }
+        if (selectedOption.dataset.notes) {
+            lines.push(escapeHtml(selectedOption.dataset.notes));
+        }
+        (extraLines || []).forEach((line) => {
+            if (line) lines.push(escapeHtml(line));
+        });
+        return lines.join("<br>");
+    }
+
     function applyPreset(selectElement) {
         if (!selectElement) return;
         const form = selectElement.closest("form");
@@ -363,8 +521,14 @@ document.addEventListener("DOMContentLoaded", function () {
         const shiftStart = form.querySelector(".js-shift-start");
         const shiftEnd = form.querySelector(".js-shift-end");
         const breakLimit = form.querySelector(".js-break-limit");
+        const preview = form.querySelector(".js-schedule-preview");
         const checkboxes = form.querySelectorAll(".js-schedule-day-picker input[type='checkbox']");
         if (!selectedOption || !selectedOption.value) {
+            if (preview) {
+                preview.innerHTML = form.id === "bulkPresetForm"
+                    ? "Select a preset and employees to preview the rollout here."
+                    : "Choose a preset to preview the weekly schedule here.";
+            }
             return;
         }
         if (shiftStart) shiftStart.value = selectedOption.dataset.shiftStart || shiftStart.value;
@@ -374,12 +538,70 @@ document.addEventListener("DOMContentLoaded", function () {
         checkboxes.forEach((checkbox) => {
             checkbox.checked = selectedDays.has(checkbox.value);
         });
+        if (preview) {
+            preview.innerHTML = buildPreviewMarkup(selectedOption, form.id === "bulkPresetForm" ? [] : ["Selecting this preset will save these values for the employee."]);
+        }
+    }
+
+    function updateBulkPreview() {
+        const bulkForm = document.getElementById("bulkPresetForm");
+        if (!bulkForm) return;
+        const preview = bulkForm.querySelector(".js-schedule-preview");
+        const presetSelect = bulkForm.querySelector("select[name='bulk_schedule_preset_id']");
+        if (!preview || !presetSelect) return;
+        const selectedOption = presetSelect.options[presetSelect.selectedIndex];
+        const checkedEmployees = Array.from(document.querySelectorAll(".employee-row-checkbox:checked"));
+        if (!selectedOption || !selectedOption.value) {
+            preview.innerHTML = "Select a preset and employees to preview the rollout here.";
+            return;
+        }
+        const names = checkedEmployees.slice(0, 4).map((checkbox) => checkbox.dataset.employeeName).filter(Boolean);
+        const effectiveDate = bulkForm.querySelector("input[name='bulk_effective_date']")?.value || "";
+        const extraLines = [
+            `${checkedEmployees.length} employee(s) selected${names.length ? `: ${names.join(", ")}${checkedEmployees.length > names.length ? "..." : ""}` : ""}`,
+            effectiveDate ? `Rollout date: ${effectiveDate}` : "Rollout date: Apply immediately"
+        ];
+        preview.innerHTML = buildPreviewMarkup(selectedOption, extraLines);
+    }
+
+    function updatePresetBuilderPreview() {
+        const presetForm = document.querySelector("form input[name='form_action'][value='create_schedule_preset']")?.closest("form");
+        if (!presetForm) return;
+        const preview = presetForm.querySelector(".js-custom-schedule-preview");
+        if (!preview) return;
+        const name = presetForm.querySelector("input[name='preset_name']")?.value.trim() || "New preset preview";
+        const dayLabels = Array.from(presetForm.querySelectorAll("input[name='preset_schedule_days']:checked"))
+            .map((checkbox) => checkbox.closest("label")?.innerText.trim())
+            .filter(Boolean);
+        const shiftStart = presetForm.querySelector("input[name='preset_shift_start']")?.value || "09:00";
+        const shiftEnd = presetForm.querySelector("input[name='preset_shift_end']")?.value || "18:00";
+        const breakLimit = presetForm.querySelector("input[name='preset_break_limit_minutes']")?.value || "15";
+        const departmentScope = presetForm.querySelector("input[name='preset_department_scope']")?.value.trim() || "";
+        const notes = presetForm.querySelector("textarea[name='preset_notes']")?.value.trim() || "";
+        const lines = [
+            `<strong style="color:#fff;">${escapeHtml(name)}</strong>`,
+            `${escapeHtml(dayLabels.length ? dayLabels.join(", ") : "No days selected")} | ${escapeHtml(shiftStart)} - ${escapeHtml(shiftEnd)}`,
+            `Break ${escapeHtml(breakLimit)} minutes`
+        ];
+        if (departmentScope) {
+            lines.push(`Department scope: ${escapeHtml(departmentScope)}`);
+        }
+        if (notes) {
+            lines.push(escapeHtml(notes));
+        }
+        preview.innerHTML = lines.join("<br>");
     }
 
     document.querySelectorAll(".js-schedule-preset-select").forEach((selectElement) => {
         selectElement.addEventListener("change", function () {
             applyPreset(selectElement);
+            if (selectElement.form && selectElement.form.id === "bulkPresetForm") {
+                updateBulkPreview();
+            }
         });
+        if (selectElement.form && selectElement.form.id !== "bulkPresetForm" && selectElement.value) {
+            applyPreset(selectElement);
+        }
     });
 
     const selectAll = document.getElementById("selectAllEmployees");
@@ -389,7 +611,51 @@ document.addEventListener("DOMContentLoaded", function () {
             rowCheckboxes.forEach((checkbox) => {
                 checkbox.checked = selectAll.checked;
             });
+            updateBulkPreview();
         });
+    }
+    rowCheckboxes.forEach((checkbox) => {
+        checkbox.addEventListener("change", updateBulkPreview);
+    });
+
+    const bulkForm = document.getElementById("bulkPresetForm");
+    if (bulkForm) {
+        bulkForm.querySelector("input[name='bulk_effective_date']")?.addEventListener("change", updateBulkPreview);
+        bulkForm.addEventListener("submit", function (event) {
+            const presetSelect = bulkForm.querySelector("select[name='bulk_schedule_preset_id']");
+            const selectedOption = presetSelect?.options[presetSelect.selectedIndex];
+            const checkedEmployees = Array.from(document.querySelectorAll(".employee-row-checkbox:checked"));
+            if (!selectedOption || !selectedOption.value) {
+                event.preventDefault();
+                window.alert("Choose a schedule preset before applying a bulk rollout.");
+                return;
+            }
+            if (!checkedEmployees.length) {
+                event.preventDefault();
+                window.alert("Select at least one employee before applying a bulk rollout.");
+                return;
+            }
+            const effectiveDate = bulkForm.querySelector("input[name='bulk_effective_date']")?.value || "";
+            const names = checkedEmployees.slice(0, 5).map((checkbox) => checkbox.dataset.employeeName).filter(Boolean);
+            const confirmMessage = [
+                `Apply ${selectedOption.dataset.presetName || selectedOption.textContent.trim()} to ${checkedEmployees.length} employee(s)?`,
+                effectiveDate ? `Effective date: ${effectiveDate}` : "Effective date: immediately",
+                names.length ? `Employees: ${names.join(", ")}${checkedEmployees.length > names.length ? "..." : ""}` : ""
+            ].filter(Boolean).join("\n");
+            if (!window.confirm(confirmMessage)) {
+                event.preventDefault();
+            }
+        });
+        updateBulkPreview();
+    }
+
+    const presetBuilderForm = document.querySelector("form input[name='form_action'][value='create_schedule_preset']")?.closest("form");
+    if (presetBuilderForm) {
+        presetBuilderForm.querySelectorAll("input, textarea").forEach((field) => {
+            field.addEventListener("input", updatePresetBuilderPreview);
+            field.addEventListener("change", updatePresetBuilderPreview);
+        });
+        updatePresetBuilderPreview();
     }
 });
 </script>
