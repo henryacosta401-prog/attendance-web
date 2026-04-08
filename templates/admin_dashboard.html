@@ -84,16 +84,21 @@ html.app-standalone .admin-live-table td {
 </style>
 <script>
 document.addEventListener("DOMContentLoaded", function () {
+    const dashboardRoot = document.getElementById("adminDashboardApp");
     const standaloneMode = document.documentElement.classList.contains("app-standalone");
-    let currentPage = {{ pagination.page }};
-    let currentPageSize = {{ pagination.page_size }};
+    let currentPage = Number(dashboardRoot?.dataset.page || "1");
+    let currentPageSize = Number(dashboardRoot?.dataset.pageSize || "25");
     let refreshInFlight = false;
     let queuedRefresh = false;
     let searchDebounceTimer = null;
     let refreshTimer = null;
-    const refreshIntervalMs = standaloneMode ? 45000 : 15000;
+    let lastRefreshCompletedAt = Date.now();
+    let lastPayloadSignature = "";
+    const refreshIntervalMs = standaloneMode ? 45000 : 20000;
+    let needsInitialRefresh = false;
 
     if (standaloneMode && currentPageSize > 10) {
+        needsInitialRefresh = true;
         currentPageSize = 10;
         const pageSizeSelect = document.getElementById("pageSize");
         if (pageSizeSelect) {
@@ -133,6 +138,21 @@ document.addEventListener("DOMContentLoaded", function () {
         const overBreakOnlyVal = document.getElementById("overBreakOnly")?.checked ? "1" : "";
         return `search=${encodeURIComponent(searchVal)}&status=${encodeURIComponent(statusVal)}&department=${encodeURIComponent(departmentVal)}&over_break_only=${encodeURIComponent(overBreakOnlyVal)}&page=${encodeURIComponent(currentPage)}&page_size=${encodeURIComponent(currentPageSize)}`;
     }
+    function buildPayloadSignature(data) {
+        try {
+            return JSON.stringify({
+                rows: data.rows || [],
+                pagination: data.pagination || {}
+            });
+        } catch (error) {
+            return `${Date.now()}`;
+        }
+    }
+    function refreshIfStale(maxAgeMs) {
+        if ((Date.now() - lastRefreshCompletedAt) >= maxAgeMs) {
+            refreshLiveStatus(false);
+        }
+    }
     function updatePager(pagination) {
         const summary = document.getElementById("pageSummary");
         if (summary) summary.textContent = pagination.total ? `Showing ${pagination.start_index}-${pagination.end_index} of ${pagination.total}` : "No matching employees";
@@ -151,12 +171,23 @@ document.addEventListener("DOMContentLoaded", function () {
         refreshInFlight = true;
         try {
             const response = await fetch(`/admin/live-status?${buildQuery()}`, { cache: "no-store" });
+            if (!response.ok) {
+                throw new Error(`Live status refresh failed with ${response.status}`);
+            }
             const data = await response.json();
+            const payloadSignature = buildPayloadSignature(data);
+            if (payloadSignature === lastPayloadSignature) {
+                updatePager(data.pagination || {});
+                lastRefreshCompletedAt = Date.now();
+                return;
+            }
             const rows = data.rows || [];
             const tbody = document.getElementById("liveStatusBody");
             if (!rows.length) {
                 tbody.innerHTML = `<tr><td colspan="7"><div class="admin-empty">No employees match the current filters.</div></td></tr>`;
+                lastPayloadSignature = payloadSignature;
                 updatePager(data.pagination || {});
+                lastRefreshCompletedAt = Date.now();
                 return;
             }
             tbody.innerHTML = rows.map(emp => {
@@ -179,7 +210,9 @@ document.addEventListener("DOMContentLoaded", function () {
                     <td><div class="admin-flags">${flags.join("") || `<span class="admin-pill admin-pill-gray">No alerts</span>`}</div><div style="margin-top:8px;">${proofHtml}</div></td>
                 </tr>`;
             }).join("");
+            lastPayloadSignature = payloadSignature;
             updatePager(data.pagination || {});
+            lastRefreshCompletedAt = Date.now();
         } catch (error) {
             console.error("Live status refresh failed:", error);
         } finally {
@@ -215,7 +248,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (refreshHint) {
         refreshHint.textContent = standaloneMode
             ? "Installed app mode refreshes every 45 seconds to keep the dashboard lighter."
-            : "Auto-refreshes every 15 seconds without jumping back to the top.";
+            : "Auto-refreshes every 20 seconds without jumping back to the top.";
     }
     function startRefreshLoop() {
         clearInterval(refreshTimer);
@@ -227,13 +260,15 @@ document.addEventListener("DOMContentLoaded", function () {
     }
     document.addEventListener("visibilitychange", function () {
         if (!document.hidden) {
-            refreshLiveStatus(false);
+            refreshIfStale(standaloneMode ? 12000 : 6000);
         }
     });
     window.addEventListener("focus", function () {
-        refreshLiveStatus(false);
+        refreshIfStale(standaloneMode ? 12000 : 6000);
     });
-    refreshLiveStatus(false);
+    if (needsInitialRefresh) {
+        refreshLiveStatus(true);
+    }
     startRefreshLoop();
 });
 </script>
@@ -250,7 +285,7 @@ document.addEventListener("DOMContentLoaded", function () {
     </div>
 </div>
 
-<div class="admin-shell">
+<div class="admin-shell" id="adminDashboardApp" data-page="{{ pagination.page }}" data-page-size="{{ pagination.page_size }}">
     <div class="admin-stats" data-tour-id="admin-stats">
         <div class="admin-stat-card"><div class="admin-stat-label">Active Employees</div><div class="admin-stat-value">{{ stats.total_employees }}</div><div class="admin-stat-note">Current active employee accounts</div></div>
         <div class="admin-stat-card"><div class="admin-stat-label">Live On Shift</div><div class="admin-stat-value">{{ stats.timed_in + stats.on_break }}</div><div class="admin-stat-note">Currently timed in or on break</div></div>

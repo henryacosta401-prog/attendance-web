@@ -126,6 +126,7 @@ ADMIN_STATUS_CACHE_TTL_SECONDS = 12
 OPTION_CACHE_TTL_SECONDS = 60
 REPORT_CACHE_TTL_SECONDS = 90
 SCHEDULE_CHANGE_APPLY_TTL_SECONDS = 60
+ADMIN_ALERT_SCAN_TTL_SECONDS = 45
 
 DEFAULT_SECRET_KEY = "dev-secret-key"
 LOGIN_WINDOW_MINUTES = 15
@@ -164,6 +165,7 @@ _options_cache = {
 }
 _reports_cache = {}
 _schedule_change_apply_state = {"stamp": 0}
+_admin_notification_scan_state = {}
 
 
 # =========================
@@ -2401,6 +2403,15 @@ def invalidate_option_caches():
 def invalidate_schedule_change_apply_state():
     _schedule_change_apply_state["stamp"] = 0
     _schedule_change_apply_state["date"] = ""
+
+
+def should_run_admin_notification_scan(cache_key, ttl_seconds=ADMIN_ALERT_SCAN_TTL_SECONDS):
+    cache_entry = _admin_notification_scan_state.setdefault(cache_key, {"stamp": 0})
+    cache_age = now_timestamp() - int(cache_entry.get("stamp") or 0)
+    if cache_age <= ttl_seconds:
+        return False
+    cache_entry["stamp"] = now_timestamp()
+    return True
 
 
 def get_cached_rows(cache_key, ttl_seconds, builder):
@@ -4919,6 +4930,9 @@ def format_currency(value):
 
 
 def notify_admins_for_leave_and_disciplinary_events():
+    if not should_run_admin_notification_scan("leave_and_disciplinary"):
+        return
+
     leave_rows = build_leave_dashboard_rows(year=now_dt().year)
     for row in leave_rows:
         if row["sick_remaining"] <= 0:
@@ -5138,6 +5152,23 @@ def build_admin_reports_data(date_from, date_to, department_filter=""):
     employees_sql += " ORDER BY full_name ASC"
     employees = [dict(row) for row in fetchall(employees_sql)]
     employee_lookup = {int(employee["id"]): employee for employee in employees}
+    employee_context_cache = {}
+    employee_context_map_for_end_date = get_effective_employee_context_map(employees, reference_date=date_to_text)
+
+    def get_report_employee_context(employee=None, user_id=None, reference_datetime=None, reference_date=""):
+        resolved_user_id = int(user_id or (employee["id"] if employee else 0) or 0)
+        if not resolved_user_id:
+            return None
+        reference_key = normalize_history_reference(reference_datetime=reference_datetime, reference_date=reference_date)
+        cache_key = (resolved_user_id, reference_key)
+        if cache_key not in employee_context_cache:
+            employee_context_cache[cache_key] = get_effective_employee_context(
+                user_row=employee,
+                user_id=resolved_user_id,
+                reference_datetime=reference_datetime,
+                reference_date=reference_date
+            )
+        return employee_context_cache[cache_key]
 
     attendance_sql = """
         SELECT a.*, u.full_name
@@ -5169,10 +5200,7 @@ def build_admin_reports_data(date_from, date_to, department_filter=""):
     department_employee_ids = {}
     report_employee_ids = set()
     for employee in employees:
-        effective_employee = get_effective_employee_context(
-            user_row=employee,
-            reference_date=date_to_text
-        )
+        effective_employee = employee_context_map_for_end_date.get(int(employee["id"]), employee)
         department_name = (effective_employee.get("department") if effective_employee else employee.get("department")) or "Unassigned"
         if department_filter and department_name != department_filter:
             continue
@@ -5194,7 +5222,7 @@ def build_admin_reports_data(date_from, date_to, department_filter=""):
     attendance_days_count = 0
     for attendance in attendance_rows:
         employee = employee_lookup.get(int(attendance["user_id"]))
-        effective_employee = get_effective_employee_context(
+        effective_employee = get_report_employee_context(
             user_row=employee,
             user_id=attendance["user_id"],
             reference_datetime=get_attendance_reference_datetime(attendance),
@@ -5250,7 +5278,7 @@ def build_admin_reports_data(date_from, date_to, department_filter=""):
     for overtime in overtime_rows:
         overtime_hours = round(overtime_minutes_for_session(overtime) / 60, 2)
         employee = employee_lookup.get(int(overtime["user_id"]))
-        effective_employee = get_effective_employee_context(
+        effective_employee = get_report_employee_context(
             user_row=employee,
             user_id=overtime["user_id"],
             reference_datetime=get_overtime_reference_datetime(overtime),
@@ -5330,7 +5358,7 @@ def build_admin_reports_data(date_from, date_to, department_filter=""):
     leave_summary_map = {}
     correction_summary_map = {}
     for request_row in correction_rows:
-        effective_employee = get_effective_employee_context(
+        effective_employee = get_report_employee_context(
             user_row=employee_lookup.get(int(request_row["user_id"])),
             user_id=request_row["user_id"],
             reference_date=request_row["work_date"]
@@ -8119,6 +8147,34 @@ def build_admin_employee_rows_snapshot():
     open_break_map = get_admin_open_break_map(attendance_ids)
     break_minutes_map = get_admin_break_minutes_map(attendance_ids)
     suspension_map, leave_map = get_admin_override_maps()
+    file_exists_cache = {}
+    attendance_context_cache = {}
+
+    def cached_file_exists(filename):
+        cleaned = (filename or "").strip()
+        if not cleaned:
+            return False
+        if cleaned not in file_exists_cache:
+            file_exists_cache[cleaned] = uploaded_file_exists(cleaned)
+        return file_exists_cache[cleaned]
+
+    def get_attendance_context(user_row, attendance_row):
+        if not attendance_row:
+            return user_row
+        reference_key = (
+            int(attendance_row["user_id"]),
+            normalize_history_reference(
+                reference_datetime=get_attendance_reference_datetime(attendance_row),
+                reference_date=attendance_row.get("work_date") if hasattr(attendance_row, "get") else attendance_row["work_date"]
+            )
+        )
+        if reference_key not in attendance_context_cache:
+            attendance_context_cache[reference_key] = get_effective_employee_context(
+                user_row=user_row,
+                reference_datetime=get_attendance_reference_datetime(attendance_row),
+                reference_date=attendance_row["work_date"]
+            )
+        return attendance_context_cache[reference_key] or user_row
 
     employees = []
     for user in users:
@@ -8154,11 +8210,7 @@ def build_admin_employee_rows_snapshot():
 
         attendance_context_user = display_user
         if attendance and attendance.get("work_date") and attendance["work_date"] != today_str():
-            attendance_context_user = get_effective_employee_context(
-                user_row=user,
-                reference_datetime=get_attendance_reference_datetime(attendance),
-                reference_date=attendance["work_date"]
-            )
+            attendance_context_user = get_attendance_context(user, attendance)
 
         missing_timeout_today = False
         if attendance and user["is_active"] == 1 and attendance.get("time_in") and not attendance.get("time_out"):
@@ -8203,14 +8255,14 @@ def build_admin_employee_rows_snapshot():
             "schedule_window_summary": f"{display_user['shift_start'] or DEFAULT_SHIFT_START} - {display_user['shift_end'] or DEFAULT_SHIFT_END}",
             "break_limit_minutes": parse_break_limit_minutes(display_user.get("break_limit_minutes") if hasattr(display_user, "get") else display_user["break_limit_minutes"]),
             "profile_image": display_user["profile_image"],
-            "profile_image_available": 1 if uploaded_file_exists(display_user["profile_image"]) else 0,
+            "profile_image_available": 1 if cached_file_exists(display_user["profile_image"]) else 0,
             "is_active": user["is_active"],
             "status": live_status,
             "status_display": status_display,
             "time_in": attendance["time_in"] if attendance else None,
             "time_out": attendance["time_out"] if attendance else None,
             "proof_file": attendance["proof_file"] if attendance else None,
-            "proof_file_available": 1 if attendance and uploaded_file_exists(attendance["proof_file"]) else 0,
+            "proof_file_available": 1 if attendance and cached_file_exists(attendance["proof_file"]) else 0,
             "late_flag": attendance["late_flag"] if attendance else 0,
             "late_minutes": attendance["late_minutes"] if attendance else 0,
             "break_minutes": break_minutes_map.get(int(attendance["id"]), 0) if attendance else 0
