@@ -3,15 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <meta name="theme-color" content="#111827">
+    <meta name="theme-color" content="#0b1220">
+    <meta name="application-name" content="Stellar Seats">
+    <meta name="msapplication-TileColor" content="#0b1220">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Stellar Seats">
     <title>{% block title %}Stellar Seats Attendance{% endblock %}</title>
+    <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='pwa-icon-192.png') }}">
+    <link rel="icon" type="image/png" sizes="512x512" href="{{ url_for('static', filename='pwa-icon-512.png') }}">
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='stellar-seats-logo.svg') }}">
     <link rel="manifest" href="{{ url_for('web_manifest') }}">
-    <link rel="apple-touch-icon" href="{{ url_for('static', filename='stellar-seats-logo.svg') }}">
+    <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='apple-touch-icon.png') }}">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <script>
         (function () {
@@ -81,6 +85,12 @@
         html.app-standalone body {
             background:
                 linear-gradient(180deg, #0b1220 0%, #111827 52%, #18253c 100%);
+        }
+
+        html.app-standalone,
+        html.app-standalone body {
+            overscroll-behavior: none;
+            -webkit-tap-highlight-color: transparent;
         }
 
         a {
@@ -814,6 +824,10 @@
             transition-duration: 0.12s;
         }
 
+        html.app-standalone .navbar {
+            background: rgba(11, 18, 32, 0.92);
+        }
+
         .notification-dropdown.open {
             display: block;
         }
@@ -1094,6 +1108,84 @@
 
             .login-title {
                 font-size: 28px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            :root {
+                --page-gutter: 8px;
+            }
+
+            .page-shell {
+                padding-bottom: calc(26px + var(--safe-bottom));
+            }
+
+            .navbar {
+                top: calc(6px + var(--safe-top));
+                margin-top: calc(8px + var(--safe-top));
+                padding: 10px;
+                border-radius: 18px;
+                gap: 10px;
+            }
+
+            .brand-wrap {
+                gap: 10px;
+                width: 100%;
+                min-width: 0;
+            }
+
+            .brand {
+                min-width: 0;
+            }
+
+            .brand-title {
+                font-size: 14px;
+                letter-spacing: 0.10em;
+            }
+
+            .brand-sub {
+                font-size: 9px;
+                letter-spacing: 0.08em;
+            }
+
+            .nav-right,
+            .nav-primary,
+            .nav-utility {
+                gap: 6px;
+            }
+
+            .pill-link,
+            .btn,
+            .nav-menu-link {
+                min-height: 38px;
+                padding: 9px 12px;
+                font-size: 11px;
+            }
+
+            .hero-card,
+            .card,
+            .table-wrap,
+            .flash,
+            .tour-card {
+                border-radius: 18px;
+            }
+
+            .hero-card,
+            .card,
+            .table-wrap {
+                padding-left: 14px;
+                padding-right: 14px;
+            }
+
+            .hero h1,
+            .hero-title {
+                font-size: 24px;
+                line-height: 1.05;
+            }
+
+            .tour-card {
+                width: min(320px, calc(100vw - 20px));
+                max-height: min(68dvh, calc(100dvh - 18px));
             }
         }
     </style>
@@ -1769,13 +1861,31 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     }
 
-    if (!isStandalone && "serviceWorker" in navigator && serviceWorkerUrl) {
+    if ("serviceWorker" in navigator && serviceWorkerUrl) {
         window.addEventListener("load", function () {
-            navigator.serviceWorker.register(serviceWorkerUrl).catch(function (error) {
+            navigator.serviceWorker.register(serviceWorkerUrl, { updateViaCache: "none" }).then(function (registration) {
+                if (registration.waiting) {
+                    registration.waiting.postMessage({ type: "SKIP_WAITING" });
+                }
+
+                registration.addEventListener("updatefound", function () {
+                    const newWorker = registration.installing;
+                    if (!newWorker) {
+                        return;
+                    }
+                    newWorker.addEventListener("statechange", function () {
+                        if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
+                            newWorker.postMessage({ type: "SKIP_WAITING" });
+                        }
+                    });
+                });
+            }).catch(function (error) {
                 console.warn("Service worker registration failed.", error);
             });
         });
-    } else {
+    }
+
+    if (isStandalone) {
         hideInstallButton();
     }
 });

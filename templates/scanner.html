@@ -4,13 +4,28 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="theme-color" content="#0a1c34">
+    <meta name="application-name" content="Stellar Seats">
+    <meta name="msapplication-TileColor" content="#0a1c34">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Stellar Seats">
     <title>Scanner Kiosk | Stellar Seats</title>
+    <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='pwa-icon-192.png') }}">
+    <link rel="icon" type="image/png" sizes="512x512" href="{{ url_for('static', filename='pwa-icon-512.png') }}">
     <link rel="manifest" href="{{ url_for('web_manifest') }}">
-    <link rel="apple-touch-icon" href="{{ url_for('static', filename='stellar-seats-logo.svg') }}">
+    <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='apple-touch-icon.png') }}">
+    <script>
+        (function () {
+            let standalone = false;
+            try {
+                standalone = (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || window.navigator.standalone === true;
+            } catch (error) {
+                standalone = false;
+            }
+            document.documentElement.classList.add(standalone ? "app-standalone" : "app-browser");
+        })();
+    </script>
     <style>
         :root {
             --bg-1: #05101f;
@@ -43,6 +58,12 @@
                 radial-gradient(circle at 12% 100%, rgba(59, 130, 246, 0.14), transparent 20%),
                 linear-gradient(180deg, var(--bg-3) 0%, var(--bg-2) 40%, var(--bg-1) 100%);
             color: var(--text);
+        }
+
+        html.app-standalone,
+        html.app-standalone body {
+            overscroll-behavior: none;
+            -webkit-tap-highlight-color: transparent;
         }
 
         * {
@@ -83,6 +104,14 @@
             box-shadow: var(--shadow);
             backdrop-filter: blur(16px);
             box-shadow: var(--shadow), var(--inner-shadow);
+        }
+
+        html.app-standalone .header-card,
+        html.app-standalone .employee-card,
+        html.app-standalone .actions-card,
+        html.app-standalone .status-card {
+            backdrop-filter: none;
+            box-shadow: 0 12px 24px rgba(2, 8, 23, 0.22), var(--inner-shadow);
         }
 
         .header-card {
@@ -772,6 +801,17 @@
                 font-size: 10px;
             }
 
+            .header-actions {
+                width: 100%;
+            }
+
+            .install-pill,
+            .kiosk-logout-btn {
+                flex: 1 1 140px;
+                text-align: center;
+                justify-content: center;
+            }
+
             .employee-card {
                 padding: 10px 10px 8px;
                 gap: 6px;
@@ -881,11 +921,17 @@
 
             .header-actions {
                 gap: 6px;
+                width: 100%;
             }
 
             .kiosk-logout-btn {
                 padding: 6px 10px;
                 font-size: 9px;
+            }
+
+            .install-pill,
+            .kiosk-logout-btn {
+                flex: 1 1 120px;
             }
 
             .employee-card {
@@ -1606,13 +1652,31 @@
             });
         }
 
-        if (!isStandalone && "serviceWorker" in navigator && serviceWorkerUrl) {
+        if ("serviceWorker" in navigator && serviceWorkerUrl) {
             window.addEventListener("load", function () {
-                navigator.serviceWorker.register(serviceWorkerUrl).catch(function (error) {
+                navigator.serviceWorker.register(serviceWorkerUrl, { updateViaCache: "none" }).then(function (registration) {
+                    if (registration.waiting) {
+                        registration.waiting.postMessage({ type: "SKIP_WAITING" });
+                    }
+
+                    registration.addEventListener("updatefound", function () {
+                        const newWorker = registration.installing;
+                        if (!newWorker) {
+                            return;
+                        }
+                        newWorker.addEventListener("statechange", function () {
+                            if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
+                                newWorker.postMessage({ type: "SKIP_WAITING" });
+                            }
+                        });
+                    });
+                }).catch(function (error) {
                     console.warn("Scanner service worker registration failed.", error);
                 });
             });
-        } else {
+        }
+
+        if (isStandalone) {
             hideInstallButton();
         }
     });
