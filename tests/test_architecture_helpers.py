@@ -29,6 +29,20 @@ from attendance_core.attendance import (
     parse_shift_start,
     total_work_minutes,
 )
+from attendance_core.admin_access import (
+    ADMIN_ENDPOINT_PERMISSIONS,
+    admin_has_permission,
+    describe_admin_permissions,
+    get_admin_permission_codes,
+    get_admin_role_preset_meta,
+    get_home_endpoint_for_role,
+    get_home_endpoint_for_user,
+    infer_admin_role_preset,
+    normalize_admin_permissions,
+    normalize_admin_role_preset,
+    row_get,
+    sync_admin_role_preset,
+)
 from attendance_core.date_ranges import (
     get_admin_report_period_dates,
     get_payroll_period_dates,
@@ -71,6 +85,38 @@ from attendance_core.workflows import (
 
 
 class ArchitectureHelpersTestCase(unittest.TestCase):
+    def test_admin_permission_helpers(self):
+        normalized = normalize_admin_permissions(["reports", "Reports", "payroll", "bad", "payroll"])
+        self.assertEqual(normalized, "reports,payroll")
+        self.assertEqual(normalize_admin_role_preset("payroll_officer"), "payroll_officer")
+        self.assertEqual(normalize_admin_role_preset("bad"), "")
+        self.assertEqual(infer_admin_role_preset("dashboard,reports"), "reports_viewer")
+        self.assertEqual(
+            sync_admin_role_preset("reports_viewer", "reports,dashboard"),
+            ("reports_viewer", "reports,dashboard"),
+        )
+
+    def test_admin_access_meta_and_home_endpoint_helpers(self):
+        admin_user = {
+            "role": "admin",
+            "admin_permissions": "dashboard,reports",
+            "admin_role_preset": "",
+        }
+        self.assertEqual(row_get(admin_user, "role"), "admin")
+        self.assertEqual(get_admin_permission_codes(admin_user), {"dashboard", "reports"})
+        self.assertTrue(admin_has_permission(admin_user, "reports"))
+        self.assertFalse(admin_has_permission(admin_user, "payroll"))
+        self.assertEqual(describe_admin_permissions(admin_user), "Dashboard, Reports")
+        meta = get_admin_role_preset_meta(permission_values="dashboard,reports")
+        self.assertEqual(meta["code"], "reports_viewer")
+        self.assertEqual(get_home_endpoint_for_role("scanner"), "scanner_kiosk")
+        self.assertEqual(get_home_endpoint_for_user(admin_user), "admin_dashboard")
+        self.assertEqual(get_home_endpoint_for_user({"role": "scanner"}), "scanner_kiosk")
+
+    def test_admin_endpoint_permission_map_covers_core_pages(self):
+        self.assertEqual(ADMIN_ENDPOINT_PERMISSIONS["admin_dashboard"], "dashboard")
+        self.assertEqual(ADMIN_ENDPOINT_PERMISSIONS["admin_reports"], "reports")
+
     def test_minutes_to_hm_handles_none(self):
         self.assertEqual(minutes_to_hm(None), "0h 0m")
 
