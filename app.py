@@ -5330,18 +5330,49 @@ def build_recovery_pack_workbook():
     return workbook
 
 
-def normalize_admin_report_filters(date_from_value="", date_to_value="", department_filter=""):
+def get_admin_report_period_dates(period_value="", date_from_value="", date_to_value=""):
     today = now_dt().date()
-    default_from = today.replace(day=1)
-    date_from = parse_iso_date(date_from_value, default_from)
-    date_to = parse_iso_date(date_to_value, today)
+    selected_period = (period_value or "").strip().lower()
+    if selected_period == "last_month":
+        first_this_month = today.replace(day=1)
+        date_to = first_this_month - timedelta(days=1)
+        date_from = date_to.replace(day=1)
+    elif selected_period == "last_14_days":
+        date_from = today - timedelta(days=13)
+        date_to = today
+    elif selected_period == "custom":
+        default_from = today.replace(day=1)
+        date_from = parse_iso_date(date_from_value, default_from)
+        date_to = parse_iso_date(date_to_value, today)
+    else:
+        selected_period = "this_month"
+        date_from = today.replace(day=1)
+        date_to = today
     if date_to < date_from:
         date_from, date_to = date_to, date_from
+    return selected_period, date_from, date_to
+
+
+def normalize_admin_report_filters(date_from_value="", date_to_value="", department_filter="", period_value=""):
+    selected_period, date_from, date_to = get_admin_report_period_dates(
+        period_value,
+        date_from_value,
+        date_to_value
+    )
+    period_label_map = {
+        "this_month": "This Month",
+        "last_14_days": "Last 14 Days",
+        "last_month": "Last Month",
+        "custom": "Custom Range",
+    }
     return {
+        "period": selected_period,
+        "period_label": period_label_map.get(selected_period, "Custom Range"),
         "date_from": date_from,
         "date_to": date_to,
         "date_from_text": date_from.strftime("%Y-%m-%d"),
         "date_to_text": date_to.strftime("%Y-%m-%d"),
+        "range_days": max((date_to - date_from).days + 1, 1),
         "department_filter": (department_filter or "").strip(),
     }
 
@@ -5484,11 +5515,15 @@ def build_admin_reports_data(date_from, date_to, department_filter=""):
         day_row = daily_map.setdefault(attendance["work_date"], {
             "work_date": attendance["work_date"],
             "attendance_days": 0,
+            "attendance_hours": 0.0,
             "late_punches": 0,
             "overtime_hours": 0.0,
+            "break_minutes": 0,
         })
         day_row["attendance_days"] += 1
+        day_row["attendance_hours"] = round(day_row["attendance_hours"] + hours_worked, 2)
         day_row["late_punches"] += int(attendance.get("late_flag") or 0)
+        day_row["break_minutes"] += break_minutes
 
     total_overtime_hours = 0.0
     for overtime in overtime_rows:
@@ -5529,8 +5564,10 @@ def build_admin_reports_data(date_from, date_to, department_filter=""):
         day_row = daily_map.setdefault(overtime["work_date"], {
             "work_date": overtime["work_date"],
             "attendance_days": 0,
+            "attendance_hours": 0.0,
             "late_punches": 0,
             "overtime_hours": 0.0,
+            "break_minutes": 0,
         })
         day_row["overtime_hours"] = round(day_row["overtime_hours"] + overtime_hours, 2)
 
@@ -5571,6 +5608,7 @@ def build_admin_reports_data(date_from, date_to, department_filter=""):
         """, (date_to_text, date_from_text))
     ]
     pending_corrections_count = 0
+    pending_leave_requests_count = 0
     leave_summary_map = {}
     correction_summary_map = {}
     for request_row in correction_rows:
@@ -5584,13 +5622,16 @@ def build_admin_reports_data(date_from, date_to, department_filter=""):
             continue
         report_employee_ids.add(int(request_row["user_id"]))
         department_employee_ids.setdefault(department_name, set()).add(int(request_row["user_id"]))
-        correction_key = (request_row["request_type"], request_row["status"])
-        correction_summary_map[correction_key] = correction_summary_map.get(correction_key, 0) + 1
-        if request_row["status"] == "Pending":
-            pending_corrections_count += 1
         if request_row["request_type"] in {"Sick Leave", "Paid Leave"}:
             summary_key = (request_row["request_type"], request_row["status"])
             leave_summary_map[summary_key] = leave_summary_map.get(summary_key, 0) + 1
+            if request_row["status"] == "Pending":
+                pending_leave_requests_count += 1
+        else:
+            correction_key = (request_row["request_type"], request_row["status"])
+            correction_summary_map[correction_key] = correction_summary_map.get(correction_key, 0) + 1
+            if request_row["status"] == "Pending":
+                pending_corrections_count += 1
     leave_summary_rows = [
         {
             "request_type": request_type,
@@ -5649,23 +5690,28 @@ def build_admin_reports_data(date_from, date_to, department_filter=""):
     released_runs = [
         dict(row)
         for row in fetchall("""
-            SELECT pr.*, creator.full_name AS created_by_name
+            SELECT
+                pr.*,
+                creator.full_name AS created_by_name,
+                COUNT(pri.id) AS payroll_rows,
+                COUNT(DISTINCT pri.user_id) AS employee_count,
+                COALESCE(SUM(pri.final_pay), 0) AS released_total,
+                COALESCE(SUM(pri.overtime_pay), 0) AS overtime_pay_total,
+                COALESCE(SUM(pri.allowances), 0) AS allowances_total,
+                COALESCE(SUM(pri.deductions), 0) AS deductions_total
             FROM payroll_runs pr
             LEFT JOIN users creator ON creator.id = pr.created_by
+            JOIN payroll_run_items pri ON pri.payroll_run_id = pr.id
             WHERE pr.status = 'Released'
               AND pr.date_from <= ?
               AND pr.date_to >= ?
               {department_clause}
+            GROUP BY pr.id, creator.full_name
             ORDER BY COALESCE(pr.released_at, pr.updated_at) DESC, pr.id DESC
             LIMIT 12
         """.replace(
             "{department_clause}",
-            """AND EXISTS (
-                SELECT 1
-                FROM payroll_run_items pri
-                WHERE pri.payroll_run_id = pr.id
-                  AND COALESCE(pri.department, '') = ?
-            )""" if department_filter else ""
+            "AND COALESCE(pri.department, '') = ?" if department_filter else ""
         ), (
             date_to_text,
             date_from_text,
@@ -5682,9 +5728,26 @@ def build_admin_reports_data(date_from, date_to, department_filter=""):
             run["scope_label"] = f"{run['department_filter']} release"
         else:
             run["scope_label"] = "Company-wide release"
+        run["payroll_rows"] = int(run.get("payroll_rows") or 0)
+        run["employee_count"] = int(run.get("employee_count") or 0)
+        run["released_total"] = round(float(run.get("released_total") or 0), 2)
+        run["overtime_pay_total"] = round(float(run.get("overtime_pay_total") or 0), 2)
+        run["allowances_total"] = round(float(run.get("allowances_total") or 0), 2)
+        run["deductions_total"] = round(float(run.get("deductions_total") or 0), 2)
+        run["average_final_pay"] = round(
+            run["released_total"] / run["payroll_rows"],
+            2
+        ) if run["payroll_rows"] else 0.0
 
     released_payroll_row = fetchone("""
-        SELECT COUNT(DISTINCT pr.id) AS run_count, COALESCE(SUM(pri.final_pay), 0) AS released_total
+        SELECT
+            COUNT(DISTINCT pr.id) AS run_count,
+            COUNT(*) AS payroll_rows,
+            COUNT(DISTINCT pri.user_id) AS employee_count,
+            COALESCE(SUM(pri.final_pay), 0) AS released_total,
+            COALESCE(SUM(pri.overtime_pay), 0) AS overtime_pay_total,
+            COALESCE(SUM(pri.allowances), 0) AS allowances_total,
+            COALESCE(SUM(pri.deductions), 0) AS deductions_total
         FROM payroll_runs pr
         JOIN payroll_run_items pri ON pri.payroll_run_id = pr.id
         WHERE pr.status = 'Released'
@@ -5697,19 +5760,32 @@ def build_admin_reports_data(date_from, date_to, department_filter=""):
         *((department_filter,) if department_filter else ())
     ))
 
-    summary = {
-        "employee_count": len(report_employee_ids) if report_employee_ids else sum(employee_counts.values()),
-        "attendance_days": attendance_days_count,
-        "attendance_hours": round(total_hours, 2),
-        "late_punches": late_punches,
-        "overtime_hours": round(total_overtime_hours, 2),
-        "break_minutes": total_break_minutes_value,
-        "correction_requests": sum(correction_summary_map.values()),
-        "pending_corrections": pending_corrections_count,
-        "incident_reports": int(incident_row["cnt"] or 0) if incident_row else 0,
-        "released_payroll_runs": int(released_payroll_row["run_count"] or 0) if released_payroll_row else 0,
-        "released_payroll_total": round(float(released_payroll_row["released_total"] or 0), 2) if released_payroll_row else 0.0,
-    }
+    payroll_department_rows = [
+        dict(row)
+        for row in fetchall("""
+            SELECT
+                COALESCE(pri.department, 'Unassigned') AS department,
+                COUNT(*) AS payroll_rows,
+                COUNT(DISTINCT pri.user_id) AS employee_count,
+                COALESCE(SUM(pri.final_pay), 0) AS final_pay_total,
+                COALESCE(SUM(pri.overtime_pay), 0) AS overtime_pay_total,
+                COALESCE(SUM(pri.allowances), 0) AS allowances_total,
+                COALESCE(SUM(pri.deductions), 0) AS deductions_total
+            FROM payroll_runs pr
+            JOIN payroll_run_items pri ON pri.payroll_run_id = pr.id
+            WHERE pr.status = 'Released'
+              AND pr.date_from <= ?
+              AND pr.date_to >= ?
+              {department_clause}
+            GROUP BY COALESCE(pri.department, 'Unassigned')
+            ORDER BY final_pay_total DESC, department ASC
+        """.replace("{department_clause}", "AND COALESCE(pri.department, '') = ?" if department_filter else ""), (
+            date_to_text,
+            date_from_text,
+            *((department_filter,) if department_filter else ())
+        ))
+    ]
+
     leave_rows = [
         {
             "request_type": row["request_type"],
@@ -5739,14 +5815,174 @@ def build_admin_reports_data(date_from, date_to, department_filter=""):
     )[:10]
     incident_summary_rows = sorted(incident_summary_map.values(), key=lambda item: (-item["total_count"], item["error_type"]))
 
+    report_employee_count = len(report_employee_ids) if report_employee_ids else sum(employee_counts.values())
+    active_report_days = len(daily_rows)
+    leave_requests_total = sum(row["request_count"] for row in leave_rows)
+    pending_leave_requests = pending_leave_requests_count
+    correction_requests_total = sum(correction_summary_map.values())
+    incident_total_count = sum(int(row.get("total_count") or 0) for row in incident_summary_rows)
+    incident_open_count = sum(int(row.get("open_count") or 0) for row in incident_summary_rows)
+    incident_reviewed_count = sum(int(row.get("reviewed_count") or 0) for row in incident_summary_rows)
+    incident_resolved_count = sum(int(row.get("resolved_count") or 0) for row in incident_summary_rows)
+    incident_follow_up_count = incident_open_count + incident_reviewed_count
+    released_payroll_runs_count = int(released_payroll_row["run_count"] or 0) if released_payroll_row else 0
+    released_payroll_rows_count = int(released_payroll_row["payroll_rows"] or 0) if released_payroll_row else 0
+    released_payroll_employee_count = int(released_payroll_row["employee_count"] or 0) if released_payroll_row else 0
+    released_payroll_total = round(float(released_payroll_row["released_total"] or 0), 2) if released_payroll_row else 0.0
+    released_payroll_overtime_total = round(float(released_payroll_row["overtime_pay_total"] or 0), 2) if released_payroll_row else 0.0
+    released_payroll_allowances_total = round(float(released_payroll_row["allowances_total"] or 0), 2) if released_payroll_row else 0.0
+    released_payroll_deductions_total = round(float(released_payroll_row["deductions_total"] or 0), 2) if released_payroll_row else 0.0
+
+    for row in department_rows:
+        row["attendance_share_percent"] = round((row["attendance_hours"] / total_hours) * 100, 1) if total_hours else 0.0
+        row["overtime_share_percent"] = round((row["overtime_hours"] / total_overtime_hours) * 100, 1) if total_overtime_hours else 0.0
+
+    for row in payroll_department_rows:
+        row["payroll_rows"] = int(row.get("payroll_rows") or 0)
+        row["employee_count"] = int(row.get("employee_count") or 0)
+        row["final_pay_total"] = round(float(row.get("final_pay_total") or 0), 2)
+        row["overtime_pay_total"] = round(float(row.get("overtime_pay_total") or 0), 2)
+        row["allowances_total"] = round(float(row.get("allowances_total") or 0), 2)
+        row["deductions_total"] = round(float(row.get("deductions_total") or 0), 2)
+        row["average_final_pay"] = round(
+            row["final_pay_total"] / row["payroll_rows"],
+            2
+        ) if row["payroll_rows"] else 0.0
+
+    def build_highlight_card(title, row, primary_value, secondary_text, empty_text):
+        if not row:
+            return {
+                "title": title,
+                "label": "No data",
+                "primary_value": "0",
+                "secondary_text": empty_text,
+            }
+        return {
+            "title": title,
+            "label": row.get("work_date") or row.get("department") or "No data",
+            "primary_value": primary_value,
+            "secondary_text": secondary_text,
+        }
+
+    peak_attendance_day = max(daily_rows, key=lambda item: (item["attendance_days"], item["attendance_hours"], item["work_date"])) if daily_rows else None
+    peak_overtime_day = max(daily_rows, key=lambda item: (item["overtime_hours"], item["attendance_days"], item["work_date"])) if daily_rows else None
+    highest_late_day = max(daily_rows, key=lambda item: (item["late_punches"], item["attendance_days"], item["work_date"])) if daily_rows else None
+    attendance_department_leader = max(department_rows, key=lambda item: (item["attendance_hours"], item["attendance_days"], item["department"])) if department_rows else None
+    overtime_department_leader = max(department_rows, key=lambda item: (item["overtime_hours"], item["attendance_hours"], item["department"])) if department_rows else None
+    late_department_leader = max(department_rows, key=lambda item: (item["late_punches"], item["attendance_days"], item["department"])) if department_rows else None
+
+    trend_highlights = [
+        build_highlight_card(
+            "Peak Attendance Day",
+            peak_attendance_day,
+            str(int(peak_attendance_day["attendance_days"])) if peak_attendance_day else "0",
+            f"{peak_attendance_day['attendance_hours']:.2f} attendance hours logged" if peak_attendance_day else "No attendance rows in this range.",
+            "No attendance rows in this range."
+        ),
+        build_highlight_card(
+            "Peak Overtime Day",
+            peak_overtime_day,
+            f"{peak_overtime_day['overtime_hours']:.2f}" if peak_overtime_day else "0.00",
+            f"{peak_overtime_day['attendance_days']} attendance row(s) also closed that day" if peak_overtime_day else "No overtime sessions in this range.",
+            "No overtime sessions in this range."
+        ),
+        build_highlight_card(
+            "Highest Late Punch Day",
+            highest_late_day,
+            str(int(highest_late_day["late_punches"])) if highest_late_day else "0",
+            f"{highest_late_day['attendance_days']} attendance row(s) recorded" if highest_late_day else "No late punches in this range.",
+            "No late punches in this range."
+        ),
+    ]
+    department_highlights = [
+        build_highlight_card(
+            "Attendance Leader",
+            attendance_department_leader,
+            f"{attendance_department_leader['attendance_hours']:.2f}" if attendance_department_leader else "0.00",
+            f"{attendance_department_leader['attendance_days']} attendance day(s) in scope" if attendance_department_leader else "No department activity in this range.",
+            "No department activity in this range."
+        ),
+        build_highlight_card(
+            "Overtime Leader",
+            overtime_department_leader,
+            f"{overtime_department_leader['overtime_hours']:.2f}" if overtime_department_leader else "0.00",
+            f"{overtime_department_leader['attendance_hours']:.2f} attendance hours in the same range" if overtime_department_leader else "No overtime activity in this range.",
+            "No overtime activity in this range."
+        ),
+        build_highlight_card(
+            "Most Late Punches",
+            late_department_leader,
+            str(int(late_department_leader["late_punches"])) if late_department_leader else "0",
+            f"{late_department_leader['attendance_days']} attendance day(s) affected" if late_department_leader else "No late punches in this range.",
+            "No late punches in this range."
+        ),
+    ]
+    case_rows = [
+        {
+            "area": "Leave Requests",
+            "action_needed": pending_leave_requests,
+            "closed_count": max(leave_requests_total - pending_leave_requests, 0),
+            "total_count": leave_requests_total,
+        },
+        {
+            "area": "Correction Requests",
+            "action_needed": pending_corrections_count,
+            "closed_count": max(correction_requests_total - pending_corrections_count, 0),
+            "total_count": correction_requests_total,
+        },
+        {
+            "area": "Incident Reports",
+            "action_needed": incident_follow_up_count,
+            "closed_count": incident_resolved_count,
+            "total_count": incident_total_count,
+        },
+    ]
+
+    summary = {
+        "employee_count": report_employee_count,
+        "attendance_days": attendance_days_count,
+        "attendance_hours": round(total_hours, 2),
+        "avg_hours_per_day": round(total_hours / active_report_days, 2) if active_report_days else 0.0,
+        "avg_hours_per_employee": round(total_hours / report_employee_count, 2) if report_employee_count else 0.0,
+        "late_punches": late_punches,
+        "late_rate_percent": round((late_punches / attendance_days_count) * 100, 1) if attendance_days_count else 0.0,
+        "overtime_hours": round(total_overtime_hours, 2),
+        "overtime_share_percent": round((total_overtime_hours / total_hours) * 100, 1) if total_hours else 0.0,
+        "break_minutes": total_break_minutes_value,
+        "break_hours": round(total_break_minutes_value / 60, 2),
+        "correction_requests": correction_requests_total,
+        "pending_corrections": pending_corrections_count,
+        "leave_requests": leave_requests_total,
+        "pending_leave_requests": pending_leave_requests,
+        "incident_reports": int(incident_row["cnt"] or 0) if incident_row else 0,
+        "incident_follow_ups": incident_follow_up_count,
+        "follow_up_count": pending_leave_requests + pending_corrections_count + incident_follow_up_count,
+        "released_payroll_runs": released_payroll_runs_count,
+        "released_payroll_rows": released_payroll_rows_count,
+        "released_payroll_employee_count": released_payroll_employee_count,
+        "released_payroll_total": released_payroll_total,
+        "released_payroll_average": round(
+            released_payroll_total / released_payroll_rows_count,
+            2
+        ) if released_payroll_rows_count else 0.0,
+        "released_payroll_overtime_total": released_payroll_overtime_total,
+        "released_payroll_allowances_total": released_payroll_allowances_total,
+        "released_payroll_deductions_total": released_payroll_deductions_total,
+        "active_report_days": active_report_days,
+    }
+
     return {
         "summary": summary,
+        "trend_highlights": trend_highlights,
+        "department_highlights": department_highlights,
+        "case_rows": case_rows,
         "department_rows": department_rows,
         "daily_rows": daily_rows,
         "leave_rows": leave_rows,
         "correction_rows": correction_rows_summary,
         "incident_rows": incident_summary_rows,
         "top_employee_rows": top_employee_rows,
+        "payroll_department_rows": payroll_department_rows,
         "released_runs": released_runs,
     }
 
@@ -10343,7 +10579,8 @@ def admin_reports():
     filters = normalize_admin_report_filters(
         request.args.get("date_from", "").strip(),
         request.args.get("date_to", "").strip(),
-        request.args.get("department", "").strip()
+        request.args.get("department", "").strip(),
+        request.args.get("period", "").strip()
     )
     report_data = get_cached_admin_reports_data(
         filters["date_from"],
@@ -10353,6 +10590,8 @@ def admin_reports():
     return render_template(
         "admin_reports.html",
         departments=get_department_options(),
+        period=filters["period"],
+        period_label=filters["period_label"],
         date_from=filters["date_from_text"],
         date_to=filters["date_to_text"],
         department_filter=filters["department_filter"],
@@ -10367,7 +10606,8 @@ def export_admin_reports_excel():
     filters = normalize_admin_report_filters(
         request.args.get("date_from", "").strip(),
         request.args.get("date_to", "").strip(),
-        request.args.get("department", "").strip()
+        request.args.get("department", "").strip(),
+        request.args.get("period", "").strip()
     )
     report_data = get_cached_admin_reports_data(
         filters["date_from"],
@@ -10378,13 +10618,20 @@ def export_admin_reports_excel():
         from openpyxl import Workbook
     except Exception:
         flash("Excel export requires openpyxl. Install dependencies and try again.", "danger")
-        return redirect(url_for("admin_reports", date_from=filters["date_from_text"], date_to=filters["date_to_text"], department=filters["department_filter"]))
+        return redirect(url_for(
+            "admin_reports",
+            period=filters["period"],
+            date_from=filters["date_from_text"],
+            date_to=filters["date_to_text"],
+            department=filters["department_filter"]
+        ))
 
     workbook = Workbook()
     summary_sheet = workbook.active
     summary_sheet.title = "Summary"
     summary_sheet.append(["Date From", filters["date_from_text"]])
     summary_sheet.append(["Date To", filters["date_to_text"]])
+    summary_sheet.append(["Preset", filters["period_label"]])
     summary_sheet.append(["Department", filters["department_filter"] or "All Departments"])
     summary_sheet.append([])
     summary_sheet.append(["Metric", "Value"])
@@ -10392,21 +10639,34 @@ def export_admin_reports_excel():
         ("Employees in scope", report_data["summary"]["employee_count"]),
         ("Attendance days", report_data["summary"]["attendance_days"]),
         ("Attendance hours", report_data["summary"]["attendance_hours"]),
+        ("Average hours per active day", report_data["summary"]["avg_hours_per_day"]),
+        ("Average hours per employee", report_data["summary"]["avg_hours_per_employee"]),
         ("Late punches", report_data["summary"]["late_punches"]),
+        ("Late rate percent", report_data["summary"]["late_rate_percent"]),
         ("Overtime hours", report_data["summary"]["overtime_hours"]),
+        ("Overtime share percent", report_data["summary"]["overtime_share_percent"]),
         ("Break minutes", report_data["summary"]["break_minutes"]),
+        ("Leave requests", report_data["summary"]["leave_requests"]),
+        ("Incident follow-ups", report_data["summary"]["incident_follow_ups"]),
         ("Pending corrections", report_data["summary"]["pending_corrections"]),
         ("Incident reports", report_data["summary"]["incident_reports"]),
+        ("Released payroll runs", report_data["summary"]["released_payroll_runs"]),
+        ("Released payroll rows", report_data["summary"]["released_payroll_rows"]),
+        ("Released payroll total", report_data["summary"]["released_payroll_total"]),
     ]:
         summary_sheet.append([label, value])
     autosize_workbook_sheet(summary_sheet)
 
+    append_workbook_rows(workbook, "Trend Highlights", report_data["trend_highlights"])
+    append_workbook_rows(workbook, "Department Highlights", report_data["department_highlights"])
+    append_workbook_rows(workbook, "Case Summary", report_data["case_rows"])
     append_workbook_rows(workbook, "Department Summary", report_data["department_rows"])
     append_workbook_rows(workbook, "Daily Trend", report_data["daily_rows"])
     append_workbook_rows(workbook, "Leave Summary", report_data["leave_rows"])
     append_workbook_rows(workbook, "Correction Summary", report_data["correction_rows"])
     append_workbook_rows(workbook, "Incident Summary", report_data["incident_rows"])
     append_workbook_rows(workbook, "Employee Leaders", report_data["top_employee_rows"])
+    append_workbook_rows(workbook, "Payroll Summary", report_data["payroll_department_rows"])
     append_workbook_rows(workbook, "Released Payroll", report_data["released_runs"])
     filename = f"admin-reports-{filters['date_from_text']}-to-{filters['date_to_text']}.xlsx"
     return workbook_to_response(workbook, filename)
