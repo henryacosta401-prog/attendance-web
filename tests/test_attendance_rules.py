@@ -137,6 +137,15 @@ class AttendanceRulesTestCase(unittest.TestCase):
 
         self.assertTrue(result)
 
+    def test_get_home_route_for_user_accepts_sqlite_rows_via_fetchone(self):
+        self.create_employee(username="home-user")
+
+        with attendance_app.app.app_context():
+            user = attendance_app.fetchone("SELECT * FROM users WHERE username = ?", ("home-user",))
+
+        with attendance_app.app.test_request_context("/"):
+            self.assertEqual(attendance_app.get_home_route_for_user(user), "/dashboard")
+
 
 if __name__ == "__main__":
     unittest.main()

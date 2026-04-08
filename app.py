@@ -1,13 +1,11 @@
 import calendar
 import os
-import os
 import secrets
 import shutil
 import sqlite3
 import textwrap
 from io import BytesIO
 from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
 from functools import wraps
 from urllib.parse import quote
 
@@ -18,6 +16,68 @@ from flask import (
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
+
+from attendance_core.config import (
+    ADMIN_ALERT_SCAN_TTL_SECONDS,
+    ADMIN_PERMISSION_CODES,
+    ADMIN_PERMISSION_LABELS,
+    ADMIN_PERMISSION_OPTIONS,
+    ADMIN_ROLE_PRESET_OPTIONS,
+    ADMIN_ROLE_PRESETS,
+    ADMIN_STATUS_CACHE_TTL_SECONDS,
+    ALLOWED_EXTENSIONS,
+    APP_TIMEZONE,
+    ATTENDANCE_REQUEST_TYPES,
+    BACKUP_FOLDER,
+    BASE_DIR,
+    BREAK_LIMIT_MINUTES,
+    DATABASE_URL,
+    DEFAULT_BACKUP_FOLDER,
+    DEFAULT_BREAK_WINDOW_END,
+    DEFAULT_BREAK_WINDOW_START,
+    DEFAULT_PAID_LEAVE_DAYS,
+    DEFAULT_SCHEDULE_DAYS,
+    DEFAULT_SECRET_KEY,
+    DEFAULT_SHIFT_END,
+    DEFAULT_SHIFT_START,
+    DEFAULT_SICK_LEAVE_DAYS,
+    DEFAULT_SQLITE_DATABASE,
+    DEFAULT_UPLOAD_FOLDER,
+    DISCIPLINARY_ACTION_TYPES,
+    DOCUMENT_EXTENSIONS,
+    GOOGLE_CREDENTIALS_FILE,
+    GOOGLE_SHEET_NAME,
+    GOOGLE_SHEET_TAB,
+    IMAGE_EXTENSIONS,
+    INCIDENT_ACTION_STATUSES,
+    LATE_GRACE_MINUTES,
+    LEAVE_REQUEST_TYPES,
+    LOGIN_MAX_ATTEMPTS,
+    LOGIN_WINDOW_MINUTES,
+    OPTION_CACHE_TTL_SECONDS,
+    PERSISTENT_DISK_PATH,
+    REPORT_CACHE_TTL_SECONDS,
+    SCHEDULE_CHANGE_APPLY_TTL_SECONDS,
+    SCHEDULE_SPECIAL_RULE_LABELS,
+    SCHEDULE_SPECIAL_RULE_OPTIONS,
+    SQLITE_DATABASE,
+    UPLOAD_FOLDER,
+    WEEKDAY_OPTIONS,
+    get_configured_secret_key,
+    is_production_environment,
+)
+from attendance_core.date_ranges import (
+    get_admin_report_period_dates,
+    get_payroll_period_dates,
+    normalize_admin_report_filters,
+    parse_iso_date,
+    payroll_date_text,
+)
+from attendance_core.formatters import (
+    format_currency,
+    minutes_to_decimal_hours,
+    minutes_to_hm,
+)
 
 # Optional Postgres support
 POSTGRES_ENABLED = False
@@ -36,125 +96,6 @@ try:
     GOOGLE_SHEETS_ENABLED = True
 except Exception:
     GOOGLE_SHEETS_ENABLED = False
-
-# =========================
-# CONFIG
-# =========================
-BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
-PERSISTENT_DISK_PATH = os.environ.get("RENDER_DISK_PATH", "").strip()
-DEFAULT_SQLITE_DATABASE = os.path.join(BASE_DIR, "attendance.db")
-SQLITE_DATABASE = os.environ.get("SQLITE_DATABASE_PATH", "").strip() or (
-    os.path.join(PERSISTENT_DISK_PATH, "attendance.db") if PERSISTENT_DISK_PATH else DEFAULT_SQLITE_DATABASE
-)
-DEFAULT_BACKUP_FOLDER = os.path.join(BASE_DIR, "backups")
-BACKUP_FOLDER = os.environ.get("BACKUP_FOLDER", "").strip() or (
-    os.path.join(PERSISTENT_DISK_PATH, "backups") if PERSISTENT_DISK_PATH else DEFAULT_BACKUP_FOLDER
-)
-DEFAULT_UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
-UPLOAD_FOLDER = os.environ.get("UPLOAD_FOLDER", "").strip() or (
-    os.path.join(PERSISTENT_DISK_PATH, "uploads") if PERSISTENT_DISK_PATH else DEFAULT_UPLOAD_FOLDER
-)
-IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
-DOCUMENT_EXTENSIONS = {"pdf"}
-ALLOWED_EXTENSIONS = IMAGE_EXTENSIONS | DOCUMENT_EXTENSIONS
-
-GOOGLE_CREDENTIALS_FILE = os.path.join(BASE_DIR, "attendance-credentials.json")
-GOOGLE_SHEET_NAME = "Attendance Tracker"
-GOOGLE_SHEET_TAB = "Attendance Logs"
-
-APP_TIMEZONE = ZoneInfo("America/New_York")
-DEFAULT_SHIFT_START = "09:00"
-DEFAULT_SHIFT_END = "18:00"
-DEFAULT_SCHEDULE_DAYS = "Mon,Tue,Wed,Thu,Fri"
-DEFAULT_BREAK_WINDOW_START = "12:00"
-DEFAULT_BREAK_WINDOW_END = "12:15"
-WEEKDAY_OPTIONS = [
-    ("Mon", "Monday"),
-    ("Tue", "Tuesday"),
-    ("Wed", "Wednesday"),
-    ("Thu", "Thursday"),
-    ("Fri", "Friday"),
-    ("Sat", "Saturday"),
-    ("Sun", "Sunday"),
-]
-LATE_GRACE_MINUTES = 1
-BREAK_LIMIT_MINUTES = 15
-INCIDENT_ACTION_STATUSES = ("Coaching", "Suspension", "NTE")
-DISCIPLINARY_ACTION_TYPES = ("Coaching", "NTE", "Suspension")
-ATTENDANCE_REQUEST_TYPES = {
-    "Missed Time In",
-    "Missed Time Out",
-    "Wrong Break",
-    "Wrong Proof",
-    "Undertime",
-    "Sick Leave",
-    "Paid Leave",
-    "Other",
-}
-LEAVE_REQUEST_TYPES = {"Sick Leave", "Paid Leave"}
-DEFAULT_SICK_LEAVE_DAYS = 7
-DEFAULT_PAID_LEAVE_DAYS = 7
-ADMIN_PERMISSION_OPTIONS = [
-    ("dashboard", "Dashboard"),
-    ("employees", "Employees"),
-    ("attendance", "Attendance"),
-    ("workflows", "Workflows"),
-    ("payroll", "Payroll"),
-    ("reports", "Reports"),
-    ("settings", "Settings"),
-]
-ADMIN_PERMISSION_CODES = {code for code, _ in ADMIN_PERMISSION_OPTIONS}
-ADMIN_PERMISSION_LABELS = {code: label for code, label in ADMIN_PERMISSION_OPTIONS}
-ADMIN_ROLE_PRESET_OPTIONS = [
-    ("full_admin", "Full Admin", "All modules and settings access.", ["dashboard", "employees", "attendance", "workflows", "payroll", "reports", "settings"]),
-    ("attendance_supervisor", "Attendance Supervisor", "Monitor live attendance, scanner activity, corrections, and operational exceptions without employee or payroll access.", ["dashboard", "attendance", "reports"]),
-    ("people_ops", "HR", "Manage employees, leave, incidents, and disciplinary workflows without payroll or settings access.", ["dashboard", "employees", "workflows", "reports"]),
-    ("payroll_officer", "Payroll", "Build payroll, manage recurring pay rules, and review payroll reports without employee-admin settings access.", ["dashboard", "payroll", "reports"]),
-    ("reports_viewer", "Viewer / Report-Only", "Read-only access to dashboard summaries and the reporting center.", ["dashboard", "reports"]),
-]
-ADMIN_ROLE_PRESETS = {
-    code: {
-        "code": code,
-        "label": label,
-        "description": description,
-        "permissions": tuple(permissions),
-    }
-    for code, label, description, permissions in ADMIN_ROLE_PRESET_OPTIONS
-}
-SCHEDULE_SPECIAL_RULE_OPTIONS = [
-    ("holiday", "Holiday"),
-    ("rest_day", "Rest Day"),
-]
-SCHEDULE_SPECIAL_RULE_LABELS = {code: label for code, label in SCHEDULE_SPECIAL_RULE_OPTIONS}
-ADMIN_STATUS_CACHE_TTL_SECONDS = 12
-OPTION_CACHE_TTL_SECONDS = 60
-REPORT_CACHE_TTL_SECONDS = 90
-SCHEDULE_CHANGE_APPLY_TTL_SECONDS = 60
-ADMIN_ALERT_SCAN_TTL_SECONDS = 45
-
-DEFAULT_SECRET_KEY = "dev-secret-key"
-LOGIN_WINDOW_MINUTES = 15
-LOGIN_MAX_ATTEMPTS = 10
-
-
-def is_production_environment():
-    return any([
-        os.environ.get("RENDER"),
-        os.environ.get("RENDER_EXTERNAL_URL"),
-        os.environ.get("DATABASE_URL"),
-        os.environ.get("FLASK_ENV") == "production",
-    ])
-
-
-def get_configured_secret_key():
-    secret_key = os.environ.get("SECRET_KEY", DEFAULT_SECRET_KEY).strip() or DEFAULT_SECRET_KEY
-    if secret_key == DEFAULT_SECRET_KEY and is_production_environment():
-        raise RuntimeError(
-            "SECRET_KEY must be set to a strong random value in production before the app can start."
-        )
-    return secret_key
-
 
 app = Flask(__name__)
 app.secret_key = get_configured_secret_key()
@@ -253,24 +194,54 @@ def convert_query(query: str) -> str:
     return query.replace("?", "%s")
 
 
+def normalize_db_row(row):
+    if isinstance(row, sqlite3.Row):
+        return dict(row)
+    return row
+
+
 def fetchone(query, params=()):
-    db = get_db()
     if using_postgres():
-        with db.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(convert_query(query), params)
-            return cur.fetchone()
-    cur = db.execute(query, params)
-    return cur.fetchone()
+        db = get_db() if has_app_context() else psycopg2.connect(DATABASE_URL)
+        try:
+            with db.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(convert_query(query), params)
+                return cur.fetchone()
+        finally:
+            if not has_app_context():
+                db.close()
+    if has_app_context():
+        cur = get_db().execute(query, params)
+        return normalize_db_row(cur.fetchone())
+    db = sqlite3.connect(SQLITE_DATABASE)
+    db.row_factory = sqlite3.Row
+    try:
+        cur = db.execute(query, params)
+        return normalize_db_row(cur.fetchone())
+    finally:
+        db.close()
 
 
 def fetchall(query, params=()):
-    db = get_db()
     if using_postgres():
-        with db.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(convert_query(query), params)
-            return cur.fetchall()
-    cur = db.execute(query, params)
-    return cur.fetchall()
+        db = get_db() if has_app_context() else psycopg2.connect(DATABASE_URL)
+        try:
+            with db.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(convert_query(query), params)
+                return cur.fetchall()
+        finally:
+            if not has_app_context():
+                db.close()
+    if has_app_context():
+        cur = get_db().execute(query, params)
+        return [normalize_db_row(row) for row in cur.fetchall()]
+    db = sqlite3.connect(SQLITE_DATABASE)
+    db.row_factory = sqlite3.Row
+    try:
+        cur = db.execute(query, params)
+        return [normalize_db_row(row) for row in cur.fetchall()]
+    finally:
+        db.close()
 
 
 def execute_db(query, params=(), commit=False):
@@ -4551,16 +4522,6 @@ def total_work_minutes(attendance_row):
     return max(int((end - start).total_seconds() // 60), 0)
 
 
-def minutes_to_hm(minutes):
-    h = minutes // 60
-    m = minutes % 60
-    return f"{h}h {m}m"
-
-
-def minutes_to_decimal_hours(minutes):
-    return round((minutes or 0) / 60, 2)
-
-
 def parse_datetime_local_input(value):
     raw_value = (value or "").strip()
     if not raw_value:
@@ -5131,13 +5092,6 @@ def parse_money_value(value, default=0.0):
         return default
 
 
-def format_currency(value):
-    try:
-        return f"PHP {float(value or 0):,.2f}"
-    except Exception:
-        return "PHP 0.00"
-
-
 def notify_admins_for_leave_and_disciplinary_events():
     if not should_run_admin_notification_scan("leave_and_disciplinary"):
         return
@@ -5198,13 +5152,6 @@ def summarize_employee_admin_changes(before_row, after_values):
         if str(before) != str(after):
             changes.append(f"{label}: {before} -> {after}")
     return "; ".join(changes) if changes else "No tracked employee settings changed."
-
-
-def parse_iso_date(value, fallback=None):
-    try:
-        return datetime.strptime(str(value).strip(), "%Y-%m-%d").date()
-    except Exception:
-        return fallback
 
 
 def workbook_to_response(workbook, filename):
@@ -5330,51 +5277,6 @@ def build_recovery_pack_workbook():
     return workbook
 
 
-def get_admin_report_period_dates(period_value="", date_from_value="", date_to_value=""):
-    today = now_dt().date()
-    selected_period = (period_value or "").strip().lower()
-    if selected_period == "last_month":
-        first_this_month = today.replace(day=1)
-        date_to = first_this_month - timedelta(days=1)
-        date_from = date_to.replace(day=1)
-    elif selected_period == "last_14_days":
-        date_from = today - timedelta(days=13)
-        date_to = today
-    elif selected_period == "custom":
-        default_from = today.replace(day=1)
-        date_from = parse_iso_date(date_from_value, default_from)
-        date_to = parse_iso_date(date_to_value, today)
-    else:
-        selected_period = "this_month"
-        date_from = today.replace(day=1)
-        date_to = today
-    if date_to < date_from:
-        date_from, date_to = date_to, date_from
-    return selected_period, date_from, date_to
-
-
-def normalize_admin_report_filters(date_from_value="", date_to_value="", department_filter="", period_value=""):
-    selected_period, date_from, date_to = get_admin_report_period_dates(
-        period_value,
-        date_from_value,
-        date_to_value
-    )
-    period_label_map = {
-        "this_month": "This Month",
-        "last_14_days": "Last 14 Days",
-        "last_month": "Last Month",
-        "custom": "Custom Range",
-    }
-    return {
-        "period": selected_period,
-        "period_label": period_label_map.get(selected_period, "Custom Range"),
-        "date_from": date_from,
-        "date_to": date_to,
-        "date_from_text": date_from.strftime("%Y-%m-%d"),
-        "date_to_text": date_to.strftime("%Y-%m-%d"),
-        "range_days": max((date_to - date_from).days + 1, 1),
-        "department_filter": (department_filter or "").strip(),
-    }
 
 
 def get_cached_admin_reports_data(date_from, date_to, department_filter=""):
@@ -5986,30 +5888,6 @@ def build_admin_reports_data(date_from, date_to, department_filter=""):
         "payroll_department_rows": payroll_department_rows,
         "released_runs": released_runs,
     }
-
-
-def get_payroll_period_dates(period, date_from_value="", date_to_value=""):
-    today = now_dt().date()
-    if period == "last_month":
-        first_this_month = today.replace(day=1)
-        date_to = first_this_month - timedelta(days=1)
-        date_from = date_to.replace(day=1)
-        return date_from, date_to
-    if period == "last_14_days":
-        return today - timedelta(days=13), today
-    if period == "custom":
-        date_from = parse_iso_date(date_from_value, today.replace(day=1))
-        date_to = parse_iso_date(date_to_value, today)
-        if date_from > date_to:
-            date_from, date_to = date_to, date_from
-        return date_from, date_to
-    return today.replace(day=1), today
-
-
-def payroll_date_text(value):
-    if hasattr(value, "strftime"):
-        return value.strftime("%Y-%m-%d")
-    return str(value or "").strip()
 
 
 def get_payroll_adjustments(date_from, date_to, department_filter="", employee_filter=""):
