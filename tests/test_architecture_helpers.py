@@ -3,9 +3,31 @@ from datetime import date
 from unittest.mock import patch
 
 from attendance_core.config import (
+    APP_TIMEZONE,
     DEFAULT_SECRET_KEY,
     get_configured_secret_key,
     is_production_environment,
+)
+from attendance_core.attendance import (
+    combine_work_date_and_time,
+    format_datetime_12h,
+    format_time_12h,
+    get_attendance_reference_datetime,
+    get_overbreak_minutes,
+    get_schedule_code_for_date,
+    get_schedule_day_codes,
+    get_schedule_summary,
+    get_shift_bounds_for_work_date,
+    normalize_history_reference,
+    normalize_optional_clock_time,
+    normalize_schedule_days,
+    parse_break_limit_minutes,
+    parse_datetime_local_input,
+    parse_db_datetime,
+    parse_optional_schedule_time,
+    parse_shift_end,
+    parse_shift_start,
+    total_work_minutes,
 )
 from attendance_core.date_ranges import (
     get_admin_report_period_dates,
@@ -31,6 +53,7 @@ from attendance_core.reporting import (
     build_highlight_card,
     build_report_highlights,
 )
+from attendance_core.scanner import resolve_client_ip
 
 
 class ArchitectureHelpersTestCase(unittest.TestCase):
@@ -186,6 +209,82 @@ class ArchitectureHelpersTestCase(unittest.TestCase):
         self.assertEqual(department_highlights[0]["label"], "Ops")
         self.assertEqual(case_rows[0]["action_needed"], 2)
         self.assertEqual(case_rows[2]["closed_count"], 7)
+
+    def test_parse_shift_start_and_end_defaults(self):
+        self.assertEqual(parse_shift_start("bad"), "09:00")
+        self.assertEqual(parse_shift_end(""), "18:00")
+
+    def test_parse_optional_schedule_time(self):
+        self.assertEqual(parse_optional_schedule_time("8:30", fallback="09:00"), "08:30")
+        self.assertEqual(parse_optional_schedule_time("08:30"), "08:30")
+
+    def test_normalize_schedule_days_and_summary(self):
+        normalized = normalize_schedule_days(["Wed", "Mon", "Sun", "bad"])
+        self.assertEqual(normalized, "Mon,Wed,Sun")
+        self.assertEqual(get_schedule_day_codes(normalized), ["Mon", "Wed", "Sun"])
+        self.assertEqual(get_schedule_summary(normalized), "Monday, Wednesday, Sunday")
+
+    def test_get_schedule_code_for_date(self):
+        self.assertEqual(get_schedule_code_for_date("2026-04-07"), "Tue")
+
+    def test_normalize_history_reference(self):
+        self.assertEqual(
+            normalize_history_reference(reference_date="2026-04-07"),
+            "2026-04-07 23:59:59",
+        )
+
+    def test_get_attendance_reference_datetime_prefers_time_in(self):
+        self.assertEqual(
+            get_attendance_reference_datetime({
+                "time_in": "2026-04-07 09:00:00",
+                "created_at": "2026-04-07 08:55:00",
+                "work_date": "2026-04-07",
+            }),
+            "2026-04-07 09:00:00",
+        )
+
+    def test_parse_break_limit_minutes_and_overbreak(self):
+        self.assertEqual(parse_break_limit_minutes("20"), 20)
+        self.assertEqual(parse_break_limit_minutes("bad"), 15)
+        self.assertEqual(get_overbreak_minutes(35, 20), 15)
+
+    def test_parse_db_datetime_and_formatters(self):
+        parsed = parse_db_datetime("2026-04-07 21:30:15")
+        self.assertIsNotNone(parsed)
+        self.assertEqual(format_datetime_12h("2026-04-07 21:30:15"), "2026-04-07 09:30:15 PM")
+        self.assertEqual(format_time_12h("2026-04-07 21:30:15"), "09:30:15 PM")
+
+    def test_combine_work_date_and_time_rolls_overnight(self):
+        self.assertEqual(
+            combine_work_date_and_time("2026-04-07", "00:00", not_before="2026-04-07 16:00:00"),
+            "2026-04-08 00:00:00",
+        )
+
+    def test_normalize_optional_clock_time_and_parse_datetime_local_input(self):
+        self.assertEqual(normalize_optional_clock_time("7:45"), "07:45")
+        self.assertEqual(parse_datetime_local_input("2026-04-07T09:15"), "2026-04-07 09:15:00")
+
+    def test_get_shift_bounds_for_work_date_handles_overnight(self):
+        start_dt, end_dt = get_shift_bounds_for_work_date(
+            {"shift_start": "16:00", "shift_end": "00:00"},
+            "2026-04-07",
+        )
+        self.assertEqual(start_dt.tzinfo, APP_TIMEZONE)
+        self.assertEqual(start_dt.strftime("%Y-%m-%d %H:%M:%S"), "2026-04-07 16:00:00")
+        self.assertEqual(end_dt.strftime("%Y-%m-%d %H:%M:%S"), "2026-04-08 00:00:00")
+
+    def test_total_work_minutes(self):
+        self.assertEqual(
+            total_work_minutes({
+                "time_in": "2026-04-07 09:00:00",
+                "time_out": "2026-04-07 17:30:00",
+            }),
+            510,
+        )
+
+    def test_resolve_client_ip(self):
+        self.assertEqual(resolve_client_ip(" 127.0.0.1 "), "127.0.0.1")
+        self.assertEqual(resolve_client_ip(""), "unknown")
 
     def test_is_production_environment_detects_render(self):
         with patch.dict("os.environ", {"RENDER": "true"}, clear=True):
