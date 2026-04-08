@@ -97,7 +97,25 @@
 {% if admin_can('settings') %}
     <div class="card" style="margin-top:20px;">
         <div class="section-title">Admin Team Permissions</div>
-        <p class="muted" style="margin-bottom:14px;">Create limited admin accounts for payroll, attendance, reports, or people operations without giving every admin full access.</p>
+        <p class="muted" style="margin-bottom:14px;">Create limited admin accounts for HR, payroll, attendance supervision, or report-only access without giving every admin full control.</p>
+
+        <div class="grid grid-2" style="margin-bottom:16px; align-items:start;">
+            {% for code, label, description, permissions in admin_role_preset_options %}
+                {% if code != 'full_admin' %}
+                    <div style="padding:14px; border-radius:16px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);">
+                        <div style="font-weight:800; color:#fff;">{{ label }}</div>
+                        <div class="small muted" style="margin-top:6px;">{{ description }}</div>
+                        <div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:10px;">
+                            {% for permission_code, permission_label in admin_permission_options %}
+                                {% if permission_code in permissions %}
+                                    <span class="status status-blue">{{ permission_label }}</span>
+                                {% endif %}
+                            {% endfor %}
+                        </div>
+                    </div>
+                {% endif %}
+            {% endfor %}
+        </div>
 
         <form method="POST">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -120,22 +138,23 @@
 
             <label style="display:block; margin-top:12px;">Role Preset</label>
             <select class="input js-admin-role-preset" name="admin_role_preset">
-                <option value="">Custom Access</option>
+                <option value="" selected>Choose preset first</option>
                 {% for code, label, description, permissions in admin_role_preset_options %}
-                    <option value="{{ code }}" data-permissions="{{ permissions|join(',') }}" {% if code == 'full_admin' %}selected{% endif %}>{{ label }} | {{ description }}</option>
+                    <option value="{{ code }}" data-permissions="{{ permissions|join(',') }}">{{ label }} | {{ description }}</option>
                 {% endfor %}
             </select>
-            <div class="small muted" style="margin-top:8px;">Choose a preset to prefill the permissions below, or leave it on Custom Access for a manual mix.</div>
+            <div class="small muted" style="margin-top:8px;">Choose a preset to prefill the permissions below, or leave it on custom only if you really need a mixed role.</div>
 
             <label style="display:block; margin-top:12px;">Permissions</label>
             <div class="schedule-picker">
                 {% for code, label in admin_permission_options %}
                     <label class="schedule-chip">
-                        <input type="checkbox" name="admin_permissions" value="{{ code }}" checked>
+                        <input type="checkbox" name="admin_permissions" value="{{ code }}">
                         <span>{{ label }}</span>
                     </label>
                 {% endfor %}
             </div>
+            <div class="small muted" style="margin-top:8px;">New admin accounts now start with no permissions selected until you choose a role or manually tick modules.</div>
 
             <div class="top-actions" style="margin-top:16px;">
                 <button class="btn btn-primary" type="submit">Create Admin Account</button>
@@ -185,6 +204,13 @@
                                 {% endfor %}
                             </select>
                             <div class="small muted" style="margin-top:8px;">Current preset: {{ admin_role_meta.label }}</div>
+                            <div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:10px;">
+                                {% for permission_code, permission_label in admin_permission_options %}
+                                    {% if permission_code in admin_role_meta.permissions %}
+                                        <span class="status status-blue">{{ permission_label }}</span>
+                                    {% endif %}
+                                {% endfor %}
+                            </div>
 
                             <label style="display:block; margin-top:12px;">Permissions</label>
                             {% set admin_codes = (admin.admin_permissions.split(',') if admin.admin_permissions else ['dashboard','employees','attendance','workflows','payroll','reports','settings']) %}

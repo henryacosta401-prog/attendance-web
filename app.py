@@ -108,10 +108,10 @@ ADMIN_PERMISSION_CODES = {code for code, _ in ADMIN_PERMISSION_OPTIONS}
 ADMIN_PERMISSION_LABELS = {code: label for code, label in ADMIN_PERMISSION_OPTIONS}
 ADMIN_ROLE_PRESET_OPTIONS = [
     ("full_admin", "Full Admin", "All modules and settings access.", ["dashboard", "employees", "attendance", "workflows", "payroll", "reports", "settings"]),
-    ("attendance_supervisor", "Attendance Supervisor", "Monitor live attendance, corrections, and operational exceptions.", ["dashboard", "attendance", "reports"]),
-    ("people_ops", "People Operations", "Manage employees, leave, incidents, and disciplinary workflows.", ["dashboard", "employees", "workflows", "reports"]),
-    ("payroll_officer", "Payroll Officer", "Run payroll, manage pay rules, and review payroll reports.", ["dashboard", "payroll", "reports"]),
-    ("reports_viewer", "Reports Viewer", "Read-only access to the dashboard and reporting center.", ["dashboard", "reports"]),
+    ("attendance_supervisor", "Attendance Supervisor", "Monitor live attendance, scanner activity, corrections, and operational exceptions without employee or payroll access.", ["dashboard", "attendance", "reports"]),
+    ("people_ops", "HR", "Manage employees, leave, incidents, and disciplinary workflows without payroll or settings access.", ["dashboard", "employees", "workflows", "reports"]),
+    ("payroll_officer", "Payroll", "Build payroll, manage recurring pay rules, and review payroll reports without employee-admin settings access.", ["dashboard", "payroll", "reports"]),
+    ("reports_viewer", "Viewer / Report-Only", "Read-only access to dashboard summaries and the reporting center.", ["dashboard", "reports"]),
 ]
 ADMIN_ROLE_PRESETS = {
     code: {
@@ -2363,7 +2363,7 @@ ADMIN_ENDPOINT_PERMISSIONS = {
     "admin_dashboard": "dashboard",
     "admin_live_status": "dashboard",
     "export_admin_exceptions_excel": "dashboard",
-    "send_admin_notification": "dashboard",
+    "send_admin_notification": "settings",
     "manage_employees": "employees",
     "edit_employee": "employees",
     "print_employee_id": "employees",
