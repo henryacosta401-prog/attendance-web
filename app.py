@@ -5402,15 +5402,16 @@ def build_admin_reports_data(date_from, date_to, department_filter=""):
     employee_context_cache = {}
     employee_context_map_for_end_date = get_effective_employee_context_map(employees, reference_date=date_to_text)
 
-    def get_report_employee_context(employee=None, user_id=None, reference_datetime=None, reference_date=""):
-        resolved_user_id = int(user_id or (employee["id"] if employee else 0) or 0)
+    def get_report_employee_context(user_row=None, user_id=None, reference_datetime=None, reference_date="", employee=None):
+        employee_row = user_row or employee
+        resolved_user_id = int(user_id or (employee_row["id"] if employee_row else 0) or 0)
         if not resolved_user_id:
             return None
         reference_key = normalize_history_reference(reference_datetime=reference_datetime, reference_date=reference_date)
         cache_key = (resolved_user_id, reference_key)
         if cache_key not in employee_context_cache:
             employee_context_cache[cache_key] = get_effective_employee_context(
-                user_row=employee,
+                user_row=employee_row,
                 user_id=resolved_user_id,
                 reference_datetime=reference_datetime,
                 reference_date=reference_date
