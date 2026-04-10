@@ -119,6 +119,18 @@ class AttendanceRulesTestCase(unittest.TestCase):
         self.assertEqual(updated["time_out"], "2026-03-26 22:00:00")
         self.assertEqual(break_row["break_end"], "2026-03-26 22:00:00")
 
+    def test_open_break_minutes_map_handles_timezone_aware_now(self):
+        user = self.create_employee(username="openbreak-user")
+        attendance = self.create_attendance(user["id"], "2026-03-26", "2026-03-26 16:00:00", None, status="On Break")
+        self.create_break(user["id"], attendance["id"], "2026-03-26", "2026-03-26 19:25:00", None)
+
+        fake_now = attendance_app.datetime(2026, 3, 26, 19, 55, tzinfo=attendance_app.APP_TIMEZONE)
+        with patch.object(attendance_app, "now_dt", return_value=fake_now):
+            with attendance_app.app.app_context():
+                break_map = attendance_app.get_break_minutes_map([attendance["id"]], include_open=True)
+
+        self.assertEqual(break_map[attendance["id"]], 30)
+
     def test_missing_timeout_detects_overnight_shift_after_end(self):
         user = self.create_employee(username="nightshift")
         attendance = self.create_attendance(user["id"], "2026-03-26", "2026-03-26 16:00:00", None, status="Timed In")

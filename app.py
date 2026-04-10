@@ -7547,7 +7547,7 @@ def get_break_minutes_map(attendance_ids, include_open=False):
         return {}
     placeholders = ", ".join(["?"] * len(attendance_ids))
     result = {}
-    current_dt = now_dt()
+    current_dt = parse_db_datetime(now_str())
     for row in fetchall(f"""
         SELECT attendance_id, break_start, break_end
         FROM breaks
