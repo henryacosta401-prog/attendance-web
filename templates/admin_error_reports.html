@@ -44,13 +44,9 @@
             <label>Error Type</label>
             <select name="report_type" class="input">
                 <option value="">All</option>
-                <option value="Wrong Costing" {% if report_type == "Wrong Costing" %}selected{% endif %}>Wrong Costing</option>
-                <option value="Wrong Pricing" {% if report_type == "Wrong Pricing" %}selected{% endif %}>Wrong Pricing</option>
-                <option value="Wrong Details" {% if report_type == "Wrong Details" %}selected{% endif %}>Wrong Details</option>
-                <option value="Absent" {% if report_type == "Absent" %}selected{% endif %}>Absent</option>
-                <option value="Wrong QA" {% if report_type == "Wrong QA" %}selected{% endif %}>Wrong QA</option>
-                <option value="Wrong Fulfillment" {% if report_type == "Wrong Fulfillment" %}selected{% endif %}>Wrong Fulfillment</option>
-                <option value="Other" {% if report_type == "Other" %}selected{% endif %}>Other</option>
+                {% for error_type in error_types %}
+                    <option value="{{ error_type }}" {% if report_type == error_type %}selected{% endif %}>{{ error_type }}</option>
+                {% endfor %}
             </select>
         </div>
 
@@ -86,6 +82,8 @@
                         <th>Error Type</th>
                         <th>Report Date</th>
                         <th>Message</th>
+                        <th>Policy Step</th>
+                        <th>Linked Discipline</th>
                         <th>Review Status</th>
                         <th>Admin Note</th>
                         <th>Created At</th>
@@ -101,6 +99,26 @@
                         <td>{{ report.error_type }}</td>
                         <td>{{ report.report_date if report.report_date else report.incident_date }}</td>
                         <td>{{ report.message }}</td>
+                        <td>
+                            {% set incident_count = report.policy_incident_count or 0 %}
+                            {% if report.incident_action %}
+                                <span class="status status-yellow">{{ report.incident_action }}</span>
+                                <div class="small muted">Repeated count: {{ incident_count }}</div>
+                            {% else %}
+                                <span class="status status-gray">Monitoring</span>
+                                <div class="small muted">Repeated count: {{ incident_count }}</div>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if report.disciplinary_action_id %}
+                                <a class="btn btn-gray" href="{{ url_for('admin_disciplinary_dashboard', user_id=report.user_id) }}">
+                                    {{ report.linked_action_type or 'Disciplinary' }} #{{ report.disciplinary_action_id }}
+                                </a>
+                                <div class="small muted">{{ report.linked_action_date or '' }}</div>
+                            {% else %}
+                                <span class="muted">Not linked yet</span>
+                            {% endif %}
+                        </td>
                         <td>
                             {% set report_status = report.status if report.status else 'Open' %}
                             {% if report_status == 'Resolved' %}
@@ -122,9 +140,15 @@
                             {% endif %}
                         </td>
                         <td style="min-width:320px;">
-                            <form method="POST" action="{{ url_for('edit_incident_report', report_id=report.id) }}" class="grid" style="gap:8px; margin-bottom:10px;">
+                            <form method="POST" action="{{ url_for('edit_incident_report', report_id=report.id) }}" class="grid" style="gap:8px; margin-bottom:10px;" data-incident-error-form>
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                <input name="error_type" class="input" type="text" value="{{ report.error_type }}" required>
+                                <select name="error_type" class="input" required>
+                                    {% for error_type in error_types %}
+                                        <option value="{{ error_type }}" {% if report.error_type == error_type %}selected{% endif %}>{{ error_type }}</option>
+                                    {% endfor %}
+                                    <option value="__new__">Create new error type...</option>
+                                </select>
+                                <input name="new_error_type" class="input" type="text" placeholder="New error type name" style="display:none;" data-new-error-type>
                                 <input name="report_date" class="input" type="date" value="{{ report.report_date if report.report_date else report.incident_date }}">
                                 <input name="report_department" class="input" type="text" value="{{ report.report_department if report.report_department else report.department if report.department else '' }}" placeholder="Department">
                                 <textarea name="message" class="textarea" rows="3" placeholder="Update message...">{{ report.message if report.message else '' }}</textarea>
@@ -154,4 +178,21 @@
         <p class="muted">No error reports yet.</p>
     {% endif %}
 </div>
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    document.querySelectorAll("[data-incident-error-form]").forEach(function (form) {
+        const select = form.querySelector("select[name='error_type']");
+        const customInput = form.querySelector("[data-new-error-type]");
+        if (!select || !customInput) return;
+        function syncCustomInput() {
+            const creatingNew = select.value === "__new__";
+            customInput.style.display = creatingNew ? "block" : "none";
+            customInput.required = creatingNew;
+            if (!creatingNew) customInput.value = "";
+        }
+        select.addEventListener("change", syncCustomInput);
+        syncCustomInput();
+    });
+});
+</script>
 {% endblock %}

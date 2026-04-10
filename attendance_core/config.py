@@ -54,8 +54,23 @@ WEEKDAY_OPTIONS = [
 ]
 LATE_GRACE_MINUTES = 1
 BREAK_LIMIT_MINUTES = 15
-INCIDENT_ACTION_STATUSES = ("Coaching", "Suspension", "NTE")
-DISCIPLINARY_ACTION_TYPES = ("Coaching", "NTE", "Suspension")
+DEFAULT_INCIDENT_ERROR_TYPES = (
+    "Wrong Costing",
+    "Wrong Pricing",
+    "Wrong Details",
+    "Absent",
+    "Wrong QA",
+    "Wrong Fulfillment",
+    "Other",
+)
+INCIDENT_DISCIPLINARY_POLICY = {
+    2: "Coaching",
+    3: "NTE",
+    4: "Suspension",
+    5: "Termination",
+}
+INCIDENT_ACTION_STATUSES = ("Coaching", "Suspension", "NTE", "Termination")
+DISCIPLINARY_ACTION_TYPES = ("Coaching", "NTE", "Suspension", "Termination")
 ATTENDANCE_REQUEST_TYPES = {
     "Missed Time In",
     "Missed Time Out",

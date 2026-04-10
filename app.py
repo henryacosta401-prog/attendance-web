@@ -35,6 +35,7 @@ from attendance_core.config import (
     DEFAULT_BACKUP_FOLDER,
     DEFAULT_BREAK_WINDOW_END,
     DEFAULT_BREAK_WINDOW_START,
+    DEFAULT_INCIDENT_ERROR_TYPES,
     DEFAULT_PAID_LEAVE_DAYS,
     DEFAULT_SCHEDULE_DAYS,
     DEFAULT_SECRET_KEY,
@@ -50,6 +51,7 @@ from attendance_core.config import (
     GOOGLE_SHEET_TAB,
     IMAGE_EXTENSIONS,
     INCIDENT_ACTION_STATUSES,
+    INCIDENT_DISCIPLINARY_POLICY,
     LATE_GRACE_MINUTES,
     LEAVE_REQUEST_TYPES,
     LOGIN_MAX_ATTEMPTS,
@@ -571,6 +573,8 @@ def init_sqlite_db():
             created_by INTEGER,
             reviewed_by INTEGER,
             reviewed_at TEXT,
+            disciplinary_action_id INTEGER,
+            policy_incident_count INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL,
             FOREIGN KEY (user_id) REFERENCES users (id)
         )
@@ -637,6 +641,8 @@ def init_sqlite_db():
             duration_days INTEGER NOT NULL DEFAULT 1,
             end_date TEXT,
             details TEXT,
+            incident_report_id INTEGER,
+            error_type TEXT,
             created_by INTEGER,
             created_at TEXT NOT NULL,
             FOREIGN KEY (user_id) REFERENCES users (id)
@@ -1132,8 +1138,12 @@ def init_sqlite_db():
             cursor.execute("ALTER TABLE incident_reports ADD COLUMN reviewed_by INTEGER")
         if "reviewed_at" not in existing_cols_incident:
             cursor.execute("ALTER TABLE incident_reports ADD COLUMN reviewed_at TEXT")
-    if "created_at" not in existing_cols_incident:
-        cursor.execute("ALTER TABLE incident_reports ADD COLUMN created_at TEXT")
+        if "created_at" not in existing_cols_incident:
+            cursor.execute("ALTER TABLE incident_reports ADD COLUMN created_at TEXT")
+        if "disciplinary_action_id" not in existing_cols_incident:
+            cursor.execute("ALTER TABLE incident_reports ADD COLUMN disciplinary_action_id INTEGER")
+        if "policy_incident_count" not in existing_cols_incident:
+            cursor.execute("ALTER TABLE incident_reports ADD COLUMN policy_incident_count INTEGER NOT NULL DEFAULT 0")
 
     existing_cols_disciplinary = [row[1] for row in cursor.execute("PRAGMA table_info(disciplinary_actions)").fetchall()]
     if existing_cols_disciplinary:
@@ -1143,6 +1153,10 @@ def init_sqlite_db():
             cursor.execute("ALTER TABLE disciplinary_actions ADD COLUMN end_date TEXT")
         if "details" not in existing_cols_disciplinary:
             cursor.execute("ALTER TABLE disciplinary_actions ADD COLUMN details TEXT")
+        if "incident_report_id" not in existing_cols_disciplinary:
+            cursor.execute("ALTER TABLE disciplinary_actions ADD COLUMN incident_report_id INTEGER")
+        if "error_type" not in existing_cols_disciplinary:
+            cursor.execute("ALTER TABLE disciplinary_actions ADD COLUMN error_type TEXT")
         if "created_by" not in existing_cols_disciplinary:
             cursor.execute("ALTER TABLE disciplinary_actions ADD COLUMN created_by INTEGER")
         if "created_at" not in existing_cols_disciplinary:
@@ -1453,6 +1467,8 @@ def init_postgres_db():
                 created_by INTEGER,
                 reviewed_by INTEGER,
                 reviewed_at TEXT,
+                disciplinary_action_id INTEGER,
+                policy_incident_count INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL
             )
         """)
@@ -1466,6 +1482,8 @@ def init_postgres_db():
                 duration_days INTEGER NOT NULL DEFAULT 1,
                 end_date TEXT,
                 details TEXT,
+                incident_report_id INTEGER,
+                error_type TEXT,
                 created_by INTEGER,
                 created_at TEXT NOT NULL
             )
@@ -1479,9 +1497,13 @@ def init_postgres_db():
         cur.execute("ALTER TABLE incident_reports ADD COLUMN IF NOT EXISTS admin_note TEXT")
         cur.execute("ALTER TABLE incident_reports ADD COLUMN IF NOT EXISTS reviewed_by INTEGER")
         cur.execute("ALTER TABLE incident_reports ADD COLUMN IF NOT EXISTS reviewed_at TEXT")
+        cur.execute("ALTER TABLE incident_reports ADD COLUMN IF NOT EXISTS disciplinary_action_id INTEGER")
+        cur.execute("ALTER TABLE incident_reports ADD COLUMN IF NOT EXISTS policy_incident_count INTEGER NOT NULL DEFAULT 0")
         cur.execute("ALTER TABLE disciplinary_actions ADD COLUMN IF NOT EXISTS duration_days INTEGER NOT NULL DEFAULT 1")
         cur.execute("ALTER TABLE disciplinary_actions ADD COLUMN IF NOT EXISTS end_date TEXT")
         cur.execute("ALTER TABLE disciplinary_actions ADD COLUMN IF NOT EXISTS details TEXT")
+        cur.execute("ALTER TABLE disciplinary_actions ADD COLUMN IF NOT EXISTS incident_report_id INTEGER")
+        cur.execute("ALTER TABLE disciplinary_actions ADD COLUMN IF NOT EXISTS error_type TEXT")
         cur.execute("ALTER TABLE disciplinary_actions ADD COLUMN IF NOT EXISTS created_by INTEGER")
         cur.execute("ALTER TABLE disciplinary_actions ADD COLUMN IF NOT EXISTS created_at TEXT")
 
@@ -2039,8 +2061,79 @@ def create_notification(user_id, title, message):
     """, (user_id, title, message, now_str()), commit=True)
 
 
+def normalize_incident_error_type(error_type, new_error_type=""):
+    raw_value = (error_type or "").strip()
+    custom_value = " ".join((new_error_type or "").strip().split())
+    if raw_value == "__new__":
+        return custom_value
+    return " ".join(raw_value.split())
+
+
+def get_incident_error_type_options():
+    saved_types = [
+        row["error_type"]
+        for row in fetchall("""
+            SELECT DISTINCT TRIM(error_type) AS error_type
+            FROM incident_reports
+            WHERE error_type IS NOT NULL AND TRIM(error_type) != ''
+            ORDER BY TRIM(error_type)
+        """)
+    ]
+    options = []
+    seen = set()
+    for error_type in [*DEFAULT_INCIDENT_ERROR_TYPES, *saved_types]:
+        normalized = " ".join((error_type or "").strip().split())
+        key = normalized.lower()
+        if not normalized or key in seen:
+            continue
+        seen.add(key)
+        options.append(normalized)
+    return options
+
+
+def count_repeated_incidents(user_id, error_type):
+    normalized_error_type = (error_type or "").strip().lower()
+    if not user_id or not normalized_error_type:
+        return 0
+    row = fetchone("""
+        SELECT COUNT(*) AS cnt
+        FROM incident_reports
+        WHERE user_id = ?
+          AND LOWER(TRIM(COALESCE(error_type, ''))) = ?
+    """, (user_id, normalized_error_type))
+    return int(row["cnt"] or 0) if row else 0
+
+
+def get_incident_policy_action(incident_count, *, exact_threshold=True):
+    try:
+        count = int(incident_count or 0)
+    except (TypeError, ValueError):
+        count = 0
+    if exact_threshold:
+        return INCIDENT_DISCIPLINARY_POLICY.get(count, "")
+    if count >= 5:
+        return INCIDENT_DISCIPLINARY_POLICY[5]
+    return INCIDENT_DISCIPLINARY_POLICY.get(count, "")
+
+
+def build_incident_policy_details(report, incident_count, policy_action):
+    error_type = report["error_type"] if report else ""
+    report_date = report["report_date"] or report["incident_date"] if report else ""
+    message = (report["message"] or "").strip() if report else ""
+    parts = [
+        f"Policy trigger: {incident_count} repeated {error_type} incident(s).",
+        f"Source incident #{report['id']} dated {report_date}.",
+    ]
+    if policy_action == "Termination":
+        parts.append("This logs the termination policy step only; process final HR/account action separately.")
+    if message:
+        parts.append(f"Incident details: {message}")
+    return " ".join(parts)
+
+
 def create_incident(user_id, error_type, report_date, message, admin_id, incident_action, report_department):
     user = get_user_by_id(user_id)
+    created_at = now_str()
 
     execute_db("""
         INSERT INTO incident_reports (
@@ -2068,18 +2161,27 @@ def create_incident(user_id, error_type, report_date, message, admin_id, inciden
         report_date,
         message,
         admin_id,
-        now_str()
+        created_at
     ), commit=True)
+    return fetchone("""
+        SELECT *
+        FROM incident_reports
+        WHERE user_id = ? AND created_by = ? AND created_at = ?
+        ORDER BY id DESC
+        LIMIT 1
+    """, (user_id, admin_id, created_at))
 
 
-def create_disciplinary_action(user_id, action_type, action_date, details, created_by, duration_days=1):
+def create_disciplinary_action(user_id, action_type, action_date, details, created_by, duration_days=1, incident_report_id=None, error_type=""):
     duration_days = max(int(duration_days or 1), 1)
     end_date = calculate_suspension_end_date(action_date, duration_days) if action_type == "Suspension" else action_date
+    created_at = now_str()
     execute_db("""
         INSERT INTO disciplinary_actions (
-            user_id, action_type, action_date, duration_days, end_date, details, created_by, created_at
+            user_id, action_type, action_date, duration_days, end_date, details,
+            incident_report_id, error_type, created_by, created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         user_id,
         action_type,
@@ -2087,9 +2189,93 @@ def create_disciplinary_action(user_id, action_type, action_date, details, creat
         duration_days,
         end_date,
         details,
+        incident_report_id,
+        error_type,
         created_by,
-        now_str()
+        created_at
     ), commit=True)
+    return fetchone("""
+        SELECT *
+        FROM disciplinary_actions
+        WHERE user_id = ? AND created_by = ? AND created_at = ?
+        ORDER BY id DESC
+        LIMIT 1
+    """, (user_id, created_by, created_at))
+
+
+def sync_incident_policy(report_id, actor_id, allow_create=True):
+    report = fetchone("""
+        SELECT r.*, u.full_name, u.department
+        FROM incident_reports r
+        LEFT JOIN users u ON u.id = r.user_id
+        WHERE r.id = ?
+    """, (report_id,))
+    if not report:
+        return {"created_action": None, "policy_action": "", "incident_count": 0, "message": "Incident not found."}
+
+    incident_count = count_repeated_incidents(report["user_id"], report["error_type"])
+    policy_action = get_incident_policy_action(incident_count, exact_threshold=True)
+    display_policy_action = policy_action or get_incident_policy_action(incident_count, exact_threshold=False)
+    execute_db("""
+        UPDATE incident_reports
+        SET policy_incident_count = ?, incident_action = ?
+        WHERE id = ?
+    """, (incident_count, display_policy_action, report_id), commit=True)
+
+    if not allow_create or not policy_action:
+        return {
+            "created_action": None,
+            "policy_action": display_policy_action,
+            "incident_count": incident_count,
+            "message": "",
+        }
+
+    if report["disciplinary_action_id"]:
+        return {
+            "created_action": get_disciplinary_action_by_id(report["disciplinary_action_id"]),
+            "policy_action": policy_action,
+            "incident_count": incident_count,
+            "message": "Incident already has a linked disciplinary action.",
+        }
+
+    action_date = report["report_date"] or report["incident_date"] or today_str()
+    duration_days = 1
+    conflict = find_conflicting_disciplinary_action(report["user_id"], policy_action, action_date, duration_days)
+    if conflict:
+        return {
+            "created_action": None,
+            "policy_action": policy_action,
+            "incident_count": incident_count,
+            "message": conflict["conflict_reason"],
+        }
+
+    created_action = create_disciplinary_action(
+        user_id=report["user_id"],
+        action_type=policy_action,
+        action_date=action_date,
+        details=build_incident_policy_details(report, incident_count, policy_action),
+        created_by=actor_id,
+        duration_days=duration_days,
+        incident_report_id=report_id,
+        error_type=report["error_type"],
+    )
+    if created_action:
+        execute_db("""
+            UPDATE incident_reports
+            SET disciplinary_action_id = ?
+            WHERE id = ?
+        """, (created_action["id"], report_id), commit=True)
+        create_notification(
+            report["user_id"],
+            "Incident Policy Step Logged",
+            f"{policy_action} was logged after {incident_count} repeated {report['error_type']} incident(s)."
+        )
+    return {
+        "created_action": created_action,
+        "policy_action": policy_action,
+        "incident_count": incident_count,
+        "message": "",
+    }
 
 
 def get_disciplinary_action_by_id(action_id):
@@ -4382,7 +4568,7 @@ def find_conflicting_disciplinary_action(user_id, action_type, action_date, dura
         if item["action_type"] == "Suspension" and action_type == "Suspension" and overlapping_days:
             item["conflict_reason"] = f"Overlaps existing suspension on {format_request_date_range(overlapping_days[0], overlapping_days[-1])}."
             return item
-        if item["action_date"] == action_date:
+        if item["action_date"] == action_date and item["action_type"] == action_type:
             item["conflict_reason"] = f"{item['action_type']} already exists on {action_date}."
             return item
     return None
@@ -4390,10 +4576,14 @@ def find_conflicting_disciplinary_action(user_id, action_type, action_date, dura
 
 def get_disciplinary_actions(action_type="", user_id="", department="", date_from="", date_to=""):
     sql = """
-        SELECT d.*, u.full_name, u.username, u.department, u.break_limit_minutes, creator.full_name AS created_by_name
+        SELECT d.*, u.full_name, u.username, u.department, u.break_limit_minutes,
+               creator.full_name AS created_by_name,
+               incident.error_type AS incident_error_type,
+               incident.policy_incident_count AS linked_incident_count
         FROM disciplinary_actions d
         JOIN users u ON u.id = d.user_id
         LEFT JOIN users creator ON creator.id = d.created_by
+        LEFT JOIN incident_reports incident ON incident.id = d.incident_report_id
         WHERE 1=1
     """
     params = []
@@ -7813,10 +8003,14 @@ def get_admin_employee_rows(status_filter="", search="", department_filter="", o
 
 def get_incident_reports(report_employee="", report_department="", report_type="", report_date_from="", report_date_to=""):
     report_sql = """
-        SELECT r.*, u.full_name, u.department, reviewer.full_name AS reviewed_by_name
+        SELECT r.*, u.full_name, u.department, reviewer.full_name AS reviewed_by_name,
+               d.action_type AS linked_action_type,
+               d.action_date AS linked_action_date,
+               d.end_date AS linked_action_end_date
         FROM incident_reports r
         LEFT JOIN users u ON u.id = r.user_id
         LEFT JOIN users reviewer ON reviewer.id = r.reviewed_by
+        LEFT JOIN disciplinary_actions d ON d.id = r.disciplinary_action_id
         WHERE 1=1
     """
     report_params = []
@@ -7842,7 +8036,13 @@ def get_incident_reports(report_employee="", report_department="", report_type="
         report_params.append(report_date_to)
 
     report_sql += " ORDER BY r.id DESC LIMIT 100"
-    return fetchall(report_sql, report_params)
+    rows = [dict(row) for row in fetchall(report_sql, report_params)]
+    for row in rows:
+        if not row.get("policy_incident_count"):
+            row["policy_incident_count"] = count_repeated_incidents(row["user_id"], row["error_type"])
+        if not row.get("incident_action"):
+            row["incident_action"] = get_incident_policy_action(row["policy_incident_count"], exact_threshold=False)
+    return rows
 
 
 def get_exception_collections(employee_rows):
@@ -10309,6 +10509,7 @@ def admin_error_reports():
 
     employees = get_employee_options()
     departments = get_department_options()
+    error_types = get_incident_error_type_options()
     reports = get_incident_reports(
         report_employee=report_employee,
         report_department=report_department,
@@ -10326,7 +10527,8 @@ def admin_error_reports():
         report_department=report_department,
         report_type=report_type,
         report_date_from=report_date_from,
-        report_date_to=report_date_to
+        report_date_to=report_date_to,
+        error_types=error_types
     )
 
 
@@ -10370,6 +10572,9 @@ def export_admin_error_reports_excel():
         "Report Date",
         "Message",
         "Status",
+        "Policy Count",
+        "Policy Step",
+        "Linked Disciplinary",
         "Admin Note",
         "Created At",
         "Reviewed At",
@@ -10384,6 +10589,9 @@ def export_admin_error_reports_excel():
             report["report_date"] if report["report_date"] else report["incident_date"] if report["incident_date"] else "",
             report["message"] or "",
             report["status"] or "Open",
+            report["policy_incident_count"] or "",
+            report["incident_action"] or "",
+            f"#{report['disciplinary_action_id']} {report['linked_action_type']}" if report.get("disciplinary_action_id") else "",
             report["admin_note"] or "",
             report["created_at"] or "",
             report["reviewed_at"] or "",
@@ -10410,7 +10618,12 @@ def admin_incident_report():
         WHERE role = 'employee'
         ORDER BY full_name ASC
     """)
-    return render_template("admin_incident_report.html", employees=employees)
+    return render_template(
+        "admin_incident_report.html",
+        employees=employees,
+        error_types=get_incident_error_type_options(),
+        incident_policy=INCIDENT_DISCIPLINARY_POLICY
+    )
 
 
 @app.route("/admin/disciplinary")
@@ -10436,6 +10649,7 @@ def admin_disciplinary_dashboard():
         "coaching": len([row for row in actions if row["action_type"] == "Coaching"]),
         "nte": len([row for row in actions if row["action_type"] == "NTE"]),
         "suspension": len([row for row in actions if row["action_type"] == "Suspension"]),
+        "termination": len([row for row in actions if row["action_type"] == "Termination"]),
         "active_suspensions": len([row for row in actions if row["action_type"] == "Suspension" and row["status_label"] == "Active"]),
         "upcoming_suspensions": len([row for row in actions if row["action_type"] == "Suspension" and row["status_label"] == "Upcoming"]),
         "starts_today": len([row for row in actions if row["action_type"] == "Suspension" and row["action_date"] == today_str()]),
@@ -10488,11 +10702,14 @@ def export_admin_disciplinary_excel():
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Disciplinary"
-    sheet.append(["Employee", "Username", "Department", "Type", "Start Date", "Duration Days", "End Date", "Status", "Details"])
+    sheet.append(["Employee", "Username", "Department", "Type", "Start Date", "Duration Days", "End Date", "Status", "Incident #", "Error Type", "Details"])
     for row in actions:
         sheet.append([
             row["full_name"], row["username"], row["department"], row["action_type"], row["action_date"],
-            row["duration_days"], row["end_date"] or row["action_date"], row["status_label"], row["details"] or ""
+            row["duration_days"], row["end_date"] or row["action_date"], row["status_label"],
+            row.get("incident_report_id") or "",
+            row.get("error_type") or row.get("incident_error_type") or "",
+            row["details"] or ""
         ])
 
     output = BytesIO()
@@ -10558,7 +10775,10 @@ def edit_incident_report(report_id):
         flash("Report not found.", "danger")
         return redirect(url_for("admin_error_reports"))
 
-    error_type = request.form.get("error_type", "").strip()
+    error_type = normalize_incident_error_type(
+        request.form.get("error_type", ""),
+        request.form.get("new_error_type", "")
+    )
     report_date = request.form.get("report_date", "").strip()
     report_department = request.form.get("report_department", "").strip()
     message = request.form.get("message", "").strip()
@@ -10569,14 +10789,19 @@ def edit_incident_report(report_id):
 
     execute_db("""
         UPDATE incident_reports
-        SET error_type = ?, report_date = ?, incident_date = ?, report_department = ?, message = ?
+        SET error_type = ?, report_date = ?, incident_date = ?, report_department = ?, message = ?,
+            policy_incident_count = 0
         WHERE id = ?
     """, (error_type, report_date, report_date, report_department, message, report_id), commit=True)
+    sync_result = sync_incident_policy(report_id, session["user_id"], allow_create=not bool(report["disciplinary_action_id"]))
 
     employee = get_user_by_id(report["user_id"])
     employee_name = employee["full_name"] if employee else report.get("employee_name") or f"User {report['user_id']}"
     log_activity(session["user_id"], "EDIT INCIDENT", f"Edited incident #{report_id} for {employee_name}")
-    flash("Incident report updated.", "success")
+    if sync_result.get("created_action"):
+        flash(f"Incident report updated. Linked {sync_result['policy_action']} record created.", "success")
+    else:
+        flash("Incident report updated.", "success")
     return redirect(url_for("admin_error_reports"))
 
 
@@ -11743,7 +11968,10 @@ def send_admin_notification():
 @login_required(role="admin")
 def create_incident_route():
     user_id = request.form.get("user_id")
-    error_type = request.form.get("error_type", "").strip()
+    error_type = normalize_incident_error_type(
+        request.form.get("error_type", ""),
+        request.form.get("new_error_type", "")
+    )
     report_date = request.form.get("report_date", "").strip()
     message = request.form.get("message", "").strip()
 
@@ -11753,7 +11981,7 @@ def create_incident_route():
 
     employee = get_user_by_id(user_id)
 
-    create_incident(
+    incident = create_incident(
         user_id=user_id,
         error_type=error_type,
         report_date=report_date,
@@ -11762,6 +11990,7 @@ def create_incident_route():
         incident_action="",
         report_department=employee["department"] if employee else ""
     )
+    sync_result = sync_incident_policy(incident["id"], session["user_id"]) if incident else {}
 
     employee_name = employee["full_name"] if employee else f"User {user_id}"
     log_activity(
@@ -11770,7 +11999,18 @@ def create_incident_route():
         f"{error_type} report created for {employee_name}"
     )
 
-    flash("Incident report created.", "success")
+    if sync_result.get("created_action"):
+        flash(
+            f"Incident report created. Policy step #{sync_result['incident_count']} created a linked {sync_result['policy_action']} record.",
+            "success"
+        )
+    elif sync_result.get("policy_action") and sync_result.get("message"):
+        flash(
+            f"Incident report created. Policy recommends {sync_result['policy_action']}, but no disciplinary record was auto-created: {sync_result['message']}",
+            "warning"
+        )
+    else:
+        flash("Incident report created.", "success")
     return redirect(url_for("admin_incident_report"))
 
 

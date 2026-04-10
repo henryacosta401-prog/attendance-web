@@ -443,6 +443,81 @@ class AppFlowsTestCase(unittest.TestCase):
         self.assertEqual(message, "Overtime ended.")
         self.assertEqual(session_row["overtime_end"], "2026-04-08 00:30:00")
 
+    def test_incident_policy_creates_linked_disciplinary_steps(self):
+        admin = self.create_user("incident-admin", role="admin")
+        employee = self.create_user("incident-employee", role="employee", full_name="Incident Employee")
+        csrf_token = self.set_session_user(admin)
+
+        for index, report_date in enumerate(
+            ["2026-04-01", "2026-04-02", "2026-04-03", "2026-04-04", "2026-04-05"],
+            start=1,
+        ):
+            response = self.client.post(
+                "/admin/create-incident",
+                data={
+                    "csrf_token": csrf_token,
+                    "user_id": str(employee["id"]),
+                    "error_type": "Wrong Costing",
+                    "report_date": report_date,
+                    "message": f"Wrong costing #{index}",
+                },
+                follow_redirects=False,
+            )
+            self.assertEqual(response.status_code, 302)
+
+        with attendance_app.app.app_context():
+            reports = attendance_app.fetchall(
+                "SELECT * FROM incident_reports WHERE user_id = ? ORDER BY id ASC",
+                (employee["id"],),
+            )
+            actions = attendance_app.fetchall(
+                "SELECT * FROM disciplinary_actions WHERE user_id = ? ORDER BY id ASC",
+                (employee["id"],),
+            )
+            still_active = attendance_app.get_user_by_id(employee["id"])
+
+        self.assertEqual([row["policy_incident_count"] for row in reports], [1, 2, 3, 4, 5])
+        self.assertEqual([row["action_type"] for row in actions], ["Coaching", "NTE", "Suspension", "Termination"])
+        self.assertEqual(actions[0]["incident_report_id"], reports[1]["id"])
+        self.assertEqual(actions[-1]["incident_report_id"], reports[-1]["id"])
+        self.assertEqual(actions[-1]["error_type"], "Wrong Costing")
+        self.assertEqual(still_active["is_active"], 1)
+
+        error_reports_response = self.client.get("/admin/error-reports")
+        disciplinary_response = self.client.get("/admin/disciplinary")
+        self.assertEqual(error_reports_response.status_code, 200)
+        self.assertEqual(disciplinary_response.status_code, 200)
+        self.assertIn(b"Termination", disciplinary_response.data)
+
+    def test_incident_custom_error_type_is_saved_as_option(self):
+        admin = self.create_user("custom-error-admin", role="admin")
+        employee = self.create_user("custom-error-employee", role="employee")
+        csrf_token = self.set_session_user(admin)
+
+        response = self.client.post(
+            "/admin/create-incident",
+            data={
+                "csrf_token": csrf_token,
+                "user_id": str(employee["id"]),
+                "error_type": "__new__",
+                "new_error_type": "Wrong Inventory Tag",
+                "report_date": "2026-04-06",
+                "message": "Custom error type test",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        with attendance_app.app.app_context():
+            report = attendance_app.fetchone(
+                "SELECT * FROM incident_reports WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+                (employee["id"],),
+            )
+            options = attendance_app.get_incident_error_type_options()
+
+        self.assertEqual(report["error_type"], "Wrong Inventory Tag")
+        self.assertIn("Wrong Inventory Tag", options)
+
 
 if __name__ == "__main__":
     unittest.main()

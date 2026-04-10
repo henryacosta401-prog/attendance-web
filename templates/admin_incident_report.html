@@ -6,16 +6,29 @@
     <div class="hero">
         <div>
             <h1>Create Incident Report</h1>
-            <p class="section-subtitle">Create and save operational error reports. Use the Disciplinary page for Coaching, NTE, and Suspension.</p>
+            <p class="section-subtitle">Create operational error reports and let the policy workflow connect repeated incidents to disciplinary records.</p>
         </div>
         <div class="status status-purple">New Report</div>
+    </div>
+</div>
+
+<div class="card soft" style="max-width:760px; margin-bottom:18px;">
+    <div class="section-title">Incident Policy</div>
+    <p class="muted" style="margin-top:0;">Repeated incidents are counted by employee and error type.</p>
+    <div class="grid grid-4">
+        {% for count, action in incident_policy.items() %}
+            <div style="border:1px solid rgba(148,163,184,0.16);border-radius:16px;padding:12px;background:rgba(15,23,42,0.45);">
+                <div style="color:#9fb0d4;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:0.08em;">{{ count }} incident{{ '' if count == 1 else 's' }}</div>
+                <div style="font-weight:900;color:#fff;">{{ action }}</div>
+            </div>
+        {% endfor %}
     </div>
 </div>
 
 <div class="card" style="max-width:760px;">
     <div class="section-title">Incident Details</div>
 
-    <form method="POST" action="{{ url_for('create_incident_route') }}">
+    <form method="POST" action="{{ url_for('create_incident_route') }}" data-incident-error-form>
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <label>Employee</label>
         <select name="user_id" class="input" required>
@@ -28,14 +41,19 @@
         <label style="margin-top:12px;">Error Type</label>
         <select name="error_type" class="input" required>
             <option value="">Select type</option>
-            <option>Wrong Costing</option>
-            <option>Wrong Pricing</option>
-            <option>Wrong Details</option>
-            <option>Absent</option>
-            <option>Wrong QA</option>
-            <option>Wrong Fulfillment</option>
-            <option>Other</option>
+            {% for error_type in error_types %}
+                <option value="{{ error_type }}">{{ error_type }}</option>
+            {% endfor %}
+            <option value="__new__">Create new error type...</option>
         </select>
+        <input
+            name="new_error_type"
+            class="input"
+            type="text"
+            placeholder="New error type name"
+            style="display:none; margin-top:8px;"
+            data-new-error-type
+        >
 
         <label style="margin-top:12px;">Date</label>
         <input type="date" name="report_date" class="input" required>
@@ -48,4 +66,22 @@
         </button>
     </form>
 </div>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    document.querySelectorAll("[data-incident-error-form]").forEach(function (form) {
+        const select = form.querySelector("select[name='error_type']");
+        const customInput = form.querySelector("[data-new-error-type]");
+        if (!select || !customInput) return;
+        function syncCustomInput() {
+            const creatingNew = select.value === "__new__";
+            customInput.style.display = creatingNew ? "block" : "none";
+            customInput.required = creatingNew;
+            if (!creatingNew) customInput.value = "";
+        }
+        select.addEventListener("change", syncCustomInput);
+        syncCustomInput();
+    });
+});
+</script>
 {% endblock %}

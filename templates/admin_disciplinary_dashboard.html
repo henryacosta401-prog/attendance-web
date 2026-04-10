@@ -37,7 +37,7 @@
     <div class="hero">
         <div>
             <h1>Disciplinary Dashboard</h1>
-            <p class="section-subtitle">Manage Coaching, NTE, and Suspension separately from operational error reports.</p>
+            <p class="section-subtitle">Manage Coaching, NTE, Suspension, and Termination steps linked back to operational incident reports.</p>
         </div>
         <div class="status status-red">Admin Discipline</div>
     </div>
@@ -48,6 +48,7 @@
         <div class="disciplinary-card"><div class="disciplinary-label">Coaching</div><div class="disciplinary-value">{{ summary.coaching }}</div><div class="disciplinary-note">Records in current filter</div></div>
         <div class="disciplinary-card"><div class="disciplinary-label">NTE</div><div class="disciplinary-value">{{ summary.nte }}</div><div class="disciplinary-note">Records in current filter</div></div>
         <div class="disciplinary-card"><div class="disciplinary-label">Suspension</div><div class="disciplinary-value">{{ summary.suspension }}</div><div class="disciplinary-note">Records in current filter</div></div>
+        <div class="disciplinary-card"><div class="disciplinary-label">Termination</div><div class="disciplinary-value">{{ summary.termination }}</div><div class="disciplinary-note">Policy step records</div></div>
         <div class="disciplinary-card"><div class="disciplinary-label">Active Suspensions</div><div class="disciplinary-value">{{ summary.active_suspensions }}</div><div class="disciplinary-note">Employees currently suspended</div></div>
         <div class="disciplinary-card"><div class="disciplinary-label">Upcoming Starts</div><div class="disciplinary-value">{{ summary.upcoming_suspensions }}</div><div class="disciplinary-note">Suspensions not yet active</div></div>
         <div class="disciplinary-card"><div class="disciplinary-label">Starts Today</div><div class="disciplinary-value">{{ summary.starts_today }}</div><div class="disciplinary-note">Suspensions beginning today</div></div>
@@ -55,7 +56,7 @@
 
     <section class="disciplinary-panel">
         <h2 style="margin:0;color:#f8fbff;">Create Disciplinary Action</h2>
-        <p class="disciplinary-subtitle" style="margin-top:6px;">Suspension supports a duration in days. Coaching and NTE are single-date records.</p>
+        <p class="disciplinary-subtitle" style="margin-top:6px;">Suspension supports a duration in days. Coaching, NTE, and Termination are single-date records. Incident-triggered records will link back to the source incident automatically.</p>
         <form method="POST" action="{{ url_for('create_disciplinary_action_route') }}" class="disciplinary-toolbar">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <div>
@@ -150,6 +151,8 @@
                         <th>Days</th>
                         <th>End Date</th>
                         <th>Status</th>
+                        <th>Source Incident</th>
+                        <th>Error Type</th>
                         <th>Details</th>
                         <th>Manage</th>
                     </tr>
@@ -165,6 +168,17 @@
                                 <td>{{ row.duration_days }}</td>
                                 <td>{{ row.end_date if row.end_date else row.action_date }}</td>
                                 <td>{{ row.status_label }}</td>
+                                <td>
+                                    {% if row.incident_report_id %}
+                                        <a class="btn btn-gray" href="{{ url_for('admin_error_reports', report_employee=row.user_id) }}">Incident #{{ row.incident_report_id }}</a>
+                                        {% if row.linked_incident_count %}
+                                            <div class="disciplinary-subtext">Count: {{ row.linked_incident_count }}</div>
+                                        {% endif %}
+                                    {% else %}
+                                        <span class="disciplinary-subtext">Manual</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ row.error_type or row.incident_error_type or '-' }}</td>
                                 <td>{{ row.details or '-' }}</td>
                                 <td>
                                     <form method="POST" action="{{ url_for('update_disciplinary_action_route', action_id=row.id) }}" class="disciplinary-row-form">
@@ -187,7 +201,7 @@
                             </tr>
                         {% endfor %}
                     {% else %}
-                        <tr><td colspan="9" class="muted" style="padding:18px;">No disciplinary records yet.</td></tr>
+                        <tr><td colspan="11" class="muted" style="padding:18px;">No disciplinary records yet.</td></tr>
                     {% endif %}
                 </tbody>
             </table>
