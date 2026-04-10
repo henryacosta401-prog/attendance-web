@@ -29,6 +29,7 @@ class AppFlowsTestCase(unittest.TestCase):
             if os.path.exists(self.db_path):
                 os.remove(self.db_path)
             attendance_app.init_sqlite_db()
+            attendance_app.invalidate_admin_employee_rows_cache()
 
     def tearDown(self):
         with attendance_app.app.app_context():
@@ -391,6 +392,44 @@ class AppFlowsTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 302)
         self.assertIn("/admin", response.headers.get("Location", ""))
+
+    def test_admin_live_status_returns_lightweight_payload(self):
+        admin = self.create_user(
+            "live-status-admin",
+            role="admin",
+            admin_permissions="dashboard",
+            admin_role_preset="viewer",
+        )
+        employee = self.create_user(
+            "ajax-employee",
+            role="employee",
+            full_name="Aivo <Test>",
+            department="Stellar Spec",
+            position="Checker",
+        )
+        image_name = "profile-test.png"
+        with open(os.path.join(self.upload_dir, image_name), "wb") as image_file:
+            image_file.write(b"test-image")
+        with attendance_app.app.app_context():
+            attendance_app.execute_db(
+                "UPDATE users SET profile_image = ? WHERE id = ?",
+                (image_name, employee["id"]),
+                commit=True,
+            )
+            attendance_app.invalidate_admin_employee_rows_cache()
+        self.set_session_user(admin)
+
+        response = self.client.get("/admin/live-status?page_size=25")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["pagination"]["page_size"], 25)
+        row = next(item for item in payload["rows"] if item["username"] == "ajax-employee")
+        self.assertEqual(row["full_name"], "Aivo <Test>")
+        self.assertIn("/uploads/profile-test.png", row["profile_image_url"])
+        self.assertIn("row_signature", row)
+        self.assertNotIn("password_hash", row)
+        self.assertNotIn("admin_permissions", row)
 
     def test_stale_csrf_redirect_does_not_render_login_form_inside_admin_shell(self):
         admin = self.create_user(

@@ -27,11 +27,12 @@
     display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 0 14px; border-radius: 14px;
     background: rgba(15, 23, 42, 0.28); border: 1px solid rgba(148, 163, 184, 0.16); color: #dbe7ff; font-weight: 600;
 }
-.admin-table-wrap { overflow-x: auto; border-radius: 18px; border: 1px solid rgba(148, 163, 184, 0.14); background: rgba(8, 13, 24, 0.18); }
-.admin-live-table { width: 100%; border-collapse: collapse; }
+.admin-table-wrap { overflow-x: auto; border-radius: 18px; border: 1px solid rgba(148, 163, 184, 0.14); background: rgba(8, 13, 24, 0.18); transition: opacity 0.16s ease; }
+.admin-table-wrap[aria-busy="true"] { opacity: 0.72; }
+.admin-live-table { width: 100%; min-width: 940px; border-collapse: collapse; table-layout: fixed; }
 .admin-live-table th, .admin-live-table td { padding: 14px 16px; border-bottom: 1px solid rgba(148, 163, 184, 0.12); vertical-align: top; }
 .admin-live-table th { background: rgba(59, 130, 246, 0.08); color: #bad0ff; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
-.admin-live-table td { color: #ecf3ff; font-size: 14px; }
+.admin-live-table td { color: #ecf3ff; font-size: 14px; overflow-wrap: anywhere; }
 .admin-row-user { display: flex; gap: 12px; align-items: center; }
 .admin-avatar, .admin-avatar-placeholder { width: 46px; height: 46px; border-radius: 50%; border: 1px solid rgba(148, 163, 184, 0.22); }
 .admin-avatar { object-fit: cover; }
@@ -43,6 +44,7 @@
 .admin-pill-yellow { background: rgba(245, 158, 11, 0.2); color: #ffd38a; }
 .admin-pill-red { background: rgba(239, 68, 68, 0.18); color: #ffb4b4; }
 .admin-pill-blue { background: rgba(59, 130, 246, 0.18); color: #9fccff; }
+.admin-pill-purple { background: rgba(168, 85, 247, 0.18); color: #d8b4fe; }
 .admin-sidebar, .admin-list { display: grid; gap: 12px; }
 .admin-list-card { padding: 14px 16px; border-radius: 16px; background: rgba(10, 16, 29, 0.34); border: 1px solid rgba(148, 163, 184, 0.12); }
 .admin-empty { margin-top: 16px; padding: 14px 16px; border-radius: 16px; border: 1px dashed rgba(148, 163, 184, 0.2); color: #9fb0d4; text-align: center; }
@@ -85,6 +87,7 @@ html.app-standalone .admin-live-table td {
 <script>
 document.addEventListener("DOMContentLoaded", function () {
     const dashboardRoot = document.getElementById("adminDashboardApp");
+    const tableWrap = document.querySelector(".admin-table-wrap");
     const standaloneMode = document.documentElement.classList.contains("app-standalone");
     let currentPage = Number(dashboardRoot?.dataset.page || "1");
     let currentPageSize = Number(dashboardRoot?.dataset.pageSize || "25");
@@ -118,6 +121,24 @@ document.addEventListener("DOMContentLoaded", function () {
             return `${datePart} ${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:${String(second).padStart(2, "0")} ${ampm}`;
         } catch (e) { return value; }
     }
+    function escapeHtml(value) {
+        return String(value ?? "").replace(/[&<>"']/g, function (char) {
+            return {
+                "&": "&amp;",
+                "<": "&lt;",
+                ">": "&gt;",
+                "\"": "&quot;",
+                "'": "&#39;"
+            }[char];
+        });
+    }
+    function displayValue(value, fallback) {
+        return escapeHtml(value === null || value === undefined || value === "" ? (fallback || "-") : value);
+    }
+    function safeMinutes(value, fallback) {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : fallback;
+    }
     function statusClass(status) {
         if (status === "Timed In") return "admin-pill-green";
         if (status === "On Break") return "admin-pill-yellow";
@@ -128,8 +149,8 @@ document.addEventListener("DOMContentLoaded", function () {
         return "admin-pill-gray";
     }
     function avatarMarkup(emp) {
-        if (emp.profile_image && emp.profile_image_available) return `<img class="admin-avatar" src="/uploads/${emp.profile_image}" alt="avatar">`;
-        return `<div class="admin-avatar-placeholder">${emp.avatar_initials || "U"}</div>`;
+        if (emp.profile_image_url && emp.profile_image_available) return `<img class="admin-avatar" src="${escapeHtml(emp.profile_image_url)}" alt="avatar" loading="lazy" decoding="async">`;
+        return `<div class="admin-avatar-placeholder">${displayValue(emp.avatar_initials, "U")}</div>`;
     }
     function buildQuery() {
         const searchVal = document.getElementById("searchBox")?.value || "";
@@ -141,12 +162,16 @@ document.addEventListener("DOMContentLoaded", function () {
     function buildPayloadSignature(data) {
         try {
             return JSON.stringify({
-                rows: data.rows || [],
+                rows: (data.rows || []).map(function (row) { return row.row_signature || row.id || ""; }),
                 pagination: data.pagination || {}
             });
         } catch (error) {
             return `${Date.now()}`;
         }
+    }
+    function replaceBrowserUrl(queryString) {
+        if (!window.history || !window.history.replaceState) return;
+        window.history.replaceState(null, "", `${window.location.pathname}?${queryString}`);
     }
     function refreshIfStale(maxAgeMs) {
         if ((Date.now() - lastRefreshCompletedAt) >= maxAgeMs) {
@@ -169,8 +194,11 @@ document.addEventListener("DOMContentLoaded", function () {
             return;
         }
         refreshInFlight = true;
+        if (tableWrap) tableWrap.setAttribute("aria-busy", "true");
         try {
-            const response = await fetch(`/admin/live-status?${buildQuery()}`, { cache: "no-store" });
+            const queryString = buildQuery();
+            replaceBrowserUrl(queryString);
+            const response = await fetch(`/admin/live-status?${queryString}`, { cache: "no-store" });
             if (!response.ok) {
                 throw new Error(`Live status refresh failed with ${response.status}`);
             }
@@ -191,22 +219,25 @@ document.addEventListener("DOMContentLoaded", function () {
                 return;
             }
             tbody.innerHTML = rows.map(emp => {
-                const proofHtml = emp.proof_file && emp.proof_file_available ? `<a href="/uploads/${emp.proof_file}" target="_blank" class="admin-subtext">Open proof</a>` : (emp.proof_file ? `<span class="admin-subtext">Proof file missing</span>` : `<span class="admin-subtext">No proof uploaded</span>`);
+                const proofHtml = emp.proof_file && emp.proof_file_available && emp.proof_file_url ? `<a href="${escapeHtml(emp.proof_file_url)}" target="_blank" rel="noopener" class="admin-subtext">Open proof</a>` : (emp.proof_file ? `<span class="admin-subtext">Proof file missing</span>` : `<span class="admin-subtext">No proof uploaded</span>`);
                 const flags = [];
                 if (emp.absent_flag) flags.push(`<span class="admin-pill admin-pill-red">Absent</span>`);
                 if (emp.suspension_flag) flags.push(`<span class="admin-pill admin-pill-purple">Suspended</span>`);
-                if (emp.late_flag) flags.push(`<span class="admin-pill admin-pill-red">Late ${emp.late_minutes}m</span>`);
+                if (emp.late_flag) flags.push(`<span class="admin-pill admin-pill-red">Late ${safeMinutes(emp.late_minutes, 0)}m</span>`);
                 if (emp.undertime_flag) flags.push(`<span class="admin-pill admin-pill-yellow">Undertime</span>`);
-                if (emp.over_break_flag) flags.push(`<span class="admin-pill admin-pill-yellow">Over break ${emp.over_break_minutes}m</span>`);
+                if (emp.over_break_flag) flags.push(`<span class="admin-pill admin-pill-yellow">Over break ${safeMinutes(emp.over_break_minutes, 0)}m</span>`);
                 if (emp.missing_timeout_flag) flags.push(`<span class="admin-pill admin-pill-red">Missing time out</span>`);
                 if (!emp.scheduled_today) flags.push(`<span class="admin-pill admin-pill-gray">Off today</span>`);
+                const timeIn = emp.time_in ? escapeHtml(formatDateTime12h(emp.time_in)) : "-";
+                const timeOut = emp.time_out ? `Out ${escapeHtml(formatDateTime12h(emp.time_out))}` : `Expected out ${displayValue(emp.shift_end)}`;
+                const statusDisplay = displayValue(emp.status_display, "Offline");
                 return `<tr>
-                    <td><div class="admin-row-user">${avatarMarkup(emp)}<div><div class="admin-name">${emp.full_name}</div><div class="admin-username">@${emp.username}</div></div></div></td>
-                    <td><div>${emp.department || "-"}</div><div class="admin-subtext">${emp.position || "-"}</div></td>
-                    <td><div>${emp.schedule_summary || "-"}</div><div class="admin-subtext">${emp.schedule_window_summary || "-"}</div></td>
-                    <td><span class="admin-pill ${statusClass(emp.status_display)}">${emp.status_display}</span></td>
-                    <td><div>${emp.time_in ? formatDateTime12h(emp.time_in) : "-"}</div><div class="admin-subtext">${emp.time_out ? `Out ${formatDateTime12h(emp.time_out)}` : `Expected out ${emp.shift_end || "-"}`}</div></td>
-                    <td><div>${emp.break_minutes || 0}m used</div><div class="admin-subtext">Limit ${emp.break_limit_minutes || 15}m</div></td>
+                    <td><div class="admin-row-user">${avatarMarkup(emp)}<div><div class="admin-name">${displayValue(emp.full_name, "Employee")}</div><div class="admin-username">@${displayValue(emp.username, "user")}</div></div></div></td>
+                    <td><div>${displayValue(emp.department)}</div><div class="admin-subtext">${displayValue(emp.position)}</div></td>
+                    <td><div>${displayValue(emp.schedule_summary)}</div><div class="admin-subtext">${displayValue(emp.schedule_window_summary)}</div></td>
+                    <td><span class="admin-pill ${statusClass(emp.status_display)}">${statusDisplay}</span></td>
+                    <td><div>${timeIn}</div><div class="admin-subtext">${timeOut}</div></td>
+                    <td><div>${safeMinutes(emp.break_minutes, 0)}m used</div><div class="admin-subtext">Limit ${safeMinutes(emp.break_limit_minutes, 15)}m</div></td>
                     <td><div class="admin-flags">${flags.join("") || `<span class="admin-pill admin-pill-gray">No alerts</span>`}</div><div style="margin-top:8px;">${proofHtml}</div></td>
                 </tr>`;
             }).join("");
@@ -216,6 +247,7 @@ document.addEventListener("DOMContentLoaded", function () {
         } catch (error) {
             console.error("Live status refresh failed:", error);
         } finally {
+            if (tableWrap) tableWrap.setAttribute("aria-busy", "false");
             refreshInFlight = false;
             if (queuedRefresh) {
                 queuedRefresh = false;
@@ -311,20 +343,20 @@ document.addEventListener("DOMContentLoaded", function () {
                     <a class="btn btn-purple" data-tour-id="admin-history-link" href="{{ url_for('admin_history', department=department_filter) }}">Open Full History</a>
                 </div>
             </div>
-            <div class="admin-table-wrap">
+            <div class="admin-table-wrap" aria-busy="false">
                 <table class="admin-live-table">
                     <thead><tr><th>Employee</th><th>Team</th><th>Schedule</th><th>Status</th><th>Today</th><th>Break</th><th>Alerts & Proof</th></tr></thead>
                     <tbody id="liveStatusBody">
                         {% if employees %}
                             {% for emp in employees %}
                             <tr>
-                                <td><div class="admin-row-user">{% if emp.profile_image and emp.profile_image_available %}<img class="admin-avatar" src="{{ url_for('uploaded_file', filename=emp.profile_image) }}" alt="avatar">{% else %}<div class="admin-avatar-placeholder">{{ emp.avatar_initials }}</div>{% endif %}<div><div class="admin-name">{{ emp.full_name }}</div><div class="admin-username">@{{ emp.username }}</div></div></div></td>
+                                <td><div class="admin-row-user">{% if emp.profile_image and emp.profile_image_available %}<img class="admin-avatar" src="{{ url_for('uploaded_file', filename=emp.profile_image) }}" alt="avatar" loading="lazy" decoding="async">{% else %}<div class="admin-avatar-placeholder">{{ emp.avatar_initials }}</div>{% endif %}<div><div class="admin-name">{{ emp.full_name }}</div><div class="admin-username">@{{ emp.username }}</div></div></div></td>
                                 <td><div>{{ emp.department or '-' }}</div><div class="admin-subtext">{{ emp.position or '-' }}</div></td>
                                 <td><div>{{ emp.schedule_summary }}</div><div class="admin-subtext">{{ emp.schedule_window_summary }}</div></td>
                                 <td>{% set live_class = 'admin-pill-gray' %}{% if emp.status_display == 'Timed In' %}{% set live_class = 'admin-pill-green' %}{% elif emp.status_display in ['On Break', 'Undertime'] %}{% set live_class = 'admin-pill-yellow' %}{% elif emp.status_display == 'Timed Out' %}{% set live_class = 'admin-pill-blue' %}{% elif emp.status_display == 'Suspended' %}{% set live_class = 'admin-pill-purple' %}{% elif emp.status_display in ['Absent', 'Inactive', 'Missing Time Out'] %}{% set live_class = 'admin-pill-red' %}{% endif %}<span class="admin-pill {{ live_class }}">{{ emp.status_display }}</span></td>
                                 <td><div>{{ format_datetime_12h(emp.time_in) if emp.time_in else '-' }}</div><div class="admin-subtext">{% if emp.time_out %}Out {{ format_datetime_12h(emp.time_out) }}{% else %}Expected out {{ emp.shift_end }}{% endif %}</div></td>
                                 <td><div>{{ emp.break_minutes }}m used</div><div class="admin-subtext">Limit {{ emp.break_limit_minutes }}m</div></td>
-                                <td><div class="admin-flags">{% if emp.absent_flag == 1 %}<span class="admin-pill admin-pill-red">Absent</span>{% endif %}{% if emp.suspension_flag == 1 %}<span class="admin-pill admin-pill-purple">Suspended</span>{% endif %}{% if emp.late_flag == 1 %}<span class="admin-pill admin-pill-red">Late {{ emp.late_minutes }}m</span>{% endif %}{% if emp.undertime_flag == 1 %}<span class="admin-pill admin-pill-yellow">Undertime</span>{% endif %}{% if emp.over_break_flag == 1 %}<span class="admin-pill admin-pill-yellow">Over break {{ emp.over_break_minutes }}m</span>{% endif %}{% if emp.missing_timeout_flag == 1 %}<span class="admin-pill admin-pill-red">Missing time out</span>{% endif %}{% if emp.scheduled_today == 0 %}<span class="admin-pill admin-pill-gray">Off today</span>{% endif %}</div><div style="margin-top:8px;">{% if emp.proof_file and emp.proof_file_available %}<a class="admin-subtext" href="{{ url_for('uploaded_file', filename=emp.proof_file) }}" target="_blank">Open proof</a>{% elif emp.proof_file %}<span class="admin-subtext">Proof file missing</span>{% else %}<span class="admin-subtext">No proof uploaded</span>{% endif %}</div></td>
+                                <td><div class="admin-flags">{% if emp.absent_flag == 1 %}<span class="admin-pill admin-pill-red">Absent</span>{% endif %}{% if emp.suspension_flag == 1 %}<span class="admin-pill admin-pill-purple">Suspended</span>{% endif %}{% if emp.late_flag == 1 %}<span class="admin-pill admin-pill-red">Late {{ emp.late_minutes }}m</span>{% endif %}{% if emp.undertime_flag == 1 %}<span class="admin-pill admin-pill-yellow">Undertime</span>{% endif %}{% if emp.over_break_flag == 1 %}<span class="admin-pill admin-pill-yellow">Over break {{ emp.over_break_minutes }}m</span>{% endif %}{% if emp.missing_timeout_flag == 1 %}<span class="admin-pill admin-pill-red">Missing time out</span>{% endif %}{% if emp.scheduled_today == 0 %}<span class="admin-pill admin-pill-gray">Off today</span>{% endif %}</div><div style="margin-top:8px;">{% if emp.proof_file and emp.proof_file_available %}<a class="admin-subtext" href="{{ url_for('uploaded_file', filename=emp.proof_file) }}" target="_blank" rel="noopener">Open proof</a>{% elif emp.proof_file %}<span class="admin-subtext">Proof file missing</span>{% else %}<span class="admin-subtext">No proof uploaded</span>{% endif %}</div></td>
                             </tr>
                             {% endfor %}
                         {% else %}

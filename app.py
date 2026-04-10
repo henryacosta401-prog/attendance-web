@@ -8001,6 +8001,56 @@ def get_admin_employee_rows(status_filter="", search="", department_filter="", o
     )
 
 
+ADMIN_LIVE_STATUS_FIELDS = (
+    "id",
+    "full_name",
+    "username",
+    "department",
+    "position",
+    "schedule_summary",
+    "schedule_window_summary",
+    "scheduled_today",
+    "profile_image",
+    "profile_image_available",
+    "avatar_initials",
+    "status_display",
+    "time_in",
+    "time_out",
+    "shift_end",
+    "break_minutes",
+    "break_limit_minutes",
+    "proof_file",
+    "proof_file_available",
+    "absent_flag",
+    "suspension_flag",
+    "late_flag",
+    "late_minutes",
+    "undertime_flag",
+    "over_break_flag",
+    "over_break_minutes",
+    "missing_timeout_flag",
+)
+
+
+def build_admin_live_status_payload(rows):
+    payload_rows = []
+    for row in rows:
+        item = {field: row.get(field) for field in ADMIN_LIVE_STATUS_FIELDS}
+        item["profile_image_url"] = (
+            url_for("uploaded_file", filename=row["profile_image"])
+            if row.get("profile_image") and row.get("profile_image_available")
+            else ""
+        )
+        item["proof_file_url"] = (
+            url_for("uploaded_file", filename=row["proof_file"])
+            if row.get("proof_file") and row.get("proof_file_available")
+            else ""
+        )
+        item["row_signature"] = "|".join(str(item.get(field, "")) for field in ADMIN_LIVE_STATUS_FIELDS)
+        payload_rows.append(item)
+    return payload_rows
+
+
 def get_incident_reports(report_employee="", report_department="", report_type="", report_date_from="", report_date_to=""):
     report_sql = """
         SELECT r.*, u.full_name, u.department, reviewer.full_name AS reviewed_by_name,
@@ -9126,7 +9176,7 @@ def admin_live_status():
     )
     pagination = paginate_items(rows, page, page_size)
     return jsonify({
-        "rows": pagination["items"],
+        "rows": build_admin_live_status_payload(pagination["items"]),
         "pagination": {
             "page": pagination["page"],
             "page_size": pagination["page_size"],
@@ -9136,7 +9186,8 @@ def admin_live_status():
             "has_next": pagination["has_next"],
             "start_index": pagination["start_index"],
             "end_index": pagination["end_index"],
-        }
+        },
+        "generated_at": now_str(),
     })
 
 
