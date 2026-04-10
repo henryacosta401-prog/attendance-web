@@ -4,7 +4,19 @@ from zoneinfo import ZoneInfo
 
 BASE_DIR = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
-PERSISTENT_DISK_PATH = os.environ.get("RENDER_DISK_PATH", "").strip()
+RENDER_DEFAULT_DISK_PATH = "/var/data"
+
+
+def resolve_persistent_disk_path():
+    configured_path = os.environ.get("RENDER_DISK_PATH", "").strip()
+    if configured_path:
+        return configured_path
+    if os.environ.get("RENDER") and os.path.isdir(RENDER_DEFAULT_DISK_PATH):
+        return RENDER_DEFAULT_DISK_PATH
+    return ""
+
+
+PERSISTENT_DISK_PATH = resolve_persistent_disk_path()
 DEFAULT_SQLITE_DATABASE = os.path.join(BASE_DIR, "attendance.db")
 SQLITE_DATABASE = os.environ.get("SQLITE_DATABASE_PATH", "").strip() or (
     os.path.join(PERSISTENT_DISK_PATH, "attendance.db") if PERSISTENT_DISK_PATH else DEFAULT_SQLITE_DATABASE
@@ -116,4 +128,3 @@ def get_configured_secret_key():
             "SECRET_KEY must be set to a strong random value in production before the app can start."
         )
     return secret_key
-

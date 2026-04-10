@@ -7,6 +7,7 @@ from attendance_core.config import (
     DEFAULT_SECRET_KEY,
     get_configured_secret_key,
     is_production_environment,
+    resolve_persistent_disk_path,
 )
 from attendance_core.attendance import (
     combine_work_date_and_time,
@@ -424,6 +425,20 @@ class ArchitectureHelpersTestCase(unittest.TestCase):
 
     def test_default_secret_key_constant_is_exposed(self):
         self.assertEqual(DEFAULT_SECRET_KEY, "dev-secret-key")
+
+    def test_resolve_persistent_disk_path_prefers_explicit_env(self):
+        with patch.dict("os.environ", {"RENDER_DISK_PATH": "/custom/disk"}, clear=True):
+            self.assertEqual(resolve_persistent_disk_path(), "/custom/disk")
+
+    def test_resolve_persistent_disk_path_autodetects_render_var_data(self):
+        with patch.dict("os.environ", {"RENDER": "true"}, clear=True):
+            with patch("attendance_core.config.os.path.isdir", return_value=True):
+                self.assertEqual(resolve_persistent_disk_path(), "/var/data")
+
+    def test_resolve_persistent_disk_path_stays_local_without_render(self):
+        with patch.dict("os.environ", {}, clear=True):
+            with patch("attendance_core.config.os.path.isdir", return_value=True):
+                self.assertEqual(resolve_persistent_disk_path(), "")
 
 
 if __name__ == "__main__":
