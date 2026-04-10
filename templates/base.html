@@ -1198,7 +1198,7 @@
     data-service-worker-url="{{ url_for('service_worker') }}"
 >
 
-{% if session.get('user_id') %}
+{% if session.get('user_id') and request.endpoint != 'login' %}
 <div class="navbar">
     <div class="brand-wrap">
         <div class="brand-logo">

@@ -79,26 +79,34 @@
                                 <div class="grid grid-2" style="gap:8px;">
                                     <div>
                                         <label>Time In</label>
-                                        <input class="input" type="time" name="requested_time_in" value="{{ item.requested_time_in_input or item.current_time_in_input }}">
+                                        <input class="input" type="time" name="requested_time_in" value="{{ item.requested_time_in_input or item.current_time_in_input }}" {% if item.status != 'Pending' %}disabled{% endif %}>
                                     </div>
                                     <div>
                                         <label>Time Out</label>
-                                        <input class="input" type="time" name="requested_time_out" value="{{ item.requested_time_out_input or item.current_time_out_input }}">
+                                        <input class="input" type="time" name="requested_time_out" value="{{ item.requested_time_out_input or item.current_time_out_input }}" {% if item.status != 'Pending' %}disabled{% endif %}>
                                     </div>
                                     <div>
                                         <label>Break Start</label>
-                                        <input class="input" type="time" name="requested_break_start" value="{{ item.requested_break_start_input or item.current_break_start_input }}">
+                                        <input class="input" type="time" name="requested_break_start" value="{{ item.requested_break_start_input or item.current_break_start_input }}" {% if item.status != 'Pending' %}disabled{% endif %}>
                                     </div>
                                     <div>
                                         <label>Break End</label>
-                                        <input class="input" type="time" name="requested_break_end" value="{{ item.requested_break_end_input or item.current_break_end_input }}">
+                                        <input class="input" type="time" name="requested_break_end" value="{{ item.requested_break_end_input or item.current_break_end_input }}" {% if item.status != 'Pending' %}disabled{% endif %}>
                                     </div>
                                 </div>
-                                <select class="input" name="status">
-                                    <option value="Pending" {% if item.status == 'Pending' %}selected{% endif %}>Pending</option>
-                                    <option value="Approved" {% if item.status == 'Approved' %}selected{% endif %}>Approved</option>
-                                    <option value="Rejected" {% if item.status == 'Rejected' %}selected{% endif %}>Rejected</option>
-                                </select>
+                                {% if item.status == 'Pending' %}
+                                    <select class="input" name="status">
+                                        <option value="Pending" {% if item.status == 'Pending' %}selected{% endif %}>Pending</option>
+                                        <option value="Approved" {% if item.status == 'Approved' %}selected{% endif %}>Approved</option>
+                                        <option value="Rejected" {% if item.status == 'Rejected' %}selected{% endif %}>Rejected</option>
+                                    </select>
+                                {% else %}
+                                    <input type="hidden" name="status" value="{{ item.status }}">
+                                    <select class="input" disabled>
+                                        <option value="{{ item.status }}" selected>{{ item.status }}</option>
+                                    </select>
+                                    <div class="small muted">Reviewed requests stay locked so the applied attendance record stays consistent.</div>
+                                {% endif %}
                                 <textarea class="textarea" name="admin_note" rows="3" placeholder="Add a note...">{{ item.admin_note if item.admin_note else '' }}</textarea>
                                 <button class="btn btn-primary" type="submit">Update</button>
                             </form>

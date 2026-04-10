@@ -3028,8 +3028,15 @@ def auto_close_stale_overtime_session(user_id, overtime_row, actor_id=None, sour
     if not work_date or work_date >= today_str():
         return overtime_row
 
-    forced_end_dt = datetime.strptime(f"{work_date} 23:59:59", "%Y-%m-%d %H:%M:%S")
     overtime_start_dt = parse_db_datetime(overtime_row.get("overtime_start"))
+    if overtime_start_dt:
+        overtime_age = now_dt().replace(tzinfo=None) - overtime_start_dt
+        # Allow valid overtime to continue after midnight and only force-close sessions
+        # that have clearly been abandoned well into the next day.
+        if overtime_age < timedelta(hours=18):
+            return overtime_row
+
+    forced_end_dt = datetime.strptime(f"{work_date} 23:59:59", "%Y-%m-%d %H:%M:%S")
     if overtime_start_dt and forced_end_dt < overtime_start_dt:
         forced_end_dt = overtime_start_dt
 
@@ -6003,6 +6010,7 @@ def save_payroll_run_snapshot(date_from, date_to, department_filter="", employee
     existing = get_payroll_run(date_from_text, date_to_text, department_filter, employee_filter)
     if existing and existing["status"] == "Released" and status != "Released":
         raise ValueError("This payroll period is already released. Use Release Payroll to refresh it instead of saving it back to draft.")
+    create_new_run = bool(existing and existing["status"] == "Released" and status == "Released")
 
     db = get_db()
 
@@ -6015,7 +6023,7 @@ def save_payroll_run_snapshot(date_from, date_to, department_filter="", employee
 
     try:
         released_at = timestamp if status == "Released" else None
-        if existing:
+        if existing and not create_new_run:
             run("""
                 UPDATE payroll_runs
                 SET status = ?, notes = ?, updated_at = ?, released_at = ?
@@ -6480,6 +6488,15 @@ def home():
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    existing_user_id = session.get("user_id")
+    if existing_user_id:
+        existing_user = get_user_by_id(existing_user_id)
+        if existing_user and int(existing_user["is_active"] or 0) == 1:
+            session["role"] = existing_user["role"]
+            session["full_name"] = existing_user["full_name"]
+            return redirect(get_home_route_for_user(existing_user))
+        session.clear()
+
     if request.method == "POST":
         client_ip = get_client_ip()
         if is_login_rate_limited(client_ip):
@@ -10040,6 +10057,28 @@ def update_correction_request(request_id):
 
     if not correction:
         flash("Correction request not found.", "danger")
+        return redirect(url_for("admin_corrections"))
+
+    current_status = (correction["status"] or "").strip()
+    review_locked = current_status in {"Approved", "Rejected"}
+    if review_locked and status != current_status:
+        flash(
+            f"This correction request is already {current_status.lower()}. "
+            "Update the note only, or create a new request if another correction is needed.",
+            "warning",
+        )
+        return redirect(url_for("admin_corrections"))
+
+    if review_locked:
+        execute_db("""
+            UPDATE correction_requests
+            SET admin_note = ?
+            WHERE id = ?
+        """, (
+            admin_note,
+            request_id
+        ), commit=True)
+        flash("Reviewed correction note updated.", "success")
         return redirect(url_for("admin_corrections"))
 
     applied_changes = correction["applied_changes"] if "applied_changes" in correction.keys() else None
