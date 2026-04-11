@@ -10982,6 +10982,9 @@ def update_correction_request(request_id):
         flash("Requested time out is required to approve an undertime request.", "danger")
         return redirect(url_for("admin_corrections"))
 
+    reviewed_at = now_str() if status in {"Approved", "Rejected"} else None
+    reviewed_by = session["user_id"] if status in {"Approved", "Rejected"} else None
+
     if status == "Approved":
         if correction["request_type"] in (LEAVE_REQUEST_TYPES | {"Undertime"}):
             requested_time_out_dt = combine_work_date_and_time(correction["work_date"], requested_time_out) if requested_time_out else None
@@ -11020,9 +11023,6 @@ def update_correction_request(request_id):
             except ValueError as exc:
                 flash(str(exc), "danger")
                 return redirect(url_for("admin_corrections"))
-
-        reviewed_at = now_str() if status in {"Approved", "Rejected"} else None
-    reviewed_by = session["user_id"] if status in {"Approved", "Rejected"} else None
 
     preview_request_type = correction["request_type"] if correction["request_type"] == "Undertime" else ""
     preview_requested_time_out = combine_work_date_and_time(correction["work_date"], requested_time_out) if requested_time_out else None

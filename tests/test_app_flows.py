@@ -456,6 +456,48 @@ class AppFlowsTestCase(unittest.TestCase):
         self.assertEqual(notification["title"], "Correction Request Updated")
         self.assertIn("Approved", notification["message"])
 
+    def test_rejecting_pending_leave_correction_updates_status_and_notification(self):
+        admin = self.create_user(
+            "reject-correction-admin",
+            role="admin",
+            admin_permissions="dashboard,attendance",
+            admin_role_preset="attendance_supervisor",
+        )
+        employee = self.create_user("reject-leave-employee", role="employee")
+        correction = self.create_correction_request(employee["id"])
+        csrf_token = self.set_session_user(admin)
+
+        response = self.client.post(
+            f"/admin/corrections/{correction['id']}/update",
+            data={
+                "csrf_token": csrf_token,
+                "status": "Rejected",
+                "admin_note": "The submitted dates do not match the approved leave period.",
+                "requested_time_in": "",
+                "requested_break_start": "",
+                "requested_break_end": "",
+                "requested_time_out": "",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+
+        with attendance_app.app.app_context():
+            updated = attendance_app.fetchone("SELECT * FROM correction_requests WHERE id = ?", (correction["id"],))
+            notification = attendance_app.fetchone(
+                "SELECT * FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+                (employee["id"],),
+            )
+
+        self.assertEqual(updated["status"], "Rejected")
+        self.assertEqual(updated["admin_note"], "The submitted dates do not match the approved leave period.")
+        self.assertEqual(updated["reviewed_by"], admin["id"])
+        self.assertTrue(updated["reviewed_at"])
+        self.assertFalse(updated["applied_changes"])
+        self.assertEqual(notification["title"], "Correction Request Updated")
+        self.assertIn("Rejected", notification["message"])
+
     def test_reviewed_correction_cannot_be_moved_back_to_rejected(self):
         admin = self.create_user(
             "locked-correction-admin",

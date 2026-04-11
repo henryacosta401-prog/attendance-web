@@ -156,24 +156,54 @@ def build_employee_payslip_pdf_bytes(payslip, printed_at_text=""):
         commands.append(f"{line_cap} J")
         commands.append(f"{x1:.2f} {y1:.2f} m {x2:.2f} {y2:.2f} l S")
 
+    def add_polyline(points, stroke_rgb=(0, 0, 0), line_width=1, line_cap=1, line_join=1):
+        if not points or len(points) < 2:
+            return
+        add_stroke_color(*stroke_rgb)
+        commands.append(f"{line_width:.2f} w")
+        commands.append(f"{line_cap} J")
+        commands.append(f"{line_join} j")
+        start_x, start_y = points[0]
+        commands.append(f"{start_x:.2f} {start_y:.2f} m")
+        for point_x, point_y in points[1:]:
+            commands.append(f"{point_x:.2f} {point_y:.2f} l")
+        commands.append("S")
+
     def add_brand_logo(x, y, size=36):
-        cx = x + (size / 2)
-        cy = y + (size / 2)
-        add_circle(cx, cy, size / 2, fill_rgb=(0.05, 0.09, 0.20), stroke_rgb=(0.55, 0.74, 1.0), line_width=1.1)
-        white = (1, 1, 1)
-        offsets = [-0.24, -0.16, -0.08, 0.0, 0.08, 0.16, 0.24]
-        heights = [0.38, 0.54, 0.70, 0.82, 0.70, 0.54, 0.38]
-        for offset, height in zip(offsets, heights):
-            x_pos = cx + (offset * size)
-            half_height = (height * size) / 2
-            add_line(
-                x_pos,
-                cy - half_height,
-                x_pos,
-                cy + half_height,
+        scale = size / 256.0
+
+        def map_point(svg_x, svg_y):
+            return (x + (svg_x * scale), y + ((256 - svg_y) * scale))
+
+        circle_cx, circle_cy = map_point(128, 128)
+        add_circle(
+            circle_cx,
+            circle_cy,
+            92 * scale,
+            fill_rgb=(0.06, 0.09, 0.17),
+            stroke_rgb=(0.20, 0.27, 0.36),
+            line_width=max(size * 0.0085, 0.45),
+        )
+
+        white = (0.97, 0.98, 0.99)
+        stroke_width = max(size * (7 / 256.0), 0.95)
+        logo_paths = [
+            [(80, 93), (80, 154), (68, 174), (68, 204)],
+            [(98, 78), (98, 155), (87, 174), (87, 210)],
+            [(116, 63), (116, 157), (107, 174), (107, 214)],
+            [(128, 56), (128, 162)],
+            [(140, 63), (140, 157), (149, 174), (149, 214)],
+            [(158, 78), (158, 155), (169, 174), (169, 210)],
+            [(176, 93), (176, 154), (188, 174), (188, 204)],
+        ]
+
+        for path in logo_paths:
+            add_polyline(
+                [map_point(point_x, point_y) for point_x, point_y in path],
                 stroke_rgb=white,
-                line_width=max(size * 0.06, 1.8),
+                line_width=stroke_width,
                 line_cap=1,
+                line_join=1,
             )
 
     brand_blue = (0.10, 0.20, 0.42)
