@@ -5,6 +5,10 @@ from zoneinfo import ZoneInfo
 BASE_DIR = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 RENDER_DEFAULT_DISK_PATH = "/var/data"
+CLOUDINARY_CLOUD_NAME = os.environ.get("CLOUDINARY_CLOUD_NAME", "").strip()
+CLOUDINARY_API_KEY = os.environ.get("CLOUDINARY_API_KEY", "").strip()
+CLOUDINARY_API_SECRET = os.environ.get("CLOUDINARY_API_SECRET", "").strip()
+CLOUDINARY_UPLOAD_FOLDER = os.environ.get("CLOUDINARY_UPLOAD_FOLDER", "").strip().strip("/")
 
 
 def resolve_persistent_disk_path():

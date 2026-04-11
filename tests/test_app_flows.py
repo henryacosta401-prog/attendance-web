@@ -4,9 +4,12 @@ import shutil
 import tempfile
 import unittest
 from datetime import date, datetime
+from io import BytesIO
+from urllib.parse import quote
 from unittest.mock import patch
 
 import app as attendance_app
+from werkzeug.datastructures import FileStorage
 
 
 class AppFlowsTestCase(unittest.TestCase):
@@ -631,6 +634,43 @@ class AppFlowsTestCase(unittest.TestCase):
         self.assertIn("row_signature", row)
         self.assertNotIn("password_hash", row)
         self.assertNotIn("admin_permissions", row)
+
+    def test_save_uploaded_file_uses_cloudinary_storage_when_available(self):
+        test_file = FileStorage(stream=BytesIO(b"cloudinary-test"), filename="avatar.png")
+        with patch.object(attendance_app, "cloudinary_storage_enabled", return_value=True), patch.object(
+            attendance_app,
+            "upload_file_to_cloudinary",
+            return_value="cld:image:stellar-seats/avatar:png",
+        ) as mocked_upload:
+            saved = attendance_app.save_uploaded_file(
+                test_file,
+                prefix="profile_1",
+                allowed_exts=attendance_app.IMAGE_EXTENSIONS,
+            )
+
+        self.assertEqual(saved, "cld:image:stellar-seats/avatar:png")
+        mocked_upload.assert_called_once()
+
+    def test_scanner_can_open_cloudinary_profile_image_reference(self):
+        scanner = self.create_user("remote-scanner", role="scanner", position="Scanner")
+        employee = self.create_user("remote-image-employee", role="employee", full_name="Remote Image Employee")
+        cloudinary_ref = "cld:image:stellar-seats/profile-test:png"
+        with attendance_app.app.app_context():
+            attendance_app.execute_db(
+                "UPDATE users SET profile_image = ? WHERE id = ?",
+                (cloudinary_ref, employee["id"]),
+                commit=True,
+            )
+
+        self.set_session_user(scanner)
+        with patch.object(attendance_app, "CLOUDINARY_CLOUD_NAME", "demo-cloud"):
+            response = self.client.get(f"/uploads/{quote(cloudinary_ref, safe='')}", follow_redirects=False)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(
+            "https://res.cloudinary.com/demo-cloud/image/upload/stellar-seats/profile-test.png",
+            response.headers.get("Location", ""),
+        )
 
     def test_data_tools_shows_backup_clarity_and_records_external_marker(self):
         admin = self.create_user(

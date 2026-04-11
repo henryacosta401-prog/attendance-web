@@ -31,6 +31,10 @@ from attendance_core.config import (
     BACKUP_FOLDER,
     BASE_DIR,
     BREAK_LIMIT_MINUTES,
+    CLOUDINARY_API_KEY,
+    CLOUDINARY_API_SECRET,
+    CLOUDINARY_CLOUD_NAME,
+    CLOUDINARY_UPLOAD_FOLDER,
     DATABASE_URL,
     DEFAULT_BACKUP_FOLDER,
     DEFAULT_BREAK_WINDOW_END,
@@ -164,6 +168,16 @@ try:
 except Exception:
     GOOGLE_SHEETS_ENABLED = False
 
+# Optional Cloudinary storage
+CLOUDINARY_SDK_ENABLED = False
+try:
+    import cloudinary
+    import cloudinary.uploader
+    CLOUDINARY_SDK_ENABLED = True
+except Exception:
+    cloudinary = None
+    CLOUDINARY_SDK_ENABLED = False
+
 app = Flask(__name__)
 app.secret_key = get_configured_secret_key()
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
@@ -179,6 +193,102 @@ _options_cache = {
 _reports_cache = {}
 _schedule_change_apply_state = {"stamp": 0}
 _admin_notification_scan_state = {}
+
+if CLOUDINARY_SDK_ENABLED and CLOUDINARY_CLOUD_NAME and CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET:
+    cloudinary.config(
+        cloud_name=CLOUDINARY_CLOUD_NAME,
+        api_key=CLOUDINARY_API_KEY,
+        api_secret=CLOUDINARY_API_SECRET,
+        secure=True,
+    )
+
+
+# =========================
+# STORAGE HELPERS
+# =========================
+def cloudinary_storage_enabled():
+    return bool(
+        CLOUDINARY_SDK_ENABLED
+        and CLOUDINARY_CLOUD_NAME
+        and CLOUDINARY_API_KEY
+        and CLOUDINARY_API_SECRET
+    )
+
+
+def is_cloudinary_reference(filename):
+    return bool((filename or "").strip().startswith("cld:"))
+
+
+def parse_cloudinary_reference(filename):
+    cleaned = (filename or "").strip()
+    if not cleaned.startswith("cld:"):
+        return None
+    parts = cleaned.split(":", 3)
+    if len(parts) != 4:
+        return None
+    _, resource_type, public_id, file_format = parts
+    if resource_type not in {"image", "raw"} or not public_id:
+        return None
+    return {
+        "resource_type": resource_type,
+        "public_id": public_id,
+        "format": (file_format or "").strip().lower(),
+    }
+
+
+def build_cloudinary_reference(resource_type, public_id, file_format=""):
+    cleaned_format = (file_format or "").strip().lower()
+    return f"cld:{resource_type}:{public_id}:{cleaned_format}"
+
+
+def build_cloudinary_asset_url(filename):
+    asset = parse_cloudinary_reference(filename)
+    if not asset or not CLOUDINARY_CLOUD_NAME:
+        return ""
+    public_id = quote(asset["public_id"], safe="/")
+    format_suffix = f".{asset['format']}" if asset.get("format") else ""
+    return f"https://res.cloudinary.com/{quote(CLOUDINARY_CLOUD_NAME, safe='')}/{asset['resource_type']}/upload/{public_id}{format_suffix}"
+
+
+def destroy_cloudinary_asset(filename):
+    asset = parse_cloudinary_reference(filename)
+    if not asset or not cloudinary_storage_enabled():
+        return
+    try:
+        cloudinary.uploader.destroy(
+            asset["public_id"],
+            resource_type=asset["resource_type"],
+            invalidate=True,
+        )
+    except Exception:
+        return
+
+
+def upload_file_to_cloudinary(file_obj, prefix, safe_name, ext):
+    if not cloudinary_storage_enabled():
+        raise RuntimeError("Cloudinary storage is not available yet. Please redeploy after adding the Cloudinary package and environment variables.")
+
+    public_base = secure_filename(os.path.splitext(safe_name)[0]) or prefix
+    generated_name = f"{prefix}_{now_timestamp()}_{secrets.token_hex(6)}_{public_base}"
+    public_id = "/".join(part for part in [CLOUDINARY_UPLOAD_FOLDER, generated_name] if part)
+    resource_type = "image" if ext in IMAGE_EXTENSIONS else "raw"
+
+    try:
+        if hasattr(file_obj, "stream") and hasattr(file_obj.stream, "seek"):
+            file_obj.stream.seek(0)
+        result = cloudinary.uploader.upload(
+            file_obj,
+            public_id=public_id,
+            resource_type=resource_type,
+            overwrite=False,
+            use_filename=False,
+            unique_filename=False,
+        )
+    except Exception as exc:
+        raise RuntimeError("Cloud upload failed. Please check the Cloudinary configuration and try again.") from exc
+
+    uploaded_format = (result.get("format") or ext or "").strip().lower()
+    return build_cloudinary_reference(resource_type, result.get("public_id") or public_id, uploaded_format)
 
 
 # =========================
@@ -426,6 +536,9 @@ def allowed_file(filename):
 def is_image(filename):
     if not filename:
         return False
+    cloudinary_asset = parse_cloudinary_reference(filename)
+    if cloudinary_asset:
+        return cloudinary_asset["resource_type"] == "image" or cloudinary_asset["format"] in IMAGE_EXTENSIONS
     ext = filename.rsplit(".", 1)[1].lower() if "." in filename else ""
     return ext in IMAGE_EXTENSIONS
 
@@ -4816,6 +4929,8 @@ def save_uploaded_file(file_obj, prefix="file", allowed_exts=None):
         return None
 
     safe_name = secure_filename(file_obj.filename)
+    if cloudinary_storage_enabled():
+        return upload_file_to_cloudinary(file_obj, prefix, safe_name, ext)
     filename = f"{prefix}_{now_timestamp()}_{secrets.token_hex(6)}_{safe_name}"
     filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
     file_obj.save(filepath)
@@ -4825,6 +4940,8 @@ def save_uploaded_file(file_obj, prefix="file", allowed_exts=None):
 def uploaded_file_exists(filename):
     if not filename:
         return False
+    if is_cloudinary_reference(filename):
+        return bool(build_cloudinary_asset_url(filename))
     return os.path.exists(os.path.join(app.config["UPLOAD_FOLDER"], filename))
 
 
@@ -4847,6 +4964,10 @@ def delete_uploaded_file_if_unused(filename):
     """, (cleaned,)):
         return
 
+    if is_cloudinary_reference(cleaned):
+        destroy_cloudinary_asset(cleaned)
+        return
+
     file_path = os.path.join(app.config["UPLOAD_FOLDER"], cleaned)
     if os.path.isfile(file_path):
         try:
@@ -4867,7 +4988,14 @@ def can_access_uploaded_file(user_row, filename):
     if user_row["role"] == "admin":
         return True
     if user_row["role"] == "scanner":
-        return filename.startswith("profile_") and is_image(filename)
+        if not is_image(filename):
+            return False
+        return bool(fetchone("""
+            SELECT id
+            FROM users
+            WHERE profile_image = ?
+            ORDER BY id DESC LIMIT 1
+        """, (filename,)))
     if user_row["profile_image"] == filename:
         return True
 
@@ -7548,7 +7676,11 @@ def employee_profile():
         profile_image = user["profile_image"]
         file = request.files.get("profile_image")
         if file and file.filename:
-            saved = save_uploaded_file(file, prefix=f"profile_{user['id']}", allowed_exts=IMAGE_EXTENSIONS)
+            try:
+                saved = save_uploaded_file(file, prefix=f"profile_{user['id']}", allowed_exts=IMAGE_EXTENSIONS)
+            except RuntimeError as exc:
+                flash(str(exc), "danger")
+                return redirect(url_for("employee_profile"))
             if not saved:
                 flash("Invalid profile image type.", "danger")
                 return redirect(url_for("employee_profile"))
@@ -7825,7 +7957,11 @@ def admin_profile():
         profile_image = user["profile_image"]
         file = request.files.get("profile_image")
         if file and file.filename:
-            saved = save_uploaded_file(file, prefix=f"profile_{user['id']}", allowed_exts=IMAGE_EXTENSIONS)
+            try:
+                saved = save_uploaded_file(file, prefix=f"profile_{user['id']}", allowed_exts=IMAGE_EXTENSIONS)
+            except RuntimeError as exc:
+                flash(str(exc), "danger")
+                return redirect(url_for("admin_profile"))
             if not saved:
                 flash("Invalid profile image type.", "danger")
                 return redirect(url_for("admin_profile"))
@@ -7999,7 +8135,11 @@ def time_in():
     proof_filename = None
 
     if file and file.filename:
-        proof_filename = save_uploaded_file(file, prefix=f"proof_{user_id}", allowed_exts=IMAGE_EXTENSIONS | DOCUMENT_EXTENSIONS)
+        try:
+            proof_filename = save_uploaded_file(file, prefix=f"proof_{user_id}", allowed_exts=IMAGE_EXTENSIONS | DOCUMENT_EXTENSIONS)
+        except RuntimeError as exc:
+            flash(str(exc), "danger")
+            return redirect(url_for("dashboard"))
         if not proof_filename:
             flash("Invalid upload file type.", "danger")
             return redirect(url_for("dashboard"))
@@ -8231,6 +8371,11 @@ def uploaded_file(filename):
     user = get_user_by_id(session["user_id"])
     if not can_access_uploaded_file(user, filename):
         abort(403)
+    if is_cloudinary_reference(filename):
+        asset_url = build_cloudinary_asset_url(filename)
+        if not asset_url:
+            abort(404)
+        return redirect(asset_url)
     return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
 
 
@@ -11874,7 +12019,11 @@ def manage_employees():
         profile_image = None
         file = request.files.get("profile_image")
         if file and file.filename:
-            profile_image = save_uploaded_file(file, prefix="profile", allowed_exts=IMAGE_EXTENSIONS)
+            try:
+                profile_image = save_uploaded_file(file, prefix="profile", allowed_exts=IMAGE_EXTENSIONS)
+            except RuntimeError as exc:
+                flash(str(exc), "danger")
+                return redirect(url_for("manage_employees"))
             if not profile_image:
                 flash("Invalid profile image file type.", "danger")
                 return redirect(url_for("manage_employees"))
@@ -12155,7 +12304,11 @@ def edit_employee(user_id):
         profile_image = user["profile_image"]
         file = request.files.get("profile_image")
         if file and file.filename:
-            saved = save_uploaded_file(file, prefix=f"profile_{user_id}", allowed_exts=IMAGE_EXTENSIONS)
+            try:
+                saved = save_uploaded_file(file, prefix=f"profile_{user_id}", allowed_exts=IMAGE_EXTENSIONS)
+            except RuntimeError as exc:
+                flash(str(exc), "danger")
+                return redirect(url_for("edit_employee", user_id=user_id))
             if not saved:
                 flash("Invalid profile image file type.", "danger")
                 return redirect(url_for("edit_employee", user_id=user_id))
@@ -12563,7 +12716,14 @@ def update_employee_id_signatory():
 
     file = request.files.get("id_signature_file")
     if file and file.filename:
-        saved = save_uploaded_file(file, prefix="id_signature", allowed_exts=IMAGE_EXTENSIONS)
+        try:
+            saved = save_uploaded_file(file, prefix="id_signature", allowed_exts=IMAGE_EXTENSIONS)
+        except RuntimeError as exc:
+            flash(str(exc), "danger")
+            employee_id = request.form.get("employee_id", "").strip()
+            if employee_id:
+                return redirect(url_for("print_employee_id", user_id=employee_id))
+            return redirect(url_for("manage_employees"))
         if not saved:
             flash("Invalid signature image file type.", "danger")
             employee_id = request.form.get("employee_id", "").strip()
@@ -12574,7 +12734,14 @@ def update_employee_id_signatory():
 
     hr_file = request.files.get("hr_signature_file")
     if hr_file and hr_file.filename:
-        saved_hr = save_uploaded_file(hr_file, prefix="hr_signature", allowed_exts=IMAGE_EXTENSIONS)
+        try:
+            saved_hr = save_uploaded_file(hr_file, prefix="hr_signature", allowed_exts=IMAGE_EXTENSIONS)
+        except RuntimeError as exc:
+            flash(str(exc), "danger")
+            employee_id = request.form.get("employee_id", "").strip()
+            if employee_id:
+                return redirect(url_for("print_employee_id", user_id=employee_id))
+            return redirect(url_for("manage_employees"))
         if not saved_hr:
             flash("Invalid Human Resources signature image file type.", "danger")
             employee_id = request.form.get("employee_id", "").strip()
