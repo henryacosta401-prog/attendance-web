@@ -143,21 +143,50 @@
 .payroll-pill-active { background: rgba(16, 185, 129, 0.18); color: #86efac; }
 .payroll-pill-paused { background: rgba(148, 163, 184, 0.18); color: #cbd5e1; }
 .payroll-pill-recurring { background: rgba(59, 130, 246, 0.16); color: #bfdbfe; }
+.payroll-request-summary {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 16px;
+}
+.payroll-request-stat {
+    padding: 14px;
+    border-radius: 18px;
+    background: rgba(15, 23, 42, 0.52);
+    border: 1px solid rgba(148, 163, 184, 0.12);
+}
+.payroll-request-list {
+    display: grid;
+    gap: 12px;
+    margin-top: 16px;
+}
+.payroll-request-entry {
+    padding: 16px;
+    border-radius: 18px;
+    background: rgba(15, 23, 42, 0.56);
+    border: 1px solid rgba(148, 163, 184, 0.12);
+}
+.payroll-request-form {
+    display: grid;
+    gap: 10px;
+    margin-top: 12px;
+}
 #payroll-build,
 #payroll-current-run,
 #payroll-table-section,
 #payroll-recurring-rules,
-#payroll-one-time-adjustments {
+#payroll-one-time-adjustments,
+#payroll-download-requests {
     scroll-margin-top: 110px;
 }
 @media (max-width: 1240px) {
     .payroll-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 1100px) {
-    .payroll-toolbar, .payroll-mini-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .payroll-toolbar, .payroll-mini-grid, .payroll-request-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 720px) {
-    .payroll-toolbar, .payroll-summary-grid, .payroll-mini-grid { grid-template-columns: 1fr; }
+    .payroll-toolbar, .payroll-summary-grid, .payroll-mini-grid, .payroll-request-summary { grid-template-columns: 1fr; }
 }
 </style>
 {% endblock %}
@@ -179,6 +208,7 @@
     <div class="payroll-jump-links">
         <a class="payroll-jump-link" href="#payroll-build">Build Payroll</a>
         <a class="payroll-jump-link" href="#payroll-current-run">Current Run</a>
+        <a class="payroll-jump-link" href="#payroll-download-requests">Download Requests</a>
         <a class="payroll-jump-link" href="#payroll-table-section">Payroll Table</a>
         <a class="payroll-jump-link" href="#payroll-recurring-rules">Recurring Rules</a>
         <a class="payroll-jump-link" href="#payroll-one-time-adjustments">One-Time Adjustments</a>
@@ -398,6 +428,88 @@
                         {% endif %}
                     </div>
                 </form>
+            </div>
+
+            <div id="payroll-download-requests" style="margin-top:22px;">
+                <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
+                    <div>
+                        <h3 style="margin:0;color:#f8fbff;">Payslip Download Requests</h3>
+                        <p class="payroll-subtitle" style="margin-top:6px;">Employees must request PDF approval first. Review the queue here and unlock downloads only after payroll confirms the release is ready to share.</p>
+                    </div>
+                </div>
+
+                <div class="payroll-request-summary">
+                    <div class="payroll-request-stat">
+                        <div class="payroll-label">Pending</div>
+                        <div class="payroll-highlight" style="margin-top:6px;">{{ payslip_request_summary.pending }}</div>
+                        <div class="payroll-meta" style="margin-top:6px;">Waiting for payroll review</div>
+                    </div>
+                    <div class="payroll-request-stat">
+                        <div class="payroll-label">Approved</div>
+                        <div class="payroll-highlight" style="margin-top:6px;">{{ payslip_request_summary.approved }}</div>
+                        <div class="payroll-meta" style="margin-top:6px;">PDF access unlocked</div>
+                    </div>
+                    <div class="payroll-request-stat">
+                        <div class="payroll-label">Rejected</div>
+                        <div class="payroll-highlight" style="margin-top:6px;">{{ payslip_request_summary.rejected }}</div>
+                        <div class="payroll-meta" style="margin-top:6px;">Needs follow-up with employee</div>
+                    </div>
+                    <div class="payroll-request-stat">
+                        <div class="payroll-label">Total Tracked</div>
+                        <div class="payroll-highlight" style="margin-top:6px;">{{ payslip_request_summary.total }}</div>
+                        <div class="payroll-meta" style="margin-top:6px;">Latest saved request state per payslip</div>
+                    </div>
+                </div>
+
+                <div class="payroll-request-list">
+                    {% if payslip_download_requests %}
+                        {% for request_row in payslip_download_requests %}
+                            <div class="payroll-request-entry">
+                                <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;">
+                                    <div>
+                                        <div class="payroll-highlight">{{ request_row.employee_name }}</div>
+                                        <div class="payroll-meta" style="margin-top:4px;">@{{ request_row.employee_username }} | {{ request_row.employee_department or 'Unassigned department' }}</div>
+                                    </div>
+                                    <span class="payroll-run-status {% if request_row.status == 'Approved' %}payroll-run-status-released{% elif request_row.status == 'Rejected' %}payroll-status-missing{% else %}payroll-run-status-draft{% endif %}">
+                                        {{ request_row.status }}
+                                    </span>
+                                </div>
+                                <div class="payroll-meta" style="margin-top:10px;">Payslip: {{ request_row.period_label }} | Scope: {{ request_row.employee_scope_label }}</div>
+                                <div class="payroll-run-helper" style="margin-top:8px;">
+                                    Requested {{ request_row.requested_display or request_row.requested_at }}
+                                    {% if request_row.reviewed_display %}
+                                        | Reviewed {{ request_row.reviewed_display }}{% if request_row.reviewed_by_name %} by {{ request_row.reviewed_by_name }}{% endif %}
+                                    {% endif %}
+                                </div>
+                                {% if request_row.admin_note %}
+                                    <div class="payroll-run-helper" style="margin-top:8px;">Admin note: {{ request_row.admin_note }}</div>
+                                {% endif %}
+
+                                {% if request_row.is_pending %}
+                                    <form method="POST" action="{{ url_for('review_payslip_download_request_route', request_id=request_row.id) }}" class="payroll-request-form" data-preserve-scroll data-scroll-target="#payroll-download-requests">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                        {{ payroll_hidden_filters() }}
+                                        <textarea class="input" name="admin_note" rows="2" placeholder="Optional approval or rejection note for the employee.">{{ request_row.admin_note or '' }}</textarea>
+                                        <div class="payroll-actions" style="margin-top:0;">
+                                            <button class="btn btn-primary" type="submit" name="decision" value="approve">Approve PDF</button>
+                                            <button class="btn btn-danger" type="submit" name="decision" value="reject">Reject Request</button>
+                                        </div>
+                                    </form>
+                                {% else %}
+                                    <div class="payroll-run-helper {% if request_row.is_approved %}ready{% else %}blocked{% endif %}" style="margin-top:10px;">
+                                        {% if request_row.is_approved %}
+                                            Employee can now download the official payslip PDF.
+                                        {% else %}
+                                            Employee must submit a new request after checking the admin note.
+                                        {% endif %}
+                                    </div>
+                                {% endif %}
+                            </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="payroll-empty">No payslip PDF approval requests have been submitted yet.</div>
+                    {% endif %}
+                </div>
             </div>
         </section>
     </div>

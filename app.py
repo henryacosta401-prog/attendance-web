@@ -625,6 +625,22 @@ def init_sqlite_db():
     """)
 
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS payslip_download_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            payroll_run_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'Pending',
+            requested_at TEXT NOT NULL,
+            reviewed_at TEXT,
+            reviewed_by INTEGER,
+            admin_note TEXT,
+            FOREIGN KEY (payroll_run_id) REFERENCES payroll_runs (id),
+            FOREIGN KEY (user_id) REFERENCES users (id),
+            FOREIGN KEY (reviewed_by) REFERENCES users (id)
+        )
+    """)
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS login_attempts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ip_address TEXT NOT NULL,
@@ -1162,12 +1178,45 @@ def init_sqlite_db():
             cursor.execute("ALTER TABLE incident_reports ADD COLUMN reviewed_by INTEGER")
         if "reviewed_at" not in existing_cols_incident:
             cursor.execute("ALTER TABLE incident_reports ADD COLUMN reviewed_at TEXT")
-        if "created_at" not in existing_cols_incident:
-            cursor.execute("ALTER TABLE incident_reports ADD COLUMN created_at TEXT")
-        if "disciplinary_action_id" not in existing_cols_incident:
-            cursor.execute("ALTER TABLE incident_reports ADD COLUMN disciplinary_action_id INTEGER")
-        if "policy_incident_count" not in existing_cols_incident:
-            cursor.execute("ALTER TABLE incident_reports ADD COLUMN policy_incident_count INTEGER NOT NULL DEFAULT 0")
+    if "created_at" not in existing_cols_incident:
+        cursor.execute("ALTER TABLE incident_reports ADD COLUMN created_at TEXT")
+    if "disciplinary_action_id" not in existing_cols_incident:
+        cursor.execute("ALTER TABLE incident_reports ADD COLUMN disciplinary_action_id INTEGER")
+    if "policy_incident_count" not in existing_cols_incident:
+        cursor.execute("ALTER TABLE incident_reports ADD COLUMN policy_incident_count INTEGER NOT NULL DEFAULT 0")
+
+    existing_cols_payslip_requests = [row[1] for row in cursor.execute("PRAGMA table_info(payslip_download_requests)").fetchall()]
+    if not existing_cols_payslip_requests:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS payslip_download_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                payroll_run_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'Pending',
+                requested_at TEXT NOT NULL,
+                reviewed_at TEXT,
+                reviewed_by INTEGER,
+                admin_note TEXT
+            )
+        """)
+        existing_cols_payslip_requests = [row[1] for row in cursor.execute("PRAGMA table_info(payslip_download_requests)").fetchall()]
+    if "payroll_run_id" not in existing_cols_payslip_requests:
+        cursor.execute("ALTER TABLE payslip_download_requests ADD COLUMN payroll_run_id INTEGER")
+    if "user_id" not in existing_cols_payslip_requests:
+        cursor.execute("ALTER TABLE payslip_download_requests ADD COLUMN user_id INTEGER")
+    if "status" not in existing_cols_payslip_requests:
+        cursor.execute("ALTER TABLE payslip_download_requests ADD COLUMN status TEXT NOT NULL DEFAULT 'Pending'")
+    if "requested_at" not in existing_cols_payslip_requests:
+        cursor.execute("ALTER TABLE payslip_download_requests ADD COLUMN requested_at TEXT")
+    if "reviewed_at" not in existing_cols_payslip_requests:
+        cursor.execute("ALTER TABLE payslip_download_requests ADD COLUMN reviewed_at TEXT")
+    if "reviewed_by" not in existing_cols_payslip_requests:
+        cursor.execute("ALTER TABLE payslip_download_requests ADD COLUMN reviewed_by INTEGER")
+    if "admin_note" not in existing_cols_payslip_requests:
+        cursor.execute("ALTER TABLE payslip_download_requests ADD COLUMN admin_note TEXT")
+
+    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_payslip_download_requests_user_run ON payslip_download_requests(user_id, payroll_run_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_payslip_download_requests_status_requested_at ON payslip_download_requests(status, requested_at)")
 
     existing_cols_disciplinary = [row[1] for row in cursor.execute("PRAGMA table_info(disciplinary_actions)").fetchall()]
     if existing_cols_disciplinary:
@@ -1728,6 +1777,28 @@ def init_postgres_db():
         """)
 
         cur.execute("""
+            CREATE TABLE IF NOT EXISTS payslip_download_requests (
+                id SERIAL PRIMARY KEY,
+                payroll_run_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'Pending',
+                requested_at TEXT NOT NULL,
+                reviewed_at TEXT,
+                reviewed_by INTEGER,
+                admin_note TEXT
+            )
+        """)
+        cur.execute("ALTER TABLE payslip_download_requests ADD COLUMN IF NOT EXISTS payroll_run_id INTEGER")
+        cur.execute("ALTER TABLE payslip_download_requests ADD COLUMN IF NOT EXISTS user_id INTEGER")
+        cur.execute("ALTER TABLE payslip_download_requests ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'Pending'")
+        cur.execute("ALTER TABLE payslip_download_requests ADD COLUMN IF NOT EXISTS requested_at TEXT")
+        cur.execute("ALTER TABLE payslip_download_requests ADD COLUMN IF NOT EXISTS reviewed_at TEXT")
+        cur.execute("ALTER TABLE payslip_download_requests ADD COLUMN IF NOT EXISTS reviewed_by INTEGER")
+        cur.execute("ALTER TABLE payslip_download_requests ADD COLUMN IF NOT EXISTS admin_note TEXT")
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_payslip_download_requests_user_run ON payslip_download_requests(user_id, payroll_run_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_payslip_download_requests_status_requested_at ON payslip_download_requests(status, requested_at)")
+
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS login_attempts (
                 id SERIAL PRIMARY KEY,
                 ip_address TEXT NOT NULL,
@@ -2095,6 +2166,330 @@ def create_notification(user_id, title, message):
         INSERT INTO notifications (user_id, title, message, created_at, is_read)
         VALUES (?, ?, ?, ?, 0)
     """, (user_id, title, message, now_str()), commit=True)
+
+
+PAYSLIP_DOWNLOAD_REQUEST_STATUSES = {"Pending", "Approved", "Rejected"}
+
+
+def enrich_payslip_download_request(row):
+    if not row:
+        return None
+    item = dict(row)
+    status = (item.get("status") or "Pending").strip().title()
+    if status not in PAYSLIP_DOWNLOAD_REQUEST_STATUSES:
+        status = "Pending"
+    item["status"] = status
+    item["requested_display"] = format_datetime_12h(item.get("requested_at")) if item.get("requested_at") else ""
+    item["reviewed_display"] = format_datetime_12h(item.get("reviewed_at")) if item.get("reviewed_at") else ""
+    item["is_pending"] = status == "Pending"
+    item["is_approved"] = status == "Approved"
+    item["is_rejected"] = status == "Rejected"
+    item["status_badge_class"] = {
+        "Pending": "status-yellow",
+        "Approved": "status-green",
+        "Rejected": "status-red",
+    }.get(status, "status-gray")
+    item["status_chip_class"] = {
+        "Pending": "employee-status-yellow",
+        "Approved": "employee-status-green",
+        "Rejected": "employee-status-red",
+    }.get(status, "employee-status-gray")
+    item["status_copy"] = {
+        "Pending": "Waiting for payroll admin approval before PDF download is unlocked.",
+        "Approved": "Approved by admin. PDF download is now available for this released payslip.",
+        "Rejected": "The last PDF download request was rejected. You can submit a new request after checking the admin note.",
+    }.get(status, "")
+    return item
+
+
+def get_payslip_download_request(user_id, payroll_run_id):
+    row = fetchone("""
+        SELECT
+            req.*,
+            reviewer.full_name AS reviewed_by_name
+        FROM payslip_download_requests req
+        LEFT JOIN users reviewer ON reviewer.id = req.reviewed_by
+        WHERE req.user_id = ? AND req.payroll_run_id = ?
+        LIMIT 1
+    """, (user_id, payroll_run_id))
+    return enrich_payslip_download_request(row)
+
+
+def get_payslip_download_request_map(user_id, payroll_run_ids):
+    normalized_ids = []
+    for payroll_run_id in payroll_run_ids:
+        try:
+            normalized_ids.append(int(payroll_run_id))
+        except (TypeError, ValueError):
+            continue
+    if not normalized_ids:
+        return {}
+    placeholders = ", ".join(["?"] * len(normalized_ids))
+    rows = fetchall(f"""
+        SELECT
+            req.*,
+            reviewer.full_name AS reviewed_by_name
+        FROM payslip_download_requests req
+        LEFT JOIN users reviewer ON reviewer.id = req.reviewed_by
+        WHERE req.user_id = ?
+          AND req.payroll_run_id IN ({placeholders})
+    """, (user_id, *normalized_ids))
+    return {
+        int(row["payroll_run_id"]): enrich_payslip_download_request(row)
+        for row in rows
+    }
+
+
+def attach_payslip_download_requests(payroll_items, user_id):
+    request_map = get_payslip_download_request_map(
+        user_id,
+        [item.get("payroll_run_id") for item in payroll_items],
+    )
+    for item in payroll_items:
+        request_info = request_map.get(int(item["payroll_run_id"])) if item.get("payroll_run_id") else None
+        item["download_request"] = request_info
+        item["can_download_pdf"] = bool(request_info and request_info["is_approved"])
+        item["download_request_status"] = request_info["status"] if request_info else "Not Requested"
+    return payroll_items
+
+
+def get_recent_payslip_download_requests(limit=12):
+    rows = fetchall("""
+        SELECT
+            req.*,
+            employee.full_name AS employee_name,
+            employee.department AS employee_department,
+            employee.username AS employee_username,
+            reviewer.full_name AS reviewed_by_name,
+            pr.date_from,
+            pr.date_to,
+            pr.department_filter,
+            pr.employee_filter,
+            pr.status AS payroll_status
+        FROM payslip_download_requests req
+        JOIN users employee ON employee.id = req.user_id
+        JOIN payroll_runs pr ON pr.id = req.payroll_run_id
+        LEFT JOIN users reviewer ON reviewer.id = req.reviewed_by
+        ORDER BY
+            CASE req.status
+                WHEN 'Pending' THEN 0
+                WHEN 'Rejected' THEN 1
+                ELSE 2
+            END,
+            req.requested_at DESC,
+            req.id DESC
+        LIMIT ?
+    """, (limit,))
+    enriched = []
+    for row in rows:
+        item = enrich_payslip_download_request(row)
+        item["period_label"] = format_payroll_period_label(item.get("date_from"), item.get("date_to"))
+        item["employee_scope_label"] = get_payroll_scope_label(
+            employee_filter=item.get("employee_filter"),
+            department_filter=item.get("department_filter"),
+            current_user_id=item.get("user_id"),
+        )
+        enriched.append(item)
+    return enriched
+
+
+def get_payslip_download_request_summary():
+    summary = {
+        "pending": 0,
+        "approved": 0,
+        "rejected": 0,
+        "total": 0,
+    }
+    rows = fetchall("""
+        SELECT status, COUNT(*) AS total
+        FROM payslip_download_requests
+        GROUP BY status
+    """)
+    for row in rows:
+        status = (row.get("status") or "").strip().title()
+        total = int(row.get("total") or 0)
+        if status == "Pending":
+            summary["pending"] = total
+        elif status == "Approved":
+            summary["approved"] = total
+        elif status == "Rejected":
+            summary["rejected"] = total
+    summary["total"] = summary["pending"] + summary["approved"] + summary["rejected"]
+    return summary
+
+
+def get_payroll_admin_recipients():
+    admins = fetchall("""
+        SELECT *
+        FROM users
+        WHERE role = 'admin' AND COALESCE(is_active, 1) = 1
+        ORDER BY full_name ASC, id ASC
+    """)
+    payroll_admins = [admin for admin in admins if admin_has_permission(admin, "payroll")]
+    return payroll_admins or admins
+
+
+def submit_payslip_download_request(user_row, payslip):
+    existing = get_payslip_download_request(user_row["id"], payslip["payroll_run_id"])
+    if existing and existing["is_approved"]:
+        return existing, "approved"
+    if existing and existing["is_pending"]:
+        return existing, "pending"
+
+    request_time = now_str()
+    if existing:
+        execute_db("""
+            UPDATE payslip_download_requests
+            SET status = 'Pending',
+                requested_at = ?,
+                reviewed_at = NULL,
+                reviewed_by = NULL,
+                admin_note = NULL
+            WHERE id = ?
+        """, (request_time, existing["id"]), commit=True)
+        action = "resubmitted"
+    else:
+        execute_db("""
+            INSERT INTO payslip_download_requests (
+                payroll_run_id, user_id, status, requested_at, reviewed_at, reviewed_by, admin_note
+            )
+            VALUES (?, ?, 'Pending', ?, NULL, NULL, NULL)
+        """, (
+            payslip["payroll_run_id"],
+            user_row["id"],
+            request_time,
+        ), commit=True)
+        action = "created"
+
+    request_row = get_payslip_download_request(user_row["id"], payslip["payroll_run_id"])
+    employee_name = user_row.get("full_name") or user_row.get("username") or f"Employee #{user_row['id']}"
+    for admin_user in get_payroll_admin_recipients():
+        create_notification(
+            admin_user["id"],
+            "Payslip Download Approval Needed",
+            f"{employee_name} requested approval to download the payslip for {payslip.get('period_label')}. Open Payroll to review it."
+        )
+
+    create_notification(
+        user_row["id"],
+        "Payslip PDF Request Sent",
+        f"Your request to download the payslip for {payslip.get('period_label')} is now pending payroll admin approval."
+    )
+    log_activity(
+        user_row["id"],
+        "REQUEST PAYSLIP PDF",
+        f"Submitted PDF approval request for {payslip.get('period_label')}",
+        target_user_id=user_row["id"],
+    )
+    return request_row, action
+
+
+def get_payslip_download_request_by_id(request_id):
+    row = fetchone("""
+        SELECT
+            req.*,
+            employee.full_name AS employee_name,
+            employee.department AS employee_department,
+            employee.username AS employee_username,
+            reviewer.full_name AS reviewed_by_name,
+            pr.date_from,
+            pr.date_to,
+            pr.department_filter,
+            pr.employee_filter
+        FROM payslip_download_requests req
+        JOIN users employee ON employee.id = req.user_id
+        JOIN payroll_runs pr ON pr.id = req.payroll_run_id
+        LEFT JOIN users reviewer ON reviewer.id = req.reviewed_by
+        WHERE req.id = ?
+        LIMIT 1
+    """, (request_id,))
+    if not row:
+        return None
+    item = enrich_payslip_download_request(row)
+    item["period_label"] = format_payroll_period_label(item.get("date_from"), item.get("date_to"))
+    return item
+
+
+def review_payslip_download_request(request_id, reviewer_user_id, decision, admin_note=""):
+    request_row = get_payslip_download_request_by_id(request_id)
+    if not request_row:
+        return None
+
+    status = "Approved" if (decision or "").strip().lower() == "approve" else "Rejected"
+    cleaned_note = " ".join((admin_note or "").strip().split())
+    execute_db("""
+        UPDATE payslip_download_requests
+        SET status = ?, reviewed_at = ?, reviewed_by = ?, admin_note = ?
+        WHERE id = ?
+    """, (
+        status,
+        now_str(),
+        reviewer_user_id,
+        cleaned_note or None,
+        request_id,
+    ), commit=True)
+
+    updated = get_payslip_download_request_by_id(request_id)
+    if not updated:
+        return None
+
+    if status == "Approved":
+        message = f"Your payslip PDF request for {updated.get('period_label')} was approved. You can now download the official PDF."
+        action = "APPROVE PAYSLIP PDF"
+    else:
+        message = f"Your payslip PDF request for {updated.get('period_label')} was rejected. Review the admin note and submit a new request if needed."
+        action = "REJECT PAYSLIP PDF"
+    if cleaned_note:
+        message = f"{message} Note: {cleaned_note}"
+
+    create_notification(
+        updated["user_id"],
+        f"Payslip PDF Request {status}",
+        message,
+    )
+    log_activity(
+        reviewer_user_id,
+        action,
+        f"{status} payslip PDF request for {updated.get('employee_name')} ({updated.get('period_label')})",
+        target_user_id=updated["user_id"],
+    )
+    return updated
+
+
+def get_employee_error_record_summary(user_id):
+    summary_row = fetchone("""
+        SELECT
+            COUNT(*) AS total_errors,
+            SUM(CASE WHEN COALESCE(status, 'Open') = 'Resolved' THEN 0 ELSE 1 END) AS active_errors,
+            COUNT(DISTINCT LOWER(TRIM(COALESCE(error_type, '')))) AS error_type_count
+        FROM incident_reports
+        WHERE user_id = ?
+    """, (user_id,))
+    breakdown = fetchall("""
+        SELECT
+            COALESCE(NULLIF(TRIM(error_type), ''), 'Uncategorized') AS error_type,
+            COUNT(*) AS total_count,
+            SUM(CASE WHEN COALESCE(status, 'Open') = 'Resolved' THEN 0 ELSE 1 END) AS active_count,
+            MAX(report_date) AS latest_report_date
+        FROM incident_reports
+        WHERE user_id = ?
+        GROUP BY COALESCE(NULLIF(TRIM(error_type), ''), 'Uncategorized')
+        ORDER BY active_count DESC, total_count DESC, error_type ASC
+    """, (user_id,))
+    return {
+        "total_errors": int(summary_row["total_errors"] or 0) if summary_row else 0,
+        "active_errors": int(summary_row["active_errors"] or 0) if summary_row else 0,
+        "error_type_count": int(summary_row["error_type_count"] or 0) if summary_row else 0,
+        "breakdown": [
+            {
+                "error_type": row["error_type"],
+                "total_count": int(row["total_count"] or 0),
+                "active_count": int(row["active_count"] or 0),
+                "latest_report_date": row.get("latest_report_date") or "",
+            }
+            for row in breakdown
+        ],
+    }
 
 
 def normalize_incident_error_type(error_type, new_error_type=""):
@@ -4210,6 +4605,7 @@ def perform_go_live_reset():
                     attendance,
                     correction_requests,
                     notifications,
+                    payslip_download_requests,
                     activity_logs,
                     scanner_logs,
                     overtime_sessions,
@@ -4231,6 +4627,7 @@ def perform_go_live_reset():
             "attendance",
             "correction_requests",
             "notifications",
+            "payslip_download_requests",
             "activity_logs",
             "scanner_logs",
             "overtime_sessions",
@@ -4247,7 +4644,7 @@ def perform_go_live_reset():
         try:
             cur.execute("""
                 DELETE FROM sqlite_sequence
-                WHERE name IN ('breaks', 'attendance', 'correction_requests', 'notifications', 'activity_logs', 'scanner_logs', 'overtime_sessions', 'payroll_adjustments', 'payroll_run_item_adjustments', 'payroll_run_items', 'payroll_runs', 'employee_future_schedule_changes', 'login_attempts', 'incident_reports', 'disciplinary_actions')
+                WHERE name IN ('breaks', 'attendance', 'correction_requests', 'notifications', 'payslip_download_requests', 'activity_logs', 'scanner_logs', 'overtime_sessions', 'payroll_adjustments', 'payroll_run_item_adjustments', 'payroll_run_items', 'payroll_runs', 'employee_future_schedule_changes', 'login_attempts', 'incident_reports', 'disciplinary_actions')
             """)
         except sqlite3.OperationalError:
             pass
@@ -5945,7 +6342,7 @@ def get_employee_released_payroll_runs(user_id, limit=24):
         deduped.append(item)
         if len(deduped) >= limit:
             break
-    return deduped
+    return attach_payslip_download_requests(deduped, user_id)
 
 
 def get_employee_released_payroll_item(user_id, payroll_run_id):
@@ -6000,6 +6397,7 @@ def get_employee_released_payroll_item(user_id, payroll_run_id):
         not item["adjustment_entries"]
         and (float(item.get("allowances") or 0) > 0 or float(item.get("deductions") or 0) > 0)
     )
+    attach_payslip_download_requests([item], user_id)
     return item
 
 
@@ -6903,6 +7301,7 @@ def dashboard():
     break_limit_minutes = get_employee_break_limit(user)
     over_break_minutes = get_overbreak_minutes(todays_break_minutes, break_limit_minutes)
     leave_summary = get_leave_balance_summary(user)
+    error_record_summary = get_employee_error_record_summary(user["id"])
     latest_payslip = None
     released_runs = get_employee_released_payroll_runs(user["id"], limit=1)
     if released_runs:
@@ -6923,6 +7322,7 @@ def dashboard():
         over_break_minutes=over_break_minutes,
         minutes_to_hm=minutes_to_hm,
         latest_payslip=latest_payslip,
+        error_record_summary=error_record_summary,
         current_calendar_year=now_dt().year,
         current_calendar_month=now_dt().month,
         current_calendar_label=now_dt().strftime("%B %Y")
@@ -7030,8 +7430,38 @@ def employee_payslip(payroll_run_id):
     return render_template(
         "employee_payslip.html",
         user=user,
-        payslip=payslip
+        payslip=payslip,
+        download_request=payslip.get("download_request")
     )
+
+
+@app.route("/my-payroll/<int:payroll_run_id>/request-download", methods=["POST"])
+@login_required(role="employee")
+def request_employee_payslip_download(payroll_run_id):
+    user = get_user_by_id(session["user_id"])
+    if not user:
+        session.clear()
+        flash("Your session expired. Please log in again.", "warning")
+        return redirect(url_for("login"))
+
+    payslip = get_employee_released_payroll_item(user["id"], payroll_run_id)
+    if not payslip:
+        flash("Released payslip not found for your account.", "warning")
+        return redirect(url_for("employee_payroll_history"))
+
+    request_row, action = submit_payslip_download_request(user, payslip)
+    if action == "approved":
+        flash("This payslip PDF is already approved for download.", "success")
+    elif action == "pending":
+        flash("Your payslip PDF request is already pending payroll admin approval.", "info")
+    elif action == "resubmitted":
+        flash("Payslip PDF approval was requested again and sent back to payroll admin.", "success")
+    else:
+        flash("Payslip PDF approval request sent to payroll admin.", "success")
+
+    if request.form.get("from_page") == "history":
+        return redirect(url_for("employee_payroll_history"))
+    return redirect(url_for("employee_payslip", payroll_run_id=payroll_run_id))
 
 
 @app.route("/my-payroll/<int:payroll_run_id>/download.pdf")
@@ -7047,6 +7477,20 @@ def download_employee_payslip_pdf(payroll_run_id):
     if not payslip:
         flash("Released payslip not found for your account.", "warning")
         return redirect(url_for("employee_payroll_history"))
+
+    download_request = payslip.get("download_request")
+    if not download_request or not download_request.get("is_approved"):
+        request_row, action = submit_payslip_download_request(user, payslip)
+        if action == "pending":
+            flash("Your payslip PDF request is still pending payroll admin approval.", "info")
+        elif action == "approved":
+            download_request = request_row
+        elif action == "resubmitted":
+            flash("Your previous request was reopened and sent back to payroll admin for approval.", "warning")
+        else:
+            flash("You need payroll admin approval before downloading this payslip. A request was sent now.", "warning")
+        if not download_request or not download_request.get("is_approved"):
+            return redirect(url_for("employee_payslip", payroll_run_id=payroll_run_id))
 
     pdf_bytes = build_employee_payslip_pdf_bytes(
         payslip,
@@ -9351,6 +9795,8 @@ def admin_payroll():
     if current_run:
         current_run = enrich_admin_payroll_run(current_run)
     recent_runs = get_recent_payroll_runs()
+    payslip_download_requests = get_recent_payslip_download_requests()
+    payslip_request_summary = get_payslip_download_request_summary()
     editing_recurring_rule = get_payroll_recurring_rule(request.args.get("edit_recurring_rule", ""))
 
     return render_template(
@@ -9368,9 +9814,40 @@ def admin_payroll():
         recurring_rules=recurring_rules,
         current_run=current_run,
         recent_runs=recent_runs,
+        payslip_download_requests=payslip_download_requests,
+        payslip_request_summary=payslip_request_summary,
         employee_filter_label=get_payroll_employee_filter_label(employee_filter),
         editing_recurring_rule=editing_recurring_rule
     )
+
+
+@app.route("/admin/payroll/download-requests/<int:request_id>/review", methods=["POST"])
+@login_required(role="admin")
+def review_payslip_download_request_route(request_id):
+    redirect_args = payroll_filter_redirect_args(request.form)
+    decision = (request.form.get("decision", "") or "").strip().lower()
+    admin_note = request.form.get("admin_note", "")
+
+    if decision not in {"approve", "reject"}:
+        flash("Choose approve or reject for the payslip PDF request.", "danger")
+        return redirect(url_for("admin_payroll", **redirect_args) + "#payroll-download-requests")
+
+    updated_request = review_payslip_download_request(
+        request_id,
+        session["user_id"],
+        decision,
+        admin_note=admin_note,
+    )
+    if not updated_request:
+        flash("Payslip download request was not found.", "warning")
+        return redirect(url_for("admin_payroll", **redirect_args) + "#payroll-download-requests")
+
+    decision_label = "approved" if decision == "approve" else "rejected"
+    flash(
+        f"Payslip PDF request for {updated_request.get('employee_name')} was {decision_label}.",
+        "success" if decision == "approve" else "info",
+    )
+    return redirect(url_for("admin_payroll", **redirect_args) + "#payroll-download-requests")
 
 
 @app.route("/admin/payroll/adjustments", methods=["POST"])
@@ -12187,6 +12664,7 @@ def delete_employee(user_id):
     db = get_db()
     try:
         execute_db("DELETE FROM notifications WHERE user_id = ?", (user_id,))
+        execute_db("DELETE FROM payslip_download_requests WHERE user_id = ? OR reviewed_by = ?", (user_id, user_id))
         execute_db("DELETE FROM employee_future_schedule_changes WHERE user_id = ?", (user_id,))
         execute_db("DELETE FROM employee_schedule_history WHERE user_id = ?", (user_id,))
         execute_db("DELETE FROM breaks WHERE user_id = ?", (user_id,))

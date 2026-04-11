@@ -204,6 +204,7 @@ ADMIN_ENDPOINT_PERMISSIONS = {
     "save_payroll_run": "payroll",
     "delete_payroll_run": "payroll",
     "bulk_release_payroll_runs": "payroll",
+    "review_payslip_download_request_route": "payroll",
     "export_admin_payroll_excel": "payroll",
     "print_admin_payroll": "payroll",
     "admin_reports": "reports",

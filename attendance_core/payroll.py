@@ -131,16 +131,65 @@ def build_employee_payslip_pdf_bytes(payslip, printed_at_text=""):
             current_y -= leading
         return current_y
 
+    def add_circle(cx, cy, radius, fill_rgb=None, stroke_rgb=None, line_width=1):
+        kappa = 0.552284749831 * radius
+        if fill_rgb:
+            add_fill_color(*fill_rgb)
+        if stroke_rgb:
+            add_stroke_color(*stroke_rgb)
+            commands.append(f"{line_width:.2f} w")
+        commands.append(f"{cx + radius:.2f} {cy:.2f} m")
+        commands.append(f"{cx + radius:.2f} {cy + kappa:.2f} {cx + kappa:.2f} {cy + radius:.2f} {cx:.2f} {cy + radius:.2f} c")
+        commands.append(f"{cx - kappa:.2f} {cy + radius:.2f} {cx - radius:.2f} {cy + kappa:.2f} {cx - radius:.2f} {cy:.2f} c")
+        commands.append(f"{cx - radius:.2f} {cy - kappa:.2f} {cx - kappa:.2f} {cy - radius:.2f} {cx:.2f} {cy - radius:.2f} c")
+        commands.append(f"{cx + kappa:.2f} {cy - radius:.2f} {cx + radius:.2f} {cy - kappa:.2f} {cx + radius:.2f} {cy:.2f} c")
+        if fill_rgb and stroke_rgb:
+            commands.append("B")
+        elif fill_rgb:
+            commands.append("f")
+        else:
+            commands.append("S")
+
+    def add_line(x1, y1, x2, y2, stroke_rgb=(0, 0, 0), line_width=1, line_cap=0):
+        add_stroke_color(*stroke_rgb)
+        commands.append(f"{line_width:.2f} w")
+        commands.append(f"{line_cap} J")
+        commands.append(f"{x1:.2f} {y1:.2f} m {x2:.2f} {y2:.2f} l S")
+
+    def add_brand_logo(x, y, size=36):
+        cx = x + (size / 2)
+        cy = y + (size / 2)
+        add_circle(cx, cy, size / 2, fill_rgb=(0.05, 0.09, 0.20), stroke_rgb=(0.55, 0.74, 1.0), line_width=1.1)
+        white = (1, 1, 1)
+        offsets = [-0.24, -0.16, -0.08, 0.0, 0.08, 0.16, 0.24]
+        heights = [0.38, 0.54, 0.70, 0.82, 0.70, 0.54, 0.38]
+        for offset, height in zip(offsets, heights):
+            x_pos = cx + (offset * size)
+            half_height = (height * size) / 2
+            add_line(
+                x_pos,
+                cy - half_height,
+                x_pos,
+                cy + half_height,
+                stroke_rgb=white,
+                line_width=max(size * 0.06, 1.8),
+                line_cap=1,
+            )
+
     brand_blue = (0.10, 0.20, 0.42)
     panel_fill = (0.95, 0.97, 0.99)
     panel_border = (0.83, 0.87, 0.93)
     label_color = (0.37, 0.47, 0.62)
     body_color = (0.12, 0.16, 0.25)
+    brand_gold = (1.0, 0.93, 0.55)
+    brand_accent = (0.58, 0.72, 1.0)
 
     add_rect(margin, page_height - 92, content_width, 50, fill_rgb=brand_blue)
-    add_text(margin + 16, page_height - 64, "STELLAR SEATS", size=20, font="F2", rgb=(1, 1, 1))
-    add_text(margin + 16, page_height - 80, "Employee Payslip", size=10, font="F1", rgb=(0.87, 0.92, 1))
-    add_text(margin + content_width - 190, page_height - 64, payslip.get("period_label", "Payroll Period"), size=11, font="F2", rgb=(1, 0.93, 0.55))
+    add_rect(margin, page_height - 46, content_width, 2.5, fill_rgb=brand_accent)
+    add_brand_logo(margin + 14, page_height - 84, size=34)
+    add_text(margin + 58, page_height - 64, "STELLAR SEATS", size=20, font="F2", rgb=(1, 1, 1))
+    add_text(margin + 58, page_height - 80, "Official Employee Payslip", size=10, font="F1", rgb=(0.87, 0.92, 1))
+    add_text(margin + content_width - 190, page_height - 64, payslip.get("period_label", "Payroll Period"), size=11, font="F2", rgb=brand_gold)
     add_text(margin + content_width - 190, page_height - 80, f"{payslip.get('date_from', '')} to {payslip.get('date_to', '')}", size=9, font="F1", rgb=(0.87, 0.92, 1))
 
     card_gap = 10

@@ -51,6 +51,32 @@
     font-size: 18px;
     margin-top: 6px;
 }
+.payslip-request-banner {
+    margin-top: 14px;
+    padding: 14px 16px;
+    border-radius: 18px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+}
+.payslip-request-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+.payslip-request-badge-pending { background: rgba(245, 158, 11, 0.18); color: #fcd34d; }
+.payslip-request-badge-approved { background: rgba(16, 185, 129, 0.18); color: #86efac; }
+.payslip-request-badge-rejected { background: rgba(239, 68, 68, 0.18); color: #fca5a5; }
+.payslip-request-note {
+    margin-top: 10px;
+    color: #cbd5e1;
+    font-size: 12px;
+    line-height: 1.5;
+}
 @media (max-width: 960px) {
     .payslip-history-summary {
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -125,9 +151,46 @@
                             <div class="small muted">Prepared by {{ run.created_by_name }}</div>
                         </div>
 
+                        <div class="payslip-request-banner">
+                            {% if run.download_request %}
+                                <span class="payslip-request-badge payslip-request-badge-{{ run.download_request.status|lower }}">{{ run.download_request.status }}</span>
+                                <div class="payslip-request-note">
+                                    {{ run.download_request.status_copy }}
+                                    {% if run.download_request.requested_display %}
+                                        Requested {{ run.download_request.requested_display }}.
+                                    {% endif %}
+                                    {% if run.download_request.reviewed_display %}
+                                        Reviewed {{ run.download_request.reviewed_display }}{% if run.download_request.reviewed_by_name %} by {{ run.download_request.reviewed_by_name }}{% endif %}.
+                                    {% endif %}
+                                    {% if run.download_request.admin_note %}
+                                        Admin note: {{ run.download_request.admin_note }}
+                                    {% endif %}
+                                </div>
+                            {% else %}
+                                <span class="payslip-request-badge payslip-request-badge-pending">Approval Needed</span>
+                                <div class="payslip-request-note">Payroll admin approval is required before the official PDF download is unlocked for this released payslip.</div>
+                            {% endif %}
+                        </div>
+
                         <div class="payslip-history-actions" style="margin-top:18px;" data-tour-id="employee-payslip-actions">
                             <a class="btn btn-primary" href="{{ url_for('employee_payslip', payroll_run_id=run.payroll_run_id) }}">Open Payslip</a>
-                            <a class="btn btn-gray" href="{{ url_for('download_employee_payslip_pdf', payroll_run_id=run.payroll_run_id) }}">Download PDF</a>
+                            {% if run.can_download_pdf %}
+                                <a class="btn btn-gray" href="{{ url_for('download_employee_payslip_pdf', payroll_run_id=run.payroll_run_id) }}">Download PDF</a>
+                            {% else %}
+                                <form method="POST" action="{{ url_for('request_employee_payslip_download', payroll_run_id=run.payroll_run_id) }}" style="display:inline-flex;gap:10px;flex-wrap:wrap;">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                    <input type="hidden" name="from_page" value="history">
+                                    <button class="btn btn-gray" type="submit" {% if run.download_request and run.download_request.is_pending %}disabled{% endif %}>
+                                        {% if run.download_request and run.download_request.is_rejected %}
+                                            Re-request PDF Approval
+                                        {% elif run.download_request and run.download_request.is_pending %}
+                                            Approval Pending
+                                        {% else %}
+                                            Request PDF Approval
+                                        {% endif %}
+                                    </button>
+                                </form>
+                            {% endif %}
                         </div>
                     </div>
                 {% endfor %}

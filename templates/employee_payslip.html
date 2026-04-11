@@ -8,6 +8,76 @@
     gap: 20px;
 }
 
+.payslip-brand-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+}
+
+.payslip-brand-mark {
+    width: 56px;
+    height: 56px;
+    border-radius: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(180deg, rgba(59, 130, 246, 0.18), rgba(99, 102, 241, 0.22));
+    border: 1px solid rgba(147, 197, 253, 0.24);
+    box-shadow: 0 14px 30px rgba(15, 23, 42, 0.24);
+}
+
+.payslip-brand-mark img {
+    width: 36px;
+    height: 36px;
+}
+
+.payslip-brand-kicker {
+    color: #93c5fd;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.payslip-approval-card {
+    padding: 16px 18px;
+    border-radius: 20px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.10);
+}
+
+.payslip-approval-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+}
+
+.payslip-approval-status {
+    display: inline-flex;
+    align-items: center;
+    padding: 7px 12px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.payslip-approval-status-pending { background: rgba(245, 158, 11, 0.18); color: #fcd34d; }
+.payslip-approval-status-approved { background: rgba(16, 185, 129, 0.18); color: #86efac; }
+.payslip-approval-status-rejected { background: rgba(239, 68, 68, 0.18); color: #fca5a5; }
+.payslip-approval-status-info { background: rgba(59, 130, 246, 0.18); color: #93c5fd; }
+.payslip-approval-note {
+    margin-top: 10px;
+    color: #cbd5e1;
+    font-size: 13px;
+    line-height: 1.55;
+}
+
 .payslip-grid {
     display: grid;
     grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
@@ -309,16 +379,70 @@
     <div class="hero-card">
         <div class="hero">
             <div>
+                <div class="payslip-brand-row">
+                    <span class="payslip-brand-mark">
+                        <img src="{{ url_for('static', filename='stellar-seats-logo.svg') }}" alt="Stellar Seats logo">
+                    </span>
+                    <div>
+                        <div class="payslip-brand-kicker">Official Stellar Seats Payroll Document</div>
+                        <div class="small muted" style="margin-top:6px;">Branded employee payslip generated from the released payroll snapshot.</div>
+                    </div>
+                </div>
                 <h1>{{ payslip.period_label }}</h1>
                 <p class="section-subtitle">Released payroll breakdown for your account. This view is safe to print as your personal payslip reference.</p>
             </div>
             <div style="display:flex;gap:10px;flex-wrap:wrap;">
                 <a class="btn btn-gray" href="{{ url_for('employee_payroll_history') }}">Back to Payslips</a>
-                <a class="btn btn-gray" href="{{ url_for('download_employee_payslip_pdf', payroll_run_id=payslip.payroll_run_id) }}">Download PDF</a>
-                <button class="btn btn-primary" type="button" onclick="window.print()">Print Payslip</button>
+                {% if payslip.can_download_pdf %}
+                    <a class="btn btn-gray" href="{{ url_for('download_employee_payslip_pdf', payroll_run_id=payslip.payroll_run_id) }}">Download PDF</a>
+                    <button class="btn btn-primary" type="button" onclick="window.print()">Print Payslip</button>
+                {% else %}
+                    <form method="POST" action="{{ url_for('request_employee_payslip_download', payroll_run_id=payslip.payroll_run_id) }}" style="display:inline-flex;gap:10px;flex-wrap:wrap;">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button class="btn btn-primary" type="submit" {% if download_request and download_request.is_pending %}disabled{% endif %}>
+                            {% if download_request and download_request.is_rejected %}
+                                Re-request PDF Approval
+                            {% elif download_request and download_request.is_pending %}
+                                Approval Pending
+                            {% else %}
+                                Request PDF Approval
+                            {% endif %}
+                        </button>
+                    </form>
+                {% endif %}
             </div>
         </div>
     </div>
+
+    <section class="payslip-approval-card">
+        <div class="payslip-approval-head">
+            <div>
+                <div class="section-title" style="margin-bottom:0;">Payslip PDF Approval Flow</div>
+                <div class="section-subtitle">Payroll admin must approve the official PDF before download is unlocked on your account.</div>
+            </div>
+            {% if download_request %}
+                <span class="payslip-approval-status payslip-approval-status-{{ download_request.status|lower }}">{{ download_request.status }}</span>
+            {% else %}
+                <span class="payslip-approval-status payslip-approval-status-info">Not Requested</span>
+            {% endif %}
+        </div>
+        <div class="payslip-approval-note">
+            {% if download_request %}
+                {{ download_request.status_copy }}
+                {% if download_request.requested_display %}
+                    Requested {{ download_request.requested_display }}.
+                {% endif %}
+                {% if download_request.reviewed_display %}
+                    Reviewed {{ download_request.reviewed_display }}{% if download_request.reviewed_by_name %} by {{ download_request.reviewed_by_name }}{% endif %}.
+                {% endif %}
+                {% if download_request.admin_note %}
+                    Admin note: {{ download_request.admin_note }}
+                {% endif %}
+            {% else %}
+                No PDF approval request has been sent yet for this released payslip. Use the request button above and payroll admin will review it from the admin payroll dashboard.
+            {% endif %}
+        </div>
+    </section>
 
     <section class="payslip-summary-grid" data-tour-id="payslip-summary">
         <div class="payslip-stat">

@@ -248,10 +248,40 @@
     line-height: 1.5;
 }
 
+.employee-error-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+    margin-bottom: 18px;
+}
+
+.employee-error-stat {
+    padding: 16px;
+    border-radius: 20px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.08);
+}
+
+.employee-error-list {
+    display: grid;
+    gap: 12px;
+}
+
+.employee-error-item {
+    display: flex;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 14px 16px;
+    border-radius: 18px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.07);
+}
+
 @media (max-width: 1100px) {
     .employee-hero,
     .employee-feed-grid,
-    .employee-service-grid {
+    .employee-service-grid,
+    .employee-error-grid {
         grid-template-columns: 1fr;
     }
 }
@@ -473,6 +503,13 @@
                     <div class="employee-service-copy">
                         {% if latest_payslip %}
                             Latest released period: {{ latest_payslip.period_label }}.
+                            {% if latest_payslip.can_download_pdf %}
+                                PDF download is already approved.
+                            {% elif latest_payslip.download_request %}
+                                PDF status: {{ latest_payslip.download_request.status }}.
+                            {% else %}
+                                PDF approval still needs to be requested.
+                            {% endif %}
                         {% else %}
                             Released payroll snapshots will appear here once admin finalizes your payroll.
                         {% endif %}
@@ -509,6 +546,57 @@
                 </div>
             </div>
         </div>
+    </section>
+
+    <section class="employee-panel">
+        <div class="employee-panel-head">
+            <div>
+                <div class="employee-panel-title">Error Record Summary</div>
+                <div class="employee-panel-subtitle">Track your current error records, see how many are still active, and review the breakdown per error category.</div>
+            </div>
+        </div>
+
+        <div class="employee-error-grid">
+            <div class="employee-error-stat">
+                <div class="employee-glance-label">Current Errors</div>
+                <div class="employee-glance-value">{{ error_record_summary.active_errors }}</div>
+                <div class="employee-glance-note">Open or reviewed records still visible on your account.</div>
+            </div>
+            <div class="employee-error-stat">
+                <div class="employee-glance-label">All Logged Errors</div>
+                <div class="employee-glance-value">{{ error_record_summary.total_errors }}</div>
+                <div class="employee-glance-note">Total incident records created for your account.</div>
+            </div>
+            <div class="employee-error-stat">
+                <div class="employee-glance-label">Error Types</div>
+                <div class="employee-glance-value">{{ error_record_summary.error_type_count }}</div>
+                <div class="employee-glance-note">Distinct categories like Wrong Costing, Wrong Pricing, and similar issues.</div>
+            </div>
+        </div>
+
+        {% if error_record_summary.breakdown %}
+            <div class="employee-error-list">
+                {% for row in error_record_summary.breakdown %}
+                    <div class="employee-error-item">
+                        <div>
+                            <div style="font-weight:900; color:white;">{{ row.error_type }}</div>
+                            <div class="muted small" style="margin-top:6px;">
+                                {{ row.active_count }} current
+                                {% if row.latest_report_date %}
+                                    | last logged {{ row.latest_report_date }}
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div style="text-align:right;">
+                            <div style="font-weight:900; color:white;">{{ row.total_count }}</div>
+                            <div class="muted small" style="margin-top:6px;">total records</div>
+                        </div>
+                    </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <p class="muted">No employee error records are logged for your account right now.</p>
+        {% endif %}
     </section>
 
     <section class="employee-panel">

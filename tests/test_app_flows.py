@@ -146,6 +146,35 @@ class AppFlowsTestCase(unittest.TestCase):
             )
             return attendance_app.fetchone("SELECT * FROM correction_requests WHERE user_id = ? ORDER BY id DESC LIMIT 1", (user_id,))
 
+    def create_incident_report(self, user_id, error_type="Wrong Costing", report_date="2026-04-08", status="Open", message="Test incident"):
+        with attendance_app.app.app_context():
+            employee = attendance_app.get_user_by_id(user_id)
+            attendance_app.execute_db(
+                """
+                INSERT INTO incident_reports (
+                    user_id, employee_name, report_department, error_type, incident_action,
+                    incident_date, report_date, message, status, admin_note, created_by, created_at
+                )
+                VALUES (?, ?, ?, ?, 'Monitoring', ?, ?, ?, ?, NULL, NULL, ?)
+                """,
+                (
+                    user_id,
+                    employee["full_name"] if employee else f"User {user_id}",
+                    employee["department"] if employee else "",
+                    error_type,
+                    report_date,
+                    report_date,
+                    message,
+                    status,
+                    attendance_app.now_str(),
+                ),
+                commit=True,
+            )
+            return attendance_app.fetchone(
+                "SELECT * FROM incident_reports WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+                (user_id,),
+            )
+
     def set_session_user(self, user, csrf_token="test-csrf-token"):
         with self.client.session_transaction() as session_state:
             session_state["user_id"] = user["id"]
@@ -284,6 +313,110 @@ class AppFlowsTestCase(unittest.TestCase):
         self.assertNotEqual(first_run["id"], second_run["id"])
         self.assertEqual(release_count, 2)
 
+    def test_employee_payslip_pdf_requires_admin_approval_first(self):
+        admin = self.create_user(
+            "payslip-approval-admin",
+            role="admin",
+            admin_permissions="dashboard,payroll",
+            admin_role_preset="custom",
+        )
+        employee = self.create_user(
+            "payslip-approval-employee",
+            role="employee",
+            full_name="Henry Acosta",
+            hourly_rate=100,
+        )
+        self.create_attendance(
+            employee["id"],
+            "2026-04-07",
+            "2026-04-07 09:00:00",
+            "2026-04-07 18:00:00",
+            status="Timed Out",
+        )
+
+        with attendance_app.app.app_context():
+            payroll_run, _ = attendance_app.save_payroll_run_snapshot(
+                date(2026, 4, 7),
+                date(2026, 4, 7),
+                employee_filter=str(employee["id"]),
+                status="Released",
+                actor_id=admin["id"],
+            )
+
+        employee_csrf = self.set_session_user(employee, csrf_token="employee-payroll-csrf")
+        payslip_response = self.client.get(f"/my-payroll/{payroll_run['id']}")
+        self.assertEqual(payslip_response.status_code, 200)
+        self.assertIn(b"Request PDF Approval", payslip_response.data)
+
+        request_response = self.client.post(
+            f"/my-payroll/{payroll_run['id']}/request-download",
+            data={"csrf_token": employee_csrf},
+            follow_redirects=False,
+        )
+        self.assertEqual(request_response.status_code, 302)
+
+        with attendance_app.app.app_context():
+            request_row = attendance_app.fetchone(
+                "SELECT * FROM payslip_download_requests WHERE user_id = ? AND payroll_run_id = ?",
+                (employee["id"], payroll_run["id"]),
+            )
+            admin_notification = attendance_app.fetchone(
+                "SELECT * FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+                (admin["id"],),
+            )
+
+        self.assertEqual(request_row["status"], "Pending")
+        self.assertEqual(admin_notification["title"], "Payslip Download Approval Needed")
+
+        blocked_download = self.client.get(
+            f"/my-payroll/{payroll_run['id']}/download.pdf",
+            follow_redirects=False,
+        )
+        self.assertEqual(blocked_download.status_code, 302)
+        self.assertIn(f"/my-payroll/{payroll_run['id']}", blocked_download.headers.get("Location", ""))
+
+        admin_csrf = self.set_session_user(admin, csrf_token="admin-payroll-csrf")
+        review_response = self.client.post(
+            f"/admin/payroll/download-requests/{request_row['id']}/review",
+            data={
+                "csrf_token": admin_csrf,
+                "decision": "approve",
+                "admin_note": "Approved for official employee copy.",
+                "period": "custom",
+                "date_from": "2026-04-07",
+                "date_to": "2026-04-07",
+                "department": "",
+                "employee_id": str(employee["id"]),
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(review_response.status_code, 302)
+
+        self.set_session_user(employee, csrf_token="employee-payroll-csrf-2")
+        approved_payslip_response = self.client.get(f"/my-payroll/{payroll_run['id']}")
+        self.assertEqual(approved_payslip_response.status_code, 200)
+        self.assertIn(b"Approved", approved_payslip_response.data)
+        self.assertIn(b"Download PDF", approved_payslip_response.data)
+
+        pdf_response = self.client.get(f"/my-payroll/{payroll_run['id']}/download.pdf")
+        self.assertEqual(pdf_response.status_code, 200)
+        self.assertEqual(pdf_response.mimetype, "application/pdf")
+        self.assertIn(b"%PDF", pdf_response.data[:10])
+
+        with attendance_app.app.app_context():
+            updated_request = attendance_app.fetchone(
+                "SELECT * FROM payslip_download_requests WHERE id = ?",
+                (request_row["id"],),
+            )
+            employee_notification = attendance_app.fetchone(
+                "SELECT * FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+                (employee["id"],),
+            )
+
+        self.assertEqual(updated_request["status"], "Approved")
+        self.assertEqual(employee_notification["title"], "Payslip PDF Request Approved")
+        self.assertIn("Approved for official employee copy", employee_notification["message"])
+
     def test_approving_leave_correction_updates_status_and_notification(self):
         admin = self.create_user(
             "correction-admin",
@@ -393,6 +526,31 @@ class AppFlowsTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 302)
         self.assertIn("/admin", response.headers.get("Location", ""))
+
+    def test_employee_dashboard_shows_error_record_summary(self):
+        employee = self.create_user(
+            "dashboard-error-employee",
+            role="employee",
+            full_name="Error Dashboard Employee",
+        )
+        self.create_incident_report(employee["id"], error_type="Wrong Costing", report_date="2026-04-01", status="Open")
+        self.create_incident_report(employee["id"], error_type="Wrong Costing", report_date="2026-04-02", status="Resolved")
+        self.create_incident_report(employee["id"], error_type="Wrong Pricing", report_date="2026-04-03", status="Reviewed")
+
+        with attendance_app.app.app_context():
+            summary = attendance_app.get_employee_error_record_summary(employee["id"])
+
+        self.assertEqual(summary["total_errors"], 3)
+        self.assertEqual(summary["active_errors"], 2)
+        self.assertEqual(summary["error_type_count"], 2)
+
+        self.set_session_user(employee)
+        response = self.client.get("/dashboard")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Error Record Summary", response.data)
+        self.assertIn(b"Wrong Costing", response.data)
+        self.assertIn(b"Wrong Pricing", response.data)
 
     def test_admin_live_status_returns_lightweight_payload(self):
         admin = self.create_user(
