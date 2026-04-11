@@ -16,7 +16,7 @@
 .leave-value { margin-top: 10px; color: #f8fbff; font-size: 34px; font-weight: 900; line-height: 1; }
 .leave-note, .leave-subtitle, .leave-subtext { color: #9fb0d4; font-size: 12px; }
 .leave-panel { padding: 20px; }
-.leave-toolbar { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
+.leave-toolbar { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
 .leave-table-wrap { overflow-x: auto; margin-top: 18px; border-radius: 18px; border: 1px solid rgba(148, 163, 184, 0.14); }
 .leave-table { width: 100%; border-collapse: collapse; }
 .leave-table th, .leave-table td { padding: 14px 16px; border-bottom: 1px solid rgba(148, 163, 184, 0.12); }
@@ -57,7 +57,7 @@
 
     <section class="leave-panel">
         <h2 style="margin:0;color:#f8fbff;">Leave Filters</h2>
-        <p class="leave-subtitle" style="margin-top:6px;">Review balances by year and department.</p>
+        <p class="leave-subtitle" style="margin-top:6px;">Review balances by year, department, and employee.</p>
         <form method="GET" class="leave-toolbar">
             <div>
                 <label>Year</label>
@@ -72,12 +72,21 @@
                     {% endfor %}
                 </select>
             </div>
+            <div>
+                <label>Employee</label>
+                <select class="input" name="employee_id">
+                    <option value="">All Employees</option>
+                    {% for emp in employees %}
+                        <option value="{{ emp.id }}" {% if employee_id == emp.id|string %}selected{% endif %}>{{ emp.full_name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
             <div style="display:flex;align-items:end;gap:10px;">
                 <button class="btn btn-primary" type="submit" style="width:100%;">Apply</button>
             </div>
         </form>
         <div style="margin-top:14px;">
-            <a class="btn btn-purple" href="{{ url_for('export_admin_leave_dashboard_excel', year=year, department=department) }}">Export Excel</a>
+            <a class="btn btn-purple" href="{{ url_for('export_admin_leave_dashboard_excel', year=year, department=department, employee_id=employee_id) }}">Export Excel</a>
         </div>
 
         <div class="leave-table-wrap">

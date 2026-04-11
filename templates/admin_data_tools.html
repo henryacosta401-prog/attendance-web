@@ -30,25 +30,56 @@
                 <div class="stat-number">{{ recovery_snapshot.counts.future_schedule_changes }}</div>
             </div>
         </div>
-        {% if using_postgres_reset %}
-            <p class="muted">This service is using Postgres. The in-app SQLite backup button does not create a live production database backup on Render.</p>
-            <div class="small muted" style="margin-top:10px;">Before using Go-Live Reset, create a database backup or snapshot from your provider outside the app.</div>
-        {% else %}
-            <p class="muted">Create a timestamped backup copy in the server or local <code>backups</code> folder before larger cleanup work.</p>
-            <form method="POST">
+        <div class="grid grid-2" style="gap:12px; margin-top:14px;">
+            <div style="padding:14px; border-radius:16px; background:rgba(59,130,246,0.08); border:1px solid rgba(96,165,250,0.20);">
+                <div class="stat-label">Database Backup</div>
+                <div style="font-weight:900;color:#fff;margin-top:6px;">{{ recovery_snapshot.storage.database_label }}</div>
+                {% if using_postgres_reset %}
+                    <div class="small muted" style="margin-top:8px;">Render/Postgres backups must be created from Render or your database provider. The app can remind you, but it cannot create or restore the provider snapshot.</div>
+                {% else %}
+                    <div class="small muted" style="margin-top:8px;">SQLite can create an in-app backup copy in <code>{{ recovery_snapshot.storage.backup_folder }}</code>.</div>
+                {% endif %}
+            </div>
+            <div style="padding:14px; border-radius:16px; background:rgba(16,185,129,0.08); border:1px solid rgba(52,211,153,0.18);">
+                <div class="stat-label">Upload Files</div>
+                <div style="font-weight:900;color:#fff;margin-top:6px;">{{ recovery_snapshot.upload_count }} file(s)</div>
+                <div class="small muted" style="margin-top:8px;">Profile images, proof uploads, and ID signature files live in <code>{{ recovery_snapshot.storage.upload_folder }}</code>. Keep the Render disk safe with the database backup.</div>
+            </div>
+        </div>
+
+        <div style="margin-top:14px; padding:14px; border-radius:16px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);">
+            <div style="font-weight:900;color:#fff;">Last External Render/Postgres Backup Noted</div>
+            {% if recovery_snapshot.external_backup.recorded %}
+                <div class="muted" style="margin-top:6px;">{{ format_datetime_12h(recovery_snapshot.external_backup.last_at) }}{% if recovery_snapshot.external_backup.last_by %} by {{ recovery_snapshot.external_backup.last_by }}{% endif %}</div>
+                {% if recovery_snapshot.external_backup.note %}
+                    <div class="small muted" style="margin-top:6px;">Note: {{ recovery_snapshot.external_backup.note }}</div>
+                {% endif %}
+            {% else %}
+                <div class="small" style="margin-top:6px;color:#fcd34d;">No external provider backup has been noted in the app yet.</div>
+            {% endif %}
+            <form method="POST" style="margin-top:12px;">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <input type="hidden" name="action" value="create_backup">
-                <button class="btn btn-primary" type="submit">Create Backup Now</button>
+                <input type="hidden" name="action" value="record_external_backup">
+                <label>Backup Note (Optional)</label>
+                <input class="input" type="text" name="external_backup_note" maxlength="240" placeholder="Example: Render backup/snapshot checked today before cleanup">
+                <button class="btn btn-secondary" type="submit" style="margin-top:10px;">Mark External Backup Checked</button>
             </form>
-        {% endif %}
+        </div>
 
         <div class="top-actions" style="margin-top:14px;">
+            {% if not using_postgres_reset %}
+                <form method="POST" style="margin:0;">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="action" value="create_backup">
+                    <button class="btn btn-primary" type="submit">Create SQLite Backup Now</button>
+                </form>
+            {% endif %}
             <a class="btn btn-secondary" href="{{ url_for('download_recovery_pack') }}">Download Recovery Pack</a>
         </div>
-        <div class="small muted" style="margin-top:10px;">The recovery pack exports the current users, settings, schedule presets, payroll data, attendance tables, logs, and workflow records into one workbook for safekeeping.</div>
+        <div class="small muted" style="margin-top:10px;">The recovery pack exports users, settings, schedules, payroll data, attendance tables, logs, and workflow records into one workbook. It is a recovery reference, not a one-click database restore.</div>
 
         <div class="divider"></div>
-        <h4 style="margin-top:0;">Recent Backups</h4>
+        <h4 style="margin-top:0;">Recent In-App SQLite Backups</h4>
         {% if backups %}
             <div style="display:grid; gap:10px;">
                 {% for backup in backups %}
@@ -68,10 +99,10 @@
         <div class="divider"></div>
         <h4 style="margin-top:0;">Recovery Checklist</h4>
         <div class="small muted" style="display:grid; gap:8px;">
-            <div>1. Download the recovery pack before major cleanup or policy changes.</div>
-            <div>2. Keep a Render/Postgres backup or snapshot outside the app.</div>
-            <div>3. Keep upload files and the Render disk safe together with the workbook.</div>
-            <div>4. Use the workbook as the recovery reference if you ever need to rebuild production.</div>
+            <div>1. Download the recovery pack before major cleanup, reset, or policy changes.</div>
+            <div>2. Create or verify the Render/Postgres provider backup outside the app, then mark it here.</div>
+            <div>3. Keep upload files and the Render disk safe together with database snapshots.</div>
+            <div>4. Remember that the workbook is a reference export, not an automatic restore button.</div>
             <div>5. Review queued future schedule changes so rollout plans are backed up too.</div>
         </div>
     </div>
@@ -119,7 +150,7 @@
         Unread notifications and core payroll/attendance data are kept.
     </div>
     <div class="small muted" style="margin-top:8px;">
-        Cleanup does not create an automatic Postgres backup. Download the recovery pack or make a provider backup first if you may need the deleted logs later.
+        Cleanup does not create an automatic Postgres backup. Download the recovery pack and create or verify a provider backup first if you may need the deleted logs later.
     </div>
 
     <div class="top-actions" style="margin-top:16px; gap:12px; flex-wrap:wrap;">
@@ -170,6 +201,9 @@
     </div>
     {% if using_postgres_reset %}
         <div class="small" style="margin-top:12px;color:#fca5a5;">Warning: this Render/Postgres reset does not create an automatic database backup. Make an external backup first.</div>
+        {% if not recovery_snapshot.external_backup.recorded %}
+            <div class="small" style="margin-top:8px;color:#fcd34d;">No external Render/Postgres backup has been noted in this app yet. If you already created one in Render, use the backup note section above before reset.</div>
+        {% endif %}
     {% else %}
         <div class="small muted" style="margin-top:10px;">A SQLite backup is created automatically before the reset runs.</div>
     {% endif %}
@@ -181,7 +215,7 @@
         {% if using_postgres_reset %}
             <label class="admin-filter-check" style="margin-top:14px;">
                 <input type="checkbox" name="confirm_no_backup" value="1">
-                <span>I understand this Postgres reset does not create an automatic database backup.</span>
+                <span>I created or verified an external Render/Postgres backup, or I accept proceeding without an automatic backup.</span>
             </label>
         {% endif %}
         <div class="top-actions" style="margin-top:14px;">

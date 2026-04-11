@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import tempfile
 import unittest
@@ -430,6 +431,178 @@ class AppFlowsTestCase(unittest.TestCase):
         self.assertIn("row_signature", row)
         self.assertNotIn("password_hash", row)
         self.assertNotIn("admin_permissions", row)
+
+    def test_data_tools_shows_backup_clarity_and_records_external_marker(self):
+        admin = self.create_user(
+            "backup-admin",
+            role="admin",
+            admin_permissions="dashboard,settings",
+            admin_role_preset="custom",
+        )
+        csrf_token = self.set_session_user(admin)
+
+        page_response = self.client.get("/admin/data-tools")
+        self.assertEqual(page_response.status_code, 200)
+        self.assertIn(b"Last External Render/Postgres Backup Noted", page_response.data)
+        self.assertIn(b"not a one-click database restore", page_response.data)
+
+        response = self.client.post(
+            "/admin/data-tools",
+            data={
+                "csrf_token": csrf_token,
+                "action": "record_external_backup",
+                "external_backup_note": "Render snapshot checked before cleanup",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"External Render/Postgres backup note saved", response.data)
+        self.assertIn(b"Render snapshot checked before cleanup", response.data)
+        with attendance_app.app.app_context():
+            settings = attendance_app.get_company_settings()
+
+        self.assertIsNotNone(settings["last_external_backup_at"])
+        self.assertEqual(int(settings["last_external_backup_by"]), admin["id"])
+        self.assertEqual(settings["last_external_backup_note"], "Render snapshot checked before cleanup")
+
+    def test_employee_id_signatory_update_supports_hr_manager(self):
+        admin = self.create_user(
+            "id-admin",
+            role="admin",
+            admin_permissions="dashboard,settings,employees",
+            admin_role_preset="custom",
+        )
+        employee = self.create_user(
+            "id-employee",
+            role="employee",
+            full_name="Deo Dame Saligumba",
+            department="People Operations",
+            position="Human Resources Manager",
+        )
+        with attendance_app.app.app_context():
+            attendance_app.execute_db(
+                "UPDATE users SET emergency_contact_name = ?, emergency_contact_phone = ? WHERE id = ?",
+                ("Shiela Mae Saligumba", "+63 975 355 1397", employee["id"]),
+                commit=True,
+            )
+        csrf_token = self.set_session_user(admin)
+
+        response = self.client.post(
+            "/admin/employee-id/signatory",
+            data={
+                "csrf_token": csrf_token,
+                "employee_id": str(employee["id"]),
+                "id_signatory_name": "Kirk Danny Fernandez",
+                "id_signatory_title": "Director of Operations",
+                "hr_signatory_name": "Deo Dame M. Saligumba",
+                "hr_signatory_title": "Human Resources Manager",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(f"/admin/employee-id/{employee['id']}", response.headers.get("Location", ""))
+        with attendance_app.app.app_context():
+            settings = attendance_app.get_company_settings()
+
+        self.assertEqual(settings["id_signatory_title"], "Director of Operations")
+        self.assertEqual(settings["hr_signatory_name"], "Deo Dame M. Saligumba")
+        self.assertEqual(settings["hr_signatory_title"], "Human Resources Manager")
+
+        page_response = self.client.get(f"/admin/employee-id/{employee['id']}")
+        self.assertEqual(page_response.status_code, 200)
+        self.assertIn(b"Portrait ID", page_response.data)
+        self.assertIn(b"Human Resources Manager", page_response.data)
+        self.assertIn(b"Director of Operations", page_response.data)
+        self.assertIn(b"Global ID Signatories", page_response.data)
+
+    def test_admin_can_download_employee_barcode_svg(self):
+        admin = self.create_user(
+            "barcode-export-admin",
+            role="admin",
+            admin_permissions="dashboard,employees",
+            admin_role_preset="custom",
+        )
+        employee = self.create_user(
+            "barcode-export-employee",
+            role="employee",
+            full_name="Henry Acosta",
+            barcode_id="SS-2023-0001",
+        )
+        self.set_session_user(admin)
+
+        response = self.client.get(f"/admin/employee-id/{employee['id']}/barcode")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, "image/svg+xml")
+        self.assertIn("attachment;", response.headers.get("Content-Disposition", ""))
+        self.assertIn("Henry_Acosta-barcode.svg", response.headers.get("Content-Disposition", ""))
+        self.assertIn(b"<svg", response.data)
+        self.assertIn(b"SS-2023-0001", response.data)
+
+    def test_leave_dashboard_supports_employee_name_filter(self):
+        admin = self.create_user("leave-filter-admin", role="admin")
+        employee_one = self.create_user(
+            "leave-filter-1",
+            role="employee",
+            full_name="Aira Santos",
+            department="Human Resources",
+        )
+        employee_two = self.create_user(
+            "leave-filter-2",
+            role="employee",
+            full_name="Brian Cruz",
+            department="Operations",
+        )
+        self.create_correction_request(
+            employee_one["id"],
+            request_type="Paid Leave",
+            work_date="2026-04-08",
+            end_work_date="2026-04-08",
+        )
+        self.create_correction_request(
+            employee_two["id"],
+            request_type="Sick Leave",
+            work_date="2026-04-09",
+            end_work_date="2026-04-09",
+        )
+        self.set_session_user(admin)
+
+        response = self.client.get(f"/admin/leave?year=2026&department=Human+Resources&employee_id={employee_one['id']}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Aira Santos", response.data)
+        self.assertNotIn(b"Brian Cruz", response.data)
+        self.assertIn(f"employee_id={employee_one['id']}".encode(), response.data)
+
+    def test_disciplinary_dashboard_hides_suspension_days_for_coaching(self):
+        admin = self.create_user("discipline-admin", role="admin")
+        employee = self.create_user(
+            "discipline-employee",
+            role="employee",
+            full_name="Henry Acosta",
+            department="Operations",
+        )
+        with attendance_app.app.app_context():
+            attendance_app.create_disciplinary_action(
+                user_id=employee["id"],
+                action_type="Coaching",
+                action_date="2026-04-10",
+                details="Coaching note",
+                created_by=admin["id"],
+                duration_days=1,
+            )
+        self.set_session_user(admin)
+
+        response = self.client.get("/admin/disciplinary")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Only used for Suspension records.", response.data)
+        self.assertRegex(
+            response.data.decode("utf-8"),
+            r"<td>Coaching</td>\s*<td>2026-04-10</td>\s*<td>-</td>",
+        )
 
     def test_stale_csrf_redirect_does_not_render_login_form_inside_admin_shell(self):
         admin = self.create_user(

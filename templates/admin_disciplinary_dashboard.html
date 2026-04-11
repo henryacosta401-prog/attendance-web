@@ -30,6 +30,30 @@
     .disciplinary-toolbar { grid-template-columns: 1fr; }
 }
 </style>
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    function syncSuspensionDays(container) {
+        if (!container) return;
+        const select = container.querySelector("[data-disciplinary-action-select]");
+        const wrap = container.querySelector("[data-suspension-days-wrap]");
+        const input = container.querySelector("[data-suspension-days-input]");
+        if (!select || !wrap || !input) return;
+        const isSuspension = select.value === "Suspension";
+        wrap.style.display = isSuspension ? "" : "none";
+        input.disabled = !isSuspension;
+    }
+
+    document.querySelectorAll("[data-disciplinary-form]").forEach(function (form) {
+        const select = form.querySelector("[data-disciplinary-action-select]");
+        syncSuspensionDays(form);
+        if (select) {
+            select.addEventListener("change", function () {
+                syncSuspensionDays(form);
+            });
+        }
+    });
+});
+</script>
 {% endblock %}
 
 {% block content %}
@@ -57,7 +81,7 @@
     <section class="disciplinary-panel">
         <h2 style="margin:0;color:#f8fbff;">Create Disciplinary Action</h2>
         <p class="disciplinary-subtitle" style="margin-top:6px;">Suspension supports a duration in days. Coaching, NTE, and Termination are single-date records. Incident-triggered records will link back to the source incident automatically.</p>
-        <form method="POST" action="{{ url_for('create_disciplinary_action_route') }}" class="disciplinary-toolbar">
+        <form method="POST" action="{{ url_for('create_disciplinary_action_route') }}" class="disciplinary-toolbar" data-disciplinary-form>
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <div>
                 <label>Employee</label>
@@ -70,7 +94,7 @@
             </div>
             <div>
                 <label>Action Type</label>
-                <select name="action_type" class="input" required>
+                <select name="action_type" class="input" required data-disciplinary-action-select>
                     <option value="">Select type</option>
                     {% for item in disciplinary_types %}
                         <option value="{{ item }}">{{ item }}</option>
@@ -81,9 +105,10 @@
                 <label>Action Date</label>
                 <input class="input" type="date" name="action_date" required>
             </div>
-            <div>
+            <div data-suspension-days-wrap>
                 <label>Suspension Days</label>
-                <input class="input" type="number" name="duration_days" value="1" min="1" step="1">
+                <input class="input" type="number" name="duration_days" value="1" min="1" step="1" data-suspension-days-input>
+                <div class="disciplinary-subtext" style="margin-top:6px;">Only used for Suspension records.</div>
             </div>
             <div>
                 <label>Details</label>
@@ -165,7 +190,7 @@
                                 <td>{{ row.department or '-' }}</td>
                                 <td>{{ row.action_type }}</td>
                                 <td>{{ row.action_date }}</td>
-                                <td>{{ row.duration_days }}</td>
+                                <td>{{ row.duration_days if row.action_type == "Suspension" else "-" }}</td>
                                 <td>{{ row.end_date if row.end_date else row.action_date }}</td>
                                 <td>{{ row.status_label }}</td>
                                 <td>
@@ -181,15 +206,18 @@
                                 <td>{{ row.error_type or row.incident_error_type or '-' }}</td>
                                 <td>{{ row.details or '-' }}</td>
                                 <td>
-                                    <form method="POST" action="{{ url_for('update_disciplinary_action_route', action_id=row.id) }}" class="disciplinary-row-form">
+                                    <form method="POST" action="{{ url_for('update_disciplinary_action_route', action_id=row.id) }}" class="disciplinary-row-form" data-disciplinary-form>
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                        <select class="input" name="action_type">
+                                        <select class="input" name="action_type" data-disciplinary-action-select>
                                             {% for item in disciplinary_types %}
                                                 <option value="{{ item }}" {% if row.action_type == item %}selected{% endif %}>{{ item }}</option>
                                             {% endfor %}
                                         </select>
                                         <input class="input" type="date" name="action_date" value="{{ row.action_date }}">
-                                        <input class="input" type="number" name="duration_days" value="{{ row.duration_days if row.duration_days else 1 }}" min="1" step="1">
+                                        <div data-suspension-days-wrap>
+                                            <input class="input" type="number" name="duration_days" value="{{ row.duration_days if row.duration_days else 1 }}" min="1" step="1" data-suspension-days-input>
+                                            <div class="disciplinary-subtext" style="margin-top:6px;">Only used for Suspension records.</div>
+                                        </div>
                                         <textarea class="textarea" name="details" rows="3" placeholder="Details...">{{ row.details or '' }}</textarea>
                                         <button class="btn btn-primary" type="submit">Save</button>
                                     </form>

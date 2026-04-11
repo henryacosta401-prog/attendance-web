@@ -672,10 +672,16 @@ def init_sqlite_db():
             id_signatory_name TEXT,
             id_signatory_title TEXT,
             id_signature_file TEXT,
+            hr_signatory_name TEXT,
+            hr_signatory_title TEXT,
+            hr_signature_file TEXT,
             scanner_attendance_mode INTEGER NOT NULL DEFAULT 0,
             scanner_lock_timeout_seconds INTEGER NOT NULL DEFAULT 90,
             scanner_exit_pin_hash TEXT,
-            overtime_multiplier REAL NOT NULL DEFAULT 1.25
+            overtime_multiplier REAL NOT NULL DEFAULT 1.25,
+            last_external_backup_at TEXT,
+            last_external_backup_by INTEGER,
+            last_external_backup_note TEXT
         )
     """)
 
@@ -913,10 +919,16 @@ def init_sqlite_db():
                 id_signatory_name TEXT,
                 id_signatory_title TEXT,
                 id_signature_file TEXT,
+                hr_signatory_name TEXT,
+                hr_signatory_title TEXT,
+                hr_signature_file TEXT,
                 scanner_attendance_mode INTEGER NOT NULL DEFAULT 0,
                 scanner_lock_timeout_seconds INTEGER NOT NULL DEFAULT 90,
                 scanner_exit_pin_hash TEXT,
-                overtime_multiplier REAL NOT NULL DEFAULT 1.25
+                overtime_multiplier REAL NOT NULL DEFAULT 1.25,
+                last_external_backup_at TEXT,
+                last_external_backup_by INTEGER,
+                last_external_backup_note TEXT
             )
         """)
         existing_cols_company_settings = [row[1] for row in cursor.execute("PRAGMA table_info(company_settings)").fetchall()]
@@ -926,6 +938,12 @@ def init_sqlite_db():
         cursor.execute("ALTER TABLE company_settings ADD COLUMN id_signatory_title TEXT")
     if "id_signature_file" not in existing_cols_company_settings:
         cursor.execute("ALTER TABLE company_settings ADD COLUMN id_signature_file TEXT")
+    if "hr_signatory_name" not in existing_cols_company_settings:
+        cursor.execute("ALTER TABLE company_settings ADD COLUMN hr_signatory_name TEXT")
+    if "hr_signatory_title" not in existing_cols_company_settings:
+        cursor.execute("ALTER TABLE company_settings ADD COLUMN hr_signatory_title TEXT")
+    if "hr_signature_file" not in existing_cols_company_settings:
+        cursor.execute("ALTER TABLE company_settings ADD COLUMN hr_signature_file TEXT")
     if "scanner_attendance_mode" not in existing_cols_company_settings:
         cursor.execute("ALTER TABLE company_settings ADD COLUMN scanner_attendance_mode INTEGER NOT NULL DEFAULT 0")
     if "scanner_lock_timeout_seconds" not in existing_cols_company_settings:
@@ -934,6 +952,12 @@ def init_sqlite_db():
         cursor.execute("ALTER TABLE company_settings ADD COLUMN scanner_exit_pin_hash TEXT")
     if "overtime_multiplier" not in existing_cols_company_settings:
         cursor.execute("ALTER TABLE company_settings ADD COLUMN overtime_multiplier REAL NOT NULL DEFAULT 1.25")
+    if "last_external_backup_at" not in existing_cols_company_settings:
+        cursor.execute("ALTER TABLE company_settings ADD COLUMN last_external_backup_at TEXT")
+    if "last_external_backup_by" not in existing_cols_company_settings:
+        cursor.execute("ALTER TABLE company_settings ADD COLUMN last_external_backup_by INTEGER")
+    if "last_external_backup_note" not in existing_cols_company_settings:
+        cursor.execute("ALTER TABLE company_settings ADD COLUMN last_external_backup_note TEXT")
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS schedule_presets (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1799,19 +1823,31 @@ def init_postgres_db():
                 id_signatory_name TEXT,
                 id_signatory_title TEXT,
                 id_signature_file TEXT,
+                hr_signatory_name TEXT,
+                hr_signatory_title TEXT,
+                hr_signature_file TEXT,
                 scanner_attendance_mode INTEGER NOT NULL DEFAULT 0,
                 scanner_lock_timeout_seconds INTEGER NOT NULL DEFAULT 90,
                 scanner_exit_pin_hash TEXT,
-                overtime_multiplier REAL NOT NULL DEFAULT 1.25
+                overtime_multiplier REAL NOT NULL DEFAULT 1.25,
+                last_external_backup_at TEXT,
+                last_external_backup_by INTEGER,
+                last_external_backup_note TEXT
             )
         """)
         cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS id_signatory_name TEXT")
         cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS id_signatory_title TEXT")
         cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS id_signature_file TEXT")
+        cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS hr_signatory_name TEXT")
+        cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS hr_signatory_title TEXT")
+        cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS hr_signature_file TEXT")
         cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS scanner_attendance_mode INTEGER NOT NULL DEFAULT 0")
         cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS scanner_lock_timeout_seconds INTEGER NOT NULL DEFAULT 90")
         cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS scanner_exit_pin_hash TEXT")
         cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS overtime_multiplier REAL NOT NULL DEFAULT 1.25")
+        cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS last_external_backup_at TEXT")
+        cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS last_external_backup_by INTEGER")
+        cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS last_external_backup_note TEXT")
         cur.execute("""
             INSERT INTO company_settings (
                 id, id_signatory_name, id_signatory_title, id_signature_file,
@@ -2411,10 +2447,16 @@ def get_company_settings():
         "id_signatory_name": "Kirk Danny Fernandez",
         "id_signatory_title": "Head Of Operations",
         "id_signature_file": None,
+        "hr_signatory_name": "",
+        "hr_signatory_title": "Human Resources Manager",
+        "hr_signature_file": None,
         "scanner_attendance_mode": 0,
         "scanner_lock_timeout_seconds": 90,
         "scanner_exit_pin_hash": None,
         "overtime_multiplier": 1.25,
+        "last_external_backup_at": None,
+        "last_external_backup_by": None,
+        "last_external_backup_note": None,
     }
 
 
@@ -4004,6 +4046,53 @@ def get_backup_files(limit=15):
     return entries[:limit]
 
 
+def path_is_inside(base_path, candidate_path):
+    if not base_path or not candidate_path:
+        return False
+    try:
+        base_real = os.path.realpath(base_path)
+        candidate_real = os.path.realpath(candidate_path)
+        return os.path.commonpath([base_real, candidate_real]) == base_real
+    except ValueError:
+        return False
+
+
+def record_external_backup_marker(note="", actor_id=None):
+    settings = get_company_settings()
+    backup_note = (note or "").strip()
+    if len(backup_note) > 240:
+        backup_note = backup_note[:237] + "..."
+    backup_at = now_str()
+    execute_db("""
+        INSERT INTO company_settings (
+            id, id_signatory_name, id_signatory_title, id_signature_file,
+            scanner_attendance_mode, scanner_lock_timeout_seconds, scanner_exit_pin_hash,
+            overtime_multiplier, last_external_backup_at, last_external_backup_by,
+            last_external_backup_note
+        )
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            last_external_backup_at = excluded.last_external_backup_at,
+            last_external_backup_by = excluded.last_external_backup_by,
+            last_external_backup_note = excluded.last_external_backup_note
+    """, (
+        settings.get("id_signatory_name") or "Kirk Danny Fernandez",
+        settings.get("id_signatory_title") or "Head Of Operations",
+        settings.get("id_signature_file"),
+        int(settings.get("scanner_attendance_mode") or 0),
+        int(settings.get("scanner_lock_timeout_seconds") or 90),
+        settings.get("scanner_exit_pin_hash"),
+        float(settings.get("overtime_multiplier") or 1.25),
+        backup_at,
+        actor_id,
+        backup_note,
+    ), commit=True)
+    return {
+        "backup_at": backup_at,
+        "note": backup_note,
+    }
+
+
 def get_backup_recovery_snapshot():
     backups = get_backup_files(limit=25)
     latest_backup = backups[0] if backups else None
@@ -4028,6 +4117,18 @@ def get_backup_recovery_snapshot():
         row = fetchone(query)
         counts[key] = int((dict(row)["cnt"] if row else 0) or 0)
 
+    settings = get_company_settings()
+    backup_by_name = ""
+    backup_by_id = settings.get("last_external_backup_by")
+    if backup_by_id:
+        try:
+            backup_user = get_user_by_id(int(backup_by_id))
+        except (TypeError, ValueError):
+            backup_user = None
+        if backup_user:
+            backup_by_name = backup_user.get("full_name") or backup_user.get("username") or ""
+    upload_folder = app.config["UPLOAD_FOLDER"]
+
     return {
         "generated_at": now_str(),
         "environment": "Postgres" if using_postgres() else "SQLite",
@@ -4035,6 +4136,19 @@ def get_backup_recovery_snapshot():
         "backup_count": len(backups),
         "latest_backup": latest_backup,
         "upload_count": upload_count,
+        "storage": {
+            "database_label": "Render Postgres" if using_postgres() else "SQLite file",
+            "upload_folder": upload_folder,
+            "backup_folder": BACKUP_FOLDER,
+            "persistent_disk_path": PERSISTENT_DISK_PATH or "",
+            "uploads_on_persistent_disk": path_is_inside(PERSISTENT_DISK_PATH, upload_folder) if PERSISTENT_DISK_PATH else False,
+        },
+        "external_backup": {
+            "last_at": settings.get("last_external_backup_at"),
+            "last_by": backup_by_name,
+            "note": settings.get("last_external_backup_note"),
+            "recorded": bool(settings.get("last_external_backup_at")),
+        },
         "counts": counts,
     }
 
@@ -4402,7 +4516,7 @@ CODE128_PATTERNS = [
 ]
 
 
-def generate_code128_svg_data_uri(value, module_width=2, height=88):
+def generate_code128_svg_markup(value, module_width=2, height=88):
     raw_value = str(value or "").strip()
     if not raw_value:
         return ""
@@ -4433,15 +4547,22 @@ def generate_code128_svg_data_uri(value, module_width=2, height=88):
         .replace("<", "&lt;")
         .replace(">", "&gt;")
     )
-    svg = (
+    return (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{total_width}" height="{height + 26}" '
-        f'viewBox="0 0 {total_width} {height + 26}" role="img" aria-label="Barcode {safe_label}">'
+        f'viewBox="0 0 {total_width} {height + 26}" preserveAspectRatio="xMidYMin meet" '
+        f'role="img" aria-label="Barcode {safe_label}" style="display:block;margin:24px auto;background:#ffffff;">'
         f'<rect width="{total_width}" height="{height + 26}" fill="#ffffff" rx="8" ry="8" />'
         + "".join(rects) +
         f'<text x="{total_width / 2}" y="{text_y}" text-anchor="middle" font-family="Inter, Arial, sans-serif" '
         f'font-size="14" font-weight="700" fill="#0f172a">{safe_label}</text>'
         '</svg>'
     )
+
+
+def generate_code128_svg_data_uri(value, module_width=2, height=88):
+    svg = generate_code128_svg_markup(value, module_width=module_width, height=height)
+    if not svg:
+        return ""
     return f"data:image/svg+xml;charset=utf-8,{quote(svg)}"
 
 
@@ -4705,7 +4826,7 @@ def get_leave_balance_summary(user_row, year=None):
     }
 
 
-def build_leave_dashboard_rows(year=None, department=""):
+def build_leave_dashboard_rows(year=None, department="", user_id=None):
     target_year = int(year or now_dt().year)
     employees_sql = """
         SELECT *
@@ -4716,11 +4837,14 @@ def build_leave_dashboard_rows(year=None, department=""):
     if department:
         employees_sql += " AND COALESCE(department, '') = ?"
         params.append(department)
+    if user_id:
+        employees_sql += " AND id = ?"
+        params.append(user_id)
     employees_sql += " ORDER BY full_name ASC"
     employees = fetchall(employees_sql, params)
 
-    approved_rows = get_leave_usage_rows(year=target_year, department=department)
-    pending_rows = get_pending_leave_requests(department=department, year=target_year)
+    approved_rows = get_leave_usage_rows(user_id=user_id, year=target_year, department=department)
+    pending_rows = get_pending_leave_requests(user_id=user_id, department=department, year=target_year)
     approved_map = {}
     pending_map = {}
 
@@ -4918,6 +5042,8 @@ def build_recovery_pack_workbook():
     overview.append(["Environment", "Postgres" if using_postgres() else "SQLite"])
     overview.append(["Purpose", "Operational recovery reference and export workbook"])
     overview.append(["Note", "This workbook is not a one-click restore. Keep it with upload/file backups."])
+    overview.append(["Last External Backup Noted", recovery_snapshot["external_backup"]["last_at"] or "Not noted in app"])
+    overview.append(["External Backup Note", recovery_snapshot["external_backup"]["note"] or ""])
     overview.append(["Employee Accounts", recovery_snapshot["counts"]["employee_accounts"]])
     overview.append(["Admin Accounts", recovery_snapshot["counts"]["admin_accounts"]])
     overview.append(["Attendance Rows", recovery_snapshot["counts"]["attendance_rows"]])
@@ -9960,9 +10086,13 @@ def export_admin_reports_excel():
 def admin_leave_dashboard():
     year = parse_positive_int(request.args.get("year", str(now_dt().year)), now_dt().year)
     department = request.args.get("department", "").strip()
+    employee_id = request.args.get("employee_id", "").strip()
     departments = get_department_options()
-    leave_rows = build_leave_dashboard_rows(year=year, department=department)
-    pending_requests = get_pending_leave_requests(department=department, year=year)
+    employee_options = get_employee_options()
+    if department:
+        employee_options = [row for row in employee_options if (row.get("department") or "") == department]
+    leave_rows = build_leave_dashboard_rows(year=year, department=department, user_id=employee_id or None)
+    pending_requests = get_pending_leave_requests(user_id=employee_id or None, department=department, year=year)
 
     stats = {
         "employees": len(leave_rows),
@@ -9981,7 +10111,9 @@ def admin_leave_dashboard():
         leave_rows=leave_rows,
         pending_requests=pending_requests,
         departments=departments,
+        employees=employee_options,
         department=department,
+        employee_id=employee_id,
         year=year,
         stats=stats
     )
@@ -9992,17 +10124,26 @@ def admin_leave_dashboard():
 def export_admin_leave_dashboard_excel():
     year = parse_positive_int(request.args.get("year", str(now_dt().year)), now_dt().year)
     department = request.args.get("department", "").strip()
-    leave_rows = build_leave_dashboard_rows(year=year, department=department)
+    employee_id = request.args.get("employee_id", "").strip()
+    leave_rows = build_leave_dashboard_rows(year=year, department=department, user_id=employee_id or None)
 
     try:
         from openpyxl import Workbook
     except Exception:
         flash("Excel export requires openpyxl. Install dependencies and try again.", "danger")
-        return redirect(url_for("admin_leave_dashboard", year=year, department=department))
+        return redirect(url_for("admin_leave_dashboard", year=year, department=department, employee_id=employee_id))
 
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Leave Dashboard"
+    selected_employee_name = ""
+    if employee_id:
+        selected_employee = next((row for row in get_employee_options() if str(row["id"]) == employee_id), None)
+        selected_employee_name = selected_employee["full_name"] if selected_employee else employee_id
+    sheet.append(["Year", year])
+    sheet.append(["Department", department or "All Departments"])
+    sheet.append(["Employee", selected_employee_name or "All Employees"])
+    sheet.append([])
     sheet.append([
         "Employee", "Username", "Department", "Sick Allotment", "Sick Used", "Sick Remaining",
         "Paid Allotment", "Paid Used", "Paid Remaining", "Pending Sick", "Pending Paid",
@@ -10083,6 +10224,18 @@ def admin_data_tools():
             except ValueError as exc:
                 flash(str(exc), "danger")
             return redirect(url_for("admin_data_tools", search=search))
+        if action == "record_external_backup":
+            result = record_external_backup_marker(
+                note=request.form.get("external_backup_note", ""),
+                actor_id=session.get("user_id"),
+            )
+            log_activity(
+                session["user_id"],
+                "RECORD EXTERNAL BACKUP",
+                f"Marked external provider backup verified at {result['backup_at']}."
+            )
+            flash("External Render/Postgres backup note saved. You now have a visible reminder before reset or cleanup.", "success")
+            return redirect(url_for("admin_data_tools", search=search, cleanup_from=cleanup_from, cleanup_to=cleanup_to))
         if action in {"cleanup_logs_weekly", "cleanup_logs_monthly"}:
             retention_days = 7 if action == "cleanup_logs_weekly" else 30
             try:
@@ -10757,7 +10910,8 @@ def export_admin_disciplinary_excel():
     for row in actions:
         sheet.append([
             row["full_name"], row["username"], row["department"], row["action_type"], row["action_date"],
-            row["duration_days"], row["end_date"] or row["action_date"], row["status_label"],
+            row["duration_days"] if row["action_type"] == "Suspension" else "",
+            row["end_date"] or row["action_date"], row["status_label"],
             row.get("incident_report_id") or "",
             row.get("error_type") or row.get("incident_error_type") or "",
             row["details"] or ""
@@ -11648,6 +11802,37 @@ def print_employee_id(user_id):
     )
 
 
+@app.route("/admin/employee-id/<int:user_id>/barcode")
+@login_required(role="admin")
+def download_employee_barcode(user_id):
+    employee = fetchone("""
+        SELECT *
+        FROM users
+        WHERE id = ? AND role = 'employee'
+    """, (user_id,))
+
+    if not employee:
+        flash("Employee not found.", "danger")
+        return redirect(url_for("manage_employees"))
+    employee = dict(employee)
+
+    card_number = get_employee_card_number(employee)
+    barcode_value = (employee["barcode_id"] or card_number).strip()
+    svg_markup = generate_code128_svg_markup(barcode_value)
+    if not svg_markup:
+        flash("Barcode is not available for this employee yet.", "warning")
+        return redirect(url_for("print_employee_id", user_id=user_id))
+
+    safe_name = secure_filename(employee.get("full_name") or f"employee-{user_id}") or f"employee-{user_id}"
+    return Response(
+        svg_markup,
+        mimetype="image/svg+xml",
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe_name}-barcode.svg"'
+        },
+    )
+
+
 @app.route("/scanner")
 @login_required(role="scanner")
 def scanner_kiosk():
@@ -11893,8 +12078,11 @@ def scanner_kiosk_scan():
 def update_employee_id_signatory():
     signatory_name = request.form.get("id_signatory_name", "").strip() or "Kirk Danny Fernandez"
     signatory_title = request.form.get("id_signatory_title", "").strip() or "Head Of Operations"
+    hr_signatory_name = request.form.get("hr_signatory_name", "").strip()
+    hr_signatory_title = request.form.get("hr_signatory_title", "").strip() or "Human Resources Manager"
     current_settings = get_company_settings()
-    signature_file = current_settings["id_signature_file"] if current_settings else None
+    signature_file = current_settings.get("id_signature_file") if current_settings else None
+    hr_signature_file = current_settings.get("hr_signature_file") if current_settings else None
 
     file = request.files.get("id_signature_file")
     if file and file.filename:
@@ -11907,16 +12095,45 @@ def update_employee_id_signatory():
             return redirect(url_for("manage_employees"))
         signature_file = saved
 
+    hr_file = request.files.get("hr_signature_file")
+    if hr_file and hr_file.filename:
+        saved_hr = save_uploaded_file(hr_file, prefix="hr_signature", allowed_exts=IMAGE_EXTENSIONS)
+        if not saved_hr:
+            flash("Invalid Human Resources signature image file type.", "danger")
+            employee_id = request.form.get("employee_id", "").strip()
+            if employee_id:
+                return redirect(url_for("print_employee_id", user_id=employee_id))
+            return redirect(url_for("manage_employees"))
+        hr_signature_file = saved_hr
+
     execute_db("""
-        INSERT INTO company_settings (id, id_signatory_name, id_signatory_title, id_signature_file)
-        VALUES (1, ?, ?, ?)
+        INSERT INTO company_settings (
+            id, id_signatory_name, id_signatory_title, id_signature_file,
+            hr_signatory_name, hr_signatory_title, hr_signature_file
+        )
+        VALUES (1, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             id_signatory_name = excluded.id_signatory_name,
             id_signatory_title = excluded.id_signatory_title,
-            id_signature_file = excluded.id_signature_file
-    """, (signatory_name, signatory_title, signature_file), commit=True)
+            id_signature_file = excluded.id_signature_file,
+            hr_signatory_name = excluded.hr_signatory_name,
+            hr_signatory_title = excluded.hr_signatory_title,
+            hr_signature_file = excluded.hr_signature_file
+    """, (
+        signatory_name,
+        signatory_title,
+        signature_file,
+        hr_signatory_name,
+        hr_signatory_title,
+        hr_signature_file,
+    ), commit=True)
 
-    log_activity(session["user_id"], "UPDATE ID SIGNATORY", f"Updated ID signatory to {signatory_name} | {signatory_title}")
+    hr_log_name = hr_signatory_name or "Human Resources Manager"
+    log_activity(
+        session["user_id"],
+        "UPDATE ID SIGNATORY",
+        f"Updated ID signatories to {signatory_name} | {signatory_title} and {hr_log_name} | {hr_signatory_title}"
+    )
     flash("ID signatory details updated.", "success")
     employee_id = request.form.get("employee_id", "").strip()
     if employee_id:
