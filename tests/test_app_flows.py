@@ -706,6 +706,69 @@ class AppFlowsTestCase(unittest.TestCase):
         self.assertEqual(int(settings["last_external_backup_by"]), admin["id"])
         self.assertEqual(settings["last_external_backup_note"], "Render snapshot checked before cleanup")
 
+    def test_upload_storage_audit_flags_legacy_and_missing_profile_images(self):
+        admin = self.create_user(
+            "storage-audit-admin",
+            role="admin",
+            admin_permissions="dashboard,settings,employees",
+            admin_role_preset="custom",
+        )
+        cloud_employee = self.create_user("cloud-storage-employee", role="employee", full_name="Cloud Employee")
+        local_employee = self.create_user("legacy-storage-employee", role="employee", full_name="Legacy Employee")
+        missing_employee = self.create_user("missing-storage-employee", role="employee", full_name="Missing Employee")
+        self.create_user("blank-storage-employee", role="employee", full_name="Blank Employee")
+
+        with open(os.path.join(self.upload_dir, "legacy-avatar.png"), "wb") as image_file:
+            image_file.write(b"legacy-image")
+
+        with attendance_app.app.app_context():
+            attendance_app.execute_db(
+                "UPDATE users SET profile_image = ? WHERE id = ?",
+                ("cld:image:stellar-seats/cloud-employee:png", cloud_employee["id"]),
+                commit=True,
+            )
+            attendance_app.execute_db(
+                "UPDATE users SET profile_image = ? WHERE id = ?",
+                ("legacy-avatar.png", local_employee["id"]),
+                commit=True,
+            )
+            attendance_app.execute_db(
+                "UPDATE users SET profile_image = ? WHERE id = ?",
+                ("missing-avatar.png", missing_employee["id"]),
+                commit=True,
+            )
+            with patch.object(attendance_app, "CLOUDINARY_CLOUD_NAME", "demo-cloud"), patch.object(
+                attendance_app,
+                "cloudinary_storage_enabled",
+                return_value=True,
+            ):
+                audit = attendance_app.build_upload_storage_audit()
+
+        self.assertEqual(audit["counts"]["cloudinary_backed"], 1)
+        self.assertEqual(audit["counts"]["legacy_local"], 2)
+        self.assertEqual(audit["counts"]["needs_reupload"], 2)
+        self.assertEqual(audit["counts"]["missing_now"], 1)
+        self.assertEqual(audit["counts"]["without_image"], 1)
+        self.assertFalse(audit["free_safe_ready"])
+        self.assertEqual(audit["action_rows"][0]["full_name"], "Missing Employee")
+        self.assertEqual(audit["action_rows"][0]["status_label"], "Missing local file")
+        self.assertEqual(audit["action_rows"][1]["full_name"], "Legacy Employee")
+
+        self.set_session_user(admin)
+        with patch.object(attendance_app, "CLOUDINARY_CLOUD_NAME", "demo-cloud"), patch.object(
+            attendance_app,
+            "cloudinary_storage_enabled",
+            return_value=True,
+        ):
+            response = self.client.get("/admin/data-tools")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Upload Storage Health", response.data)
+        self.assertIn(b"Needs Re-Upload", response.data)
+        self.assertIn(b"Missing Employee", response.data)
+        self.assertIn(b"Legacy Employee", response.data)
+        self.assertNotIn(b"Cloud Employee", response.data)
+
     def test_employee_id_signatory_update_supports_hr_manager(self):
         admin = self.create_user(
             "id-admin",

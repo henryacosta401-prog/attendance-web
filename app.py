@@ -4661,6 +4661,120 @@ def get_backup_recovery_snapshot():
     }
 
 
+def inspect_upload_reference(filename):
+    cleaned = (filename or "").strip()
+    if not cleaned:
+        return {
+            "filename": "",
+            "storage_type": "none",
+            "storage_label": "No file on record",
+            "status_label": "No image uploaded",
+            "available_now": False,
+            "is_missing": False,
+            "needs_reupload": False,
+            "cloudinary_backed": False,
+        }
+
+    if is_cloudinary_reference(cleaned):
+        return {
+            "filename": cleaned,
+            "storage_type": "cloudinary",
+            "storage_label": "Cloudinary",
+            "status_label": "Cloudinary-backed",
+            "available_now": bool(CLOUDINARY_CLOUD_NAME),
+            "is_missing": not bool(CLOUDINARY_CLOUD_NAME),
+            "needs_reupload": False,
+            "cloudinary_backed": True,
+        }
+
+    file_exists = os.path.isfile(os.path.join(app.config["UPLOAD_FOLDER"], cleaned))
+    return {
+        "filename": cleaned,
+        "storage_type": "local",
+        "storage_label": "Legacy local upload",
+        "status_label": "Missing local file" if not file_exists else "Legacy local file",
+        "available_now": file_exists,
+        "is_missing": not file_exists,
+        "needs_reupload": True,
+        "cloudinary_backed": False,
+    }
+
+
+def build_upload_storage_audit(action_limit=24):
+    employee_rows = [
+        dict(row)
+        for row in fetchall("""
+            SELECT id, full_name, username, department, position, profile_image
+            FROM users
+            WHERE role = 'employee'
+            ORDER BY full_name ASC, id ASC
+        """)
+    ]
+
+    counts = {
+        "total_employees": len(employee_rows),
+        "with_image_reference": 0,
+        "cloudinary_backed": 0,
+        "legacy_local": 0,
+        "missing_now": 0,
+        "needs_reupload": 0,
+        "without_image": 0,
+    }
+    action_rows = []
+
+    for employee in employee_rows:
+        file_status = inspect_upload_reference(employee.get("profile_image"))
+        if file_status["storage_type"] == "none":
+            counts["without_image"] += 1
+            continue
+
+        counts["with_image_reference"] += 1
+        if file_status["cloudinary_backed"]:
+            counts["cloudinary_backed"] += 1
+        if file_status["storage_type"] == "local":
+            counts["legacy_local"] += 1
+        if file_status["is_missing"]:
+            counts["missing_now"] += 1
+        if file_status["needs_reupload"]:
+            counts["needs_reupload"] += 1
+            action_rows.append({
+                "user_id": employee["id"],
+                "full_name": employee["full_name"],
+                "username": employee["username"],
+                "department": employee.get("department") or "",
+                "position": employee.get("position") or "",
+                "profile_image": employee.get("profile_image") or "",
+                **file_status,
+            })
+
+    action_rows.sort(key=lambda row: (0 if row["is_missing"] else 1, row["full_name"].lower(), row["user_id"]))
+    settings = get_company_settings()
+    signatory_assets = []
+    for label, filename, signatory_name in (
+        ("Operations Signature", settings.get("id_signature_file"), settings.get("id_signatory_name") or "Head Of Operations"),
+        ("HR Signature", settings.get("hr_signature_file"), settings.get("hr_signatory_name") or "Human Resources Manager"),
+    ):
+        asset_status = inspect_upload_reference(filename)
+        signatory_assets.append({
+            "label": label,
+            "signatory_name": signatory_name,
+            **asset_status,
+        })
+
+    return {
+        "cloudinary_enabled": cloudinary_storage_enabled(),
+        "cloudinary_folder": CLOUDINARY_UPLOAD_FOLDER,
+        "upload_folder": app.config["UPLOAD_FOLDER"],
+        "persistent_disk_path": PERSISTENT_DISK_PATH or "",
+        "render_disk_attached": bool(PERSISTENT_DISK_PATH),
+        "free_safe_ready": counts["needs_reupload"] == 0,
+        "counts": counts,
+        "action_rows": action_rows[:action_limit],
+        "total_action_rows": len(action_rows),
+        "signatory_assets": signatory_assets,
+    }
+
+
 def create_sqlite_backup():
     if using_postgres():
         raise ValueError("Automatic backup copy is only available for SQLite right now.")
@@ -10947,6 +11061,7 @@ def admin_data_tools():
     backups = get_backup_files(limit=12)
     cleanup_summary = get_log_cleanup_summary()
     recovery_snapshot = get_backup_recovery_snapshot()
+    storage_audit = build_upload_storage_audit()
     return render_template(
         "admin_data_tools.html",
         candidates=candidates,
@@ -10956,6 +11071,7 @@ def admin_data_tools():
         cleanup_to=cleanup_to,
         cleanup_summary=cleanup_summary,
         recovery_snapshot=recovery_snapshot,
+        storage_audit=storage_audit,
         using_postgres_reset=using_postgres(),
         format_datetime_12h=format_datetime_12h,
         minutes_to_hm=minutes_to_hm

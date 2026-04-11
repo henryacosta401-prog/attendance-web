@@ -121,6 +121,95 @@
     </div>
 </div>
 
+<div class="card" style="margin-top:18px;" data-tour-id="upload-storage-health">
+    <h3 style="margin-top:0;">Upload Storage Health</h3>
+    <p class="muted">Use this to confirm which uploads are already protected in Cloudinary and which employee photos still need to be re-uploaded after the Render disk removal.</p>
+
+    <div class="grid grid-4" style="margin-top:16px;">
+        <div class="stat-box">
+            <div class="stat-label">Cloudinary-Protected</div>
+            <div class="stat-number">{{ storage_audit.counts.cloudinary_backed }}</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Needs Re-Upload</div>
+            <div class="stat-number">{{ storage_audit.counts.needs_reupload }}</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Missing Right Now</div>
+            <div class="stat-number">{{ storage_audit.counts.missing_now }}</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">No Image On File</div>
+            <div class="stat-number">{{ storage_audit.counts.without_image }}</div>
+        </div>
+    </div>
+
+    <div class="grid grid-2" style="gap:12px; margin-top:14px;">
+        <div style="padding:14px; border-radius:16px; background:rgba(59,130,246,0.08); border:1px solid rgba(96,165,250,0.20);">
+            <div class="stat-label">Current Upload Backend</div>
+            <div style="font-weight:900;color:#fff;margin-top:6px;">{% if storage_audit.cloudinary_enabled %}Cloudinary active{% else %}Cloudinary not configured{% endif %}</div>
+            <div class="small muted" style="margin-top:8px;">{% if storage_audit.cloudinary_folder %}Folder: <code>{{ storage_audit.cloudinary_folder }}</code>{% else %}No Cloudinary folder override set.{% endif %}</div>
+            <div class="small muted" style="margin-top:6px;">Local upload path fallback: <code>{{ storage_audit.upload_folder }}</code></div>
+        </div>
+        <div style="padding:14px; border-radius:16px; background:rgba(16,185,129,0.08); border:1px solid rgba(52,211,153,0.18);">
+            <div class="stat-label">Render Disk</div>
+            <div style="font-weight:900;color:#fff;margin-top:6px;">{% if storage_audit.render_disk_attached %}Attached{% else %}Not attached{% endif %}</div>
+            <div class="small muted" style="margin-top:8px;">{% if storage_audit.render_disk_attached %}<code>{{ storage_audit.persistent_disk_path }}</code>{% else %}This Free instance no longer has a persistent Render disk, so any legacy local upload reference should be re-uploaded to Cloudinary.{% endif %}</div>
+        </div>
+    </div>
+
+    <div style="margin-top:14px; padding:14px; border-radius:16px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);">
+        <div style="font-weight:900;color:#fff;">ID Signatory Storage</div>
+        <div style="display:grid; gap:10px; margin-top:12px;">
+            {% for asset in storage_audit.signatory_assets %}
+                <div style="display:flex; justify-content:space-between; gap:12px; align-items:center; flex-wrap:wrap;">
+                    <div>
+                        <div style="font-weight:800; color:#fff;">{{ asset.label }}</div>
+                        <div class="small muted" style="margin-top:4px;">{{ asset.signatory_name }} | {{ asset.storage_label }}</div>
+                    </div>
+                    <div class="status {% if asset.cloudinary_backed %}status-green{% elif asset.is_missing %}status-red{% elif asset.storage_type == 'local' %}status-yellow{% else %}status-gray{% endif %}">{{ asset.status_label }}</div>
+                </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="divider"></div>
+    <div style="display:flex; justify-content:space-between; gap:12px; align-items:center; flex-wrap:wrap;">
+        <h4 style="margin:0;">Employees That Still Need Re-Upload</h4>
+        <div class="small muted">{{ storage_audit.total_action_rows }} employee record(s) need attention</div>
+    </div>
+    <div class="small muted" style="margin-top:8px;">Rows marked as legacy local were saved before Cloudinary. Re-uploading their profile image once is enough to protect them going forward.</div>
+    {% if storage_audit.action_rows %}
+        <div style="display:grid; gap:12px; margin-top:14px;">
+            {% for item in storage_audit.action_rows %}
+                <div style="padding:14px; border-radius:16px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);">
+                    <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap;">
+                        <div>
+                            <div style="font-weight:900; color:#fff;">{{ item.full_name }}</div>
+                            <div class="small muted" style="margin-top:4px;">@{{ item.username }}{% if item.department %} | {{ item.department }}{% endif %}{% if item.position %} | {{ item.position }}{% endif %}</div>
+                            <div class="small muted" style="margin-top:6px;">Stored value: <code>{{ item.profile_image }}</code></div>
+                        </div>
+                        <div class="status {% if item.is_missing %}status-red{% else %}status-yellow{% endif %}">{{ item.status_label }}</div>
+                    </div>
+                    <div class="top-actions" style="margin-top:12px;">
+                        <a class="btn btn-secondary" href="{{ url_for('edit_employee', user_id=item.user_id) }}">Re-upload Profile Image</a>
+                        {% if item.available_now and item.profile_image %}
+                            <a class="btn btn-gray" href="{{ url_for('uploaded_file', filename=item.profile_image) }}" target="_blank" rel="noopener">Open Current File</a>
+                        {% endif %}
+                    </div>
+                </div>
+            {% endfor %}
+        </div>
+        {% if storage_audit.total_action_rows > storage_audit.action_rows|length %}
+            <div class="small muted" style="margin-top:10px;">Showing the first {{ storage_audit.action_rows|length }} employees that need attention.</div>
+        {% endif %}
+    {% else %}
+        <div style="margin-top:14px; padding:14px; border-radius:16px; background:rgba(16,185,129,0.08); border:1px solid rgba(52,211,153,0.18); color:#d1fae5;">
+            All employee profile images are already Cloudinary-backed or intentionally left blank.
+        </div>
+    {% endif %}
+</div>
+
 <div class="card" style="margin-top:18px;" data-tour-id="log-cleanup">
     <h3 style="margin-top:0;">Log Cleanup</h3>
     <p class="muted">Use this to reduce old operational logs without deleting important business records like attendance, payroll, employee accounts, incidents, or disciplinary history.</p>
