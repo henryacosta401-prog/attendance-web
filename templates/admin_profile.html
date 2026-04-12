@@ -242,7 +242,7 @@
 
     <div class="card" style="margin-top:20px;">
         <div class="section-title">Attendance and Kiosk Settings</div>
-        <p class="muted" style="margin-bottom:14px;">Control whether attendance is scanner-only, how the kiosk auto-locks, and how overtime is estimated in payroll.</p>
+        <p class="muted" style="margin-bottom:14px;">Control whether attendance is scanner-only, how the kiosk auto-locks, how tardiness rounding is applied, and how overtime is estimated in payroll.</p>
 
         <form method="POST">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -251,6 +251,14 @@
             <label style="display:flex;align-items:center;gap:10px;">
                 <input type="checkbox" name="scanner_attendance_mode" value="1" {% if company_settings.scanner_attendance_mode %}checked{% endif %}>
                 <span>Use scanner kiosk as the official attendance method</span>
+            </label>
+
+            <label style="display:flex;align-items:flex-start;gap:10px;margin-top:12px;">
+                <input type="checkbox" name="tardiness_policy_enabled" value="1" {% if company_settings.tardiness_policy_enabled %}checked{% endif %}>
+                <span>
+                    Apply tardiness policy
+                    <span class="small muted" style="display:block;margin-top:4px;">1-15 minutes late adjusts time in to +15 minutes and reduces break allowance by 15 minutes. 16-30 minutes late adjusts time in to +30 minutes with no breaks. 31-45 minutes late adjusts time in to at least +1 hour with no breaks.</span>
+                </span>
             </label>
 
             <label style="display:block; margin-top:12px;">Kiosk Auto-Lock Timeout (seconds)</label>

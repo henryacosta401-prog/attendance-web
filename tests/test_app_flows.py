@@ -205,6 +205,20 @@ class AppFlowsTestCase(unittest.TestCase):
         self.assertEqual(payroll_response.status_code, 302)
         self.assertIn("/admin", payroll_response.headers.get("Location", ""))
 
+    def test_reports_admin_cannot_access_async_payroll_panel(self):
+        admin = self.create_user(
+            "reports-panel-admin",
+            role="admin",
+            admin_permissions="dashboard,reports",
+            admin_role_preset="custom",
+        )
+        self.set_session_user(admin)
+
+        response = self.client.get("/admin/payroll/download-requests-panel", follow_redirects=False)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/admin", response.headers.get("Location", ""))
+
     def test_scanner_scan_time_in_creates_attendance_and_log(self):
         scanner = self.create_user("scanner-user", role="scanner", position="Scanner")
         employee = self.create_user(
@@ -282,6 +296,143 @@ class AppFlowsTestCase(unittest.TestCase):
 
         self.assertIsNotNone(attendance)
         self.assertIsNotNone(attendance["time_in"])
+
+    def test_tardiness_policy_adjusts_recorded_time_and_break_limit(self):
+        employee = self.create_user(
+            "tardy-quarter-hour",
+            role="employee",
+            shift_start="16:00",
+            shift_end="00:00",
+            break_limit=30,
+        )
+        late_dt = datetime(2026, 4, 12, 16, 1, 0, tzinfo=attendance_app.APP_TIMEZONE)
+
+        with attendance_app.app.app_context(), patch.object(attendance_app, "now_dt", return_value=late_dt):
+            ok, message, _ = attendance_app.perform_attendance_action(employee["id"], "time_in", source_label="Test")
+            attendance = attendance_app.fetchone(
+                "SELECT * FROM attendance WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+                (employee["id"],),
+            )
+
+        self.assertTrue(ok)
+        self.assertIn("Tardiness policy adjusted recorded time in", message)
+        self.assertEqual(attendance["actual_time_in"], "2026-04-12 16:01:00")
+        self.assertEqual(attendance["time_in"], "2026-04-12 16:15:00")
+        self.assertEqual(attendance["effective_break_limit_minutes"], 15)
+        self.assertEqual(attendance["late_minutes"], 1)
+
+    def test_tardiness_policy_blocks_breaks_after_sixteen_minutes_late(self):
+        employee = self.create_user(
+            "tardy-no-break",
+            role="employee",
+            shift_start="16:00",
+            shift_end="00:00",
+            break_limit=30,
+        )
+        late_dt = datetime(2026, 4, 12, 16, 20, 0, tzinfo=attendance_app.APP_TIMEZONE)
+        break_dt = datetime(2026, 4, 12, 17, 0, 0, tzinfo=attendance_app.APP_TIMEZONE)
+
+        with attendance_app.app.app_context(), patch.object(attendance_app, "now_dt", return_value=late_dt):
+            ok, _, _ = attendance_app.perform_attendance_action(employee["id"], "time_in", source_label="Test")
+            self.assertTrue(ok)
+
+        with attendance_app.app.app_context(), patch.object(attendance_app, "now_dt", return_value=break_dt):
+            ok, message, _ = attendance_app.perform_attendance_action(employee["id"], "start_break", source_label="Test")
+            attendance = attendance_app.fetchone(
+                "SELECT * FROM attendance WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+                (employee["id"],),
+            )
+
+        self.assertFalse(ok)
+        self.assertIn("Breaks are not allowed", message)
+        self.assertEqual(attendance["effective_break_limit_minutes"], 0)
+
+    def test_admin_can_disable_tardiness_policy(self):
+        admin = self.create_user(
+            "settings-admin",
+            role="admin",
+            admin_permissions="dashboard,settings",
+            admin_role_preset="custom",
+        )
+        employee = self.create_user(
+            "tardy-policy-off",
+            role="employee",
+            shift_start="16:00",
+            shift_end="00:00",
+            break_limit=30,
+        )
+        csrf_token = self.set_session_user(admin, csrf_token="settings-csrf")
+
+        response = self.client.post(
+            "/admin/profile",
+            data={
+                "csrf_token": csrf_token,
+                "form_action": "attendance_settings",
+                "scanner_lock_timeout_seconds": "90",
+                "overtime_multiplier": "1.25",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+
+        with attendance_app.app.app_context():
+            settings = attendance_app.get_company_settings()
+            self.assertEqual(settings["tardiness_policy_enabled"], 0)
+
+        late_dt = datetime(2026, 4, 12, 16, 1, 0, tzinfo=attendance_app.APP_TIMEZONE)
+        with attendance_app.app.app_context(), patch.object(attendance_app, "now_dt", return_value=late_dt):
+            ok, _, _ = attendance_app.perform_attendance_action(employee["id"], "time_in", source_label="Test")
+            attendance = attendance_app.fetchone(
+                "SELECT * FROM attendance WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+                (employee["id"],),
+            )
+
+        self.assertTrue(ok)
+        self.assertEqual(attendance["time_in"], "2026-04-12 16:01:00")
+        self.assertEqual(attendance["actual_time_in"], "2026-04-12 16:01:00")
+        self.assertEqual(attendance["effective_break_limit_minutes"], 30)
+
+    def test_payroll_uses_tardiness_adjusted_time_in(self):
+        employee = self.create_user(
+            "tardy-payroll",
+            role="employee",
+            shift_start="16:00",
+            shift_end="00:00",
+            break_limit=30,
+            hourly_rate=60,
+        )
+        time_in_dt = datetime(2026, 4, 12, 16, 20, 0, tzinfo=attendance_app.APP_TIMEZONE)
+        time_out_dt = datetime(2026, 4, 13, 0, 0, 0, tzinfo=attendance_app.APP_TIMEZONE)
+
+        with attendance_app.app.app_context(), patch.object(attendance_app, "now_dt", return_value=time_in_dt):
+            ok, _, _ = attendance_app.perform_attendance_action(employee["id"], "time_in", source_label="Test")
+            self.assertTrue(ok)
+
+        with attendance_app.app.app_context(), patch.object(attendance_app, "now_dt", return_value=time_out_dt):
+            ok, _, _ = attendance_app.perform_attendance_action(employee["id"], "time_out", source_label="Test")
+            self.assertTrue(ok)
+            payroll_rows = attendance_app.build_payroll_rows("2026-04-12", "2026-04-12", employee_filter=str(employee["id"]))
+
+        self.assertEqual(len(payroll_rows), 1)
+        self.assertEqual(payroll_rows[0]["late_minutes"], 20)
+        self.assertEqual(payroll_rows[0]["total_minutes"], 450)
+        self.assertEqual(payroll_rows[0]["total_hours"], 7.5)
+        self.assertEqual(payroll_rows[0]["gross_pay"], 450.0)
+
+    def test_payroll_admin_download_requests_panel_renders(self):
+        admin = self.create_user(
+            "payroll-panel-admin",
+            role="admin",
+            admin_permissions="dashboard,payroll",
+            admin_role_preset="custom",
+        )
+        self.set_session_user(admin)
+
+        response = self.client.get("/admin/payroll/download-requests-panel")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Payslip Download Requests", response.data)
 
     def test_released_payroll_snapshot_cannot_be_saved_back_to_draft(self):
         admin = self.create_user("payroll-admin", role="admin", admin_permissions="dashboard,payroll,reports")
@@ -995,6 +1146,36 @@ class AppFlowsTestCase(unittest.TestCase):
         self.assertTrue(success)
         self.assertEqual(message, "Overtime ended.")
         self.assertEqual(session_row["overtime_end"], "2026-04-08 00:30:00")
+
+    def test_kiosk_time_in_uses_one_timestamp_snapshot(self):
+        employee = self.create_user(
+            "snapshot-employee",
+            role="employee",
+            full_name="Snapshot Employee",
+            shift_start="09:00",
+        )
+
+        with patch.object(attendance_app, "now_str", return_value="2026-04-08 09:00:00"), \
+             patch.object(attendance_app, "create_notification"), \
+             patch.object(attendance_app, "log_activity"), \
+             attendance_app.app.app_context():
+            success, message, _ = attendance_app.perform_attendance_action(
+                employee["id"],
+                "time_in",
+                actor_id=employee["id"],
+                source_label="Test",
+            )
+            attendance = attendance_app.fetchone(
+                "SELECT * FROM attendance WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+                (employee["id"],),
+            )
+
+        self.assertTrue(success)
+        self.assertEqual(message, "Time in successful.")
+        self.assertEqual(attendance["work_date"], "2026-04-08")
+        self.assertEqual(attendance["time_in"], "2026-04-08 09:00:00")
+        self.assertEqual(attendance["created_at"], "2026-04-08 09:00:00")
+        self.assertEqual(attendance["updated_at"], "2026-04-08 09:00:00")
 
     def test_incident_policy_creates_linked_disciplinary_steps(self):
         admin = self.create_user("incident-admin", role="admin")

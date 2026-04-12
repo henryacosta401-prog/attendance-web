@@ -68,17 +68,20 @@ from attendance_core.config import (
     SCHEDULE_SPECIAL_RULE_LABELS,
     SCHEDULE_SPECIAL_RULE_OPTIONS,
     SQLITE_DATABASE,
+    TARDINESS_POLICY_ENABLED_DEFAULT,
     UPLOAD_FOLDER,
     WEEKDAY_OPTIONS,
     get_configured_secret_key,
     is_production_environment,
 )
 from attendance_core.attendance import (
+    calculate_late_info as core_calculate_late_info,
     combine_work_date_and_time,
     extract_clock_time,
     format_datetime_12h,
     format_time_12h,
     get_attendance_reference_datetime,
+    get_effective_break_limit_minutes,
     get_overtime_reference_datetime,
     get_overbreak_minutes,
     get_schedule_code_for_date,
@@ -95,6 +98,7 @@ from attendance_core.attendance import (
     parse_optional_schedule_time,
     parse_shift_end,
     parse_shift_start,
+    get_tardiness_policy_adjustment,
     total_work_minutes,
 )
 from attendance_core.admin_access import (
@@ -136,11 +140,20 @@ from attendance_core.payroll import (
     get_payroll_scope_label,
     recurring_rule_applies_to_period,
 )
+from attendance_core.notifications import (
+    build_latest_notifications_loader,
+    build_notification_preview_rows,
+    build_unread_notification_counter,
+)
 from attendance_core.reporting import (
     build_case_rows,
     build_report_highlights,
 )
-from attendance_core.scanner import resolve_client_ip
+from attendance_core.scanner import (
+    build_employee_identifier_conflict_finder,
+    build_employee_scan_match_finder,
+    resolve_client_ip,
+)
 from attendance_core.workflows import (
     build_correction_change_summary,
     build_schedule_special_rule_label,
@@ -433,6 +446,19 @@ def fetchall(query, params=()):
         db.close()
 
 
+find_employee_identifier_conflict = build_employee_identifier_conflict_finder(
+    fetchone,
+    normalize_employee_code,
+)
+find_employee_barcode_matches = build_employee_scan_match_finder(
+    fetchall,
+    fetchone,
+    normalize_employee_code,
+)
+get_unread_notification_count = build_unread_notification_counter(fetchone)
+get_latest_notifications = build_latest_notifications_loader(fetchall)
+
+
 def execute_db(query, params=(), commit=False):
     db = get_db()
     if using_postgres():
@@ -714,12 +740,14 @@ def init_sqlite_db():
             user_id INTEGER NOT NULL,
             work_date TEXT NOT NULL,
             time_in TEXT,
+            actual_time_in TEXT,
             time_out TEXT,
             status TEXT DEFAULT 'Offline',
             proof_file TEXT,
             notes TEXT,
             late_flag INTEGER NOT NULL DEFAULT 0,
             late_minutes INTEGER NOT NULL DEFAULT 0,
+            effective_break_limit_minutes INTEGER,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             FOREIGN KEY (user_id) REFERENCES users (id)
@@ -823,6 +851,7 @@ def init_sqlite_db():
             scanner_lock_timeout_seconds INTEGER NOT NULL DEFAULT 90,
             scanner_exit_pin_hash TEXT,
             overtime_multiplier REAL NOT NULL DEFAULT 1.25,
+            tardiness_policy_enabled INTEGER NOT NULL DEFAULT 1,
             last_external_backup_at TEXT,
             last_external_backup_by INTEGER,
             last_external_backup_note TEXT
@@ -1078,6 +1107,7 @@ def init_sqlite_db():
                 scanner_lock_timeout_seconds INTEGER NOT NULL DEFAULT 90,
                 scanner_exit_pin_hash TEXT,
                 overtime_multiplier REAL NOT NULL DEFAULT 1.25,
+                tardiness_policy_enabled INTEGER NOT NULL DEFAULT 1,
                 last_external_backup_at TEXT,
                 last_external_backup_by INTEGER,
                 last_external_backup_note TEXT
@@ -1104,6 +1134,8 @@ def init_sqlite_db():
         cursor.execute("ALTER TABLE company_settings ADD COLUMN scanner_exit_pin_hash TEXT")
     if "overtime_multiplier" not in existing_cols_company_settings:
         cursor.execute("ALTER TABLE company_settings ADD COLUMN overtime_multiplier REAL NOT NULL DEFAULT 1.25")
+    if "tardiness_policy_enabled" not in existing_cols_company_settings:
+        cursor.execute("ALTER TABLE company_settings ADD COLUMN tardiness_policy_enabled INTEGER NOT NULL DEFAULT 1")
     if "last_external_backup_at" not in existing_cols_company_settings:
         cursor.execute("ALTER TABLE company_settings ADD COLUMN last_external_backup_at TEXT")
     if "last_external_backup_by" not in existing_cols_company_settings:
@@ -1261,17 +1293,36 @@ def init_sqlite_db():
     cursor.execute("""
         INSERT OR IGNORE INTO company_settings (
             id, id_signatory_name, id_signatory_title, id_signature_file,
-            scanner_attendance_mode, scanner_lock_timeout_seconds, scanner_exit_pin_hash, overtime_multiplier
+            scanner_attendance_mode, scanner_lock_timeout_seconds, scanner_exit_pin_hash, overtime_multiplier,
+            tardiness_policy_enabled
         )
-        VALUES (1, 'Kirk Danny Fernandez', 'Head Of Operations', NULL, 0, 90, NULL, 1.25)
+        VALUES (1, 'Kirk Danny Fernandez', 'Head Of Operations', NULL, 0, 90, NULL, 1.25, 1)
     """)
 
     # attendance migration
     existing_cols_att = [row[1] for row in cursor.execute("PRAGMA table_info(attendance)").fetchall()]
+    if "actual_time_in" not in existing_cols_att:
+        cursor.execute("ALTER TABLE attendance ADD COLUMN actual_time_in TEXT")
     if "late_flag" not in existing_cols_att:
         cursor.execute("ALTER TABLE attendance ADD COLUMN late_flag INTEGER NOT NULL DEFAULT 0")
     if "late_minutes" not in existing_cols_att:
         cursor.execute("ALTER TABLE attendance ADD COLUMN late_minutes INTEGER NOT NULL DEFAULT 0")
+    if "effective_break_limit_minutes" not in existing_cols_att:
+        cursor.execute("ALTER TABLE attendance ADD COLUMN effective_break_limit_minutes INTEGER")
+    cursor.execute("""
+        UPDATE attendance
+        SET actual_time_in = time_in
+        WHERE COALESCE(TRIM(actual_time_in), '') = ''
+          AND COALESCE(TRIM(time_in), '') <> ''
+    """)
+    cursor.execute("""
+        UPDATE attendance
+        SET effective_break_limit_minutes = COALESCE(
+            (SELECT u.break_limit_minutes FROM users u WHERE u.id = attendance.user_id),
+            ?
+        )
+        WHERE effective_break_limit_minutes IS NULL
+    """, (BREAK_LIMIT_MINUTES,))
 
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_login_attempts_ip_attempted_at ON login_attempts(ip_address, attempted_at)")
     try:
@@ -1886,12 +1937,14 @@ def init_postgres_db():
                 user_id INTEGER NOT NULL,
                 work_date TEXT NOT NULL,
                 time_in TEXT,
+                actual_time_in TEXT,
                 time_out TEXT,
                 status TEXT DEFAULT 'Offline',
                 proof_file TEXT,
                 notes TEXT,
                 late_flag INTEGER NOT NULL DEFAULT 0,
                 late_minutes INTEGER NOT NULL DEFAULT 0,
+                effective_break_limit_minutes INTEGER,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
@@ -2045,6 +2098,7 @@ def init_postgres_db():
                 scanner_lock_timeout_seconds INTEGER NOT NULL DEFAULT 90,
                 scanner_exit_pin_hash TEXT,
                 overtime_multiplier REAL NOT NULL DEFAULT 1.25,
+                tardiness_policy_enabled INTEGER NOT NULL DEFAULT 1,
                 last_external_backup_at TEXT,
                 last_external_backup_by INTEGER,
                 last_external_backup_note TEXT
@@ -2060,15 +2114,32 @@ def init_postgres_db():
         cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS scanner_lock_timeout_seconds INTEGER NOT NULL DEFAULT 90")
         cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS scanner_exit_pin_hash TEXT")
         cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS overtime_multiplier REAL NOT NULL DEFAULT 1.25")
+        cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS tardiness_policy_enabled INTEGER NOT NULL DEFAULT 1")
         cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS last_external_backup_at TEXT")
         cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS last_external_backup_by INTEGER")
         cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS last_external_backup_note TEXT")
+        cur.execute("ALTER TABLE attendance ADD COLUMN IF NOT EXISTS actual_time_in TEXT")
+        cur.execute("ALTER TABLE attendance ADD COLUMN IF NOT EXISTS effective_break_limit_minutes INTEGER")
+        cur.execute("""
+            UPDATE attendance
+            SET actual_time_in = time_in
+            WHERE COALESCE(BTRIM(actual_time_in), '') = ''
+              AND COALESCE(BTRIM(time_in), '') <> ''
+        """)
+        cur.execute("""
+            UPDATE attendance a
+            SET effective_break_limit_minutes = COALESCE(u.break_limit_minutes, %s)
+            FROM users u
+            WHERE u.id = a.user_id
+              AND a.effective_break_limit_minutes IS NULL
+        """, (BREAK_LIMIT_MINUTES,))
         cur.execute("""
             INSERT INTO company_settings (
                 id, id_signatory_name, id_signatory_title, id_signature_file,
-                scanner_attendance_mode, scanner_lock_timeout_seconds, scanner_exit_pin_hash, overtime_multiplier
+                scanner_attendance_mode, scanner_lock_timeout_seconds, scanner_exit_pin_hash, overtime_multiplier,
+                tardiness_policy_enabled
             )
-            VALUES (1, 'Kirk Danny Fernandez', 'Head Of Operations', NULL, 0, 90, NULL, 1.25)
+            VALUES (1, 'Kirk Danny Fernandez', 'Head Of Operations', NULL, 0, 90, NULL, 1.25, 1)
             ON CONFLICT (id) DO NOTHING
         """)
         cur.execute("""
@@ -2902,82 +2973,6 @@ def log_scanner_activity(scanner_user_id, action_type, barcode_value, result_sta
     ), commit=True)
 
 
-def find_employee_identifier_conflict(identifier_value, exclude_user_id=None):
-    barcode_value = (identifier_value or "").strip()
-    employee_code_value = normalize_employee_code(identifier_value)
-    if not barcode_value and not employee_code_value:
-        return None
-
-    sql = """
-        SELECT id, full_name, employee_code, barcode_id
-        FROM users
-        WHERE role = 'employee'
-          AND (
-              TRIM(COALESCE(barcode_id, '')) = ?
-              OR TRIM(COALESCE(employee_code, '')) = ?
-          )
-    """
-    params = [barcode_value, employee_code_value]
-    if exclude_user_id is not None:
-        sql += " AND id != ?"
-        params.append(int(exclude_user_id))
-    sql += " ORDER BY id ASC LIMIT 1"
-    return fetchone(sql, params)
-
-
-def find_employee_barcode_matches(barcode_id):
-    cleaned = (barcode_id or "").strip()
-    normalized_employee_code = normalize_employee_code(cleaned)
-    result = {
-        "cleaned": cleaned,
-        "matches": [],
-        "is_duplicate": False,
-        "match_type": "none",
-    }
-    if not cleaned:
-        return result
-
-    direct_matches = fetchall("""
-        SELECT *
-        FROM users
-        WHERE role = 'employee' AND TRIM(COALESCE(barcode_id, '')) = ?
-        ORDER BY id ASC
-        LIMIT 2
-    """, (cleaned,))
-    if direct_matches:
-        result["matches"] = direct_matches
-        result["is_duplicate"] = len(direct_matches) > 1
-        result["match_type"] = "barcode"
-        return result
-
-    employee_code_matches = fetchall("""
-        SELECT *
-        FROM users
-        WHERE role = 'employee' AND TRIM(COALESCE(employee_code, '')) = ?
-        ORDER BY id ASC
-        LIMIT 2
-    """, (normalized_employee_code,))
-    if employee_code_matches:
-        result["matches"] = employee_code_matches
-        result["is_duplicate"] = len(employee_code_matches) > 1
-        result["match_type"] = "employee_code"
-        return result
-
-    if cleaned.upper().startswith("EMP-"):
-        suffix = cleaned[4:].strip()
-        if suffix.isdigit():
-            employee = fetchone("""
-                SELECT *
-                FROM users
-                WHERE role = 'employee' AND id = ?
-                ORDER BY id DESC LIMIT 1
-            """, (int(suffix),))
-            if employee:
-                result["matches"] = [employee]
-                result["match_type"] = "employee_id"
-    return result
-
-
 def get_user_by_id(user_id):
     return fetchone("SELECT * FROM users WHERE id = ?", (user_id,))
 
@@ -3030,6 +3025,7 @@ def get_company_settings():
         "scanner_lock_timeout_seconds": 90,
         "scanner_exit_pin_hash": None,
         "overtime_multiplier": 1.25,
+        "tardiness_policy_enabled": TARDINESS_POLICY_ENABLED_DEFAULT,
         "last_external_backup_at": None,
         "last_external_backup_by": None,
         "last_external_backup_note": None,
@@ -3318,6 +3314,85 @@ def get_effective_employee_context_map(user_rows, reference_datetime=None, refer
         int(row["id"]): apply_schedule_history_snapshot(row, history_lookup.get(int(row["id"])))
         for row in rows
     }
+
+
+def is_tardiness_policy_enabled(company_settings=None):
+    settings = company_settings if company_settings is not None else get_company_settings()
+    return int((settings or {}).get("tardiness_policy_enabled") or 0) == 1
+
+
+def resolve_attendance_time_in_details(user_row=None, user_id=None, actual_time_in=None, work_date="", company_settings=None):
+    base_user = None
+    if user_row:
+        base_user = dict(user_row)
+    elif user_id:
+        fetched_user = get_user_by_id(user_id)
+        base_user = dict(fetched_user) if fetched_user else None
+
+    reference_date = work_date or ((actual_time_in or "")[:10] if actual_time_in else today_str())
+    if not base_user:
+        return {
+            "actual_time_in": actual_time_in,
+            "recorded_time_in": actual_time_in,
+            "late_flag": 0,
+            "late_minutes": 0,
+            "effective_break_limit_minutes": BREAK_LIMIT_MINUTES,
+            "policy_applied": 0,
+            "policy_deduction_minutes": 0,
+            "no_breaks_allowed": 0,
+            "shift_start": DEFAULT_SHIFT_START,
+            "base_break_limit_minutes": BREAK_LIMIT_MINUTES,
+        }
+
+    reference_datetime = actual_time_in or normalize_history_reference(reference_date=reference_date)
+    effective_user = get_effective_employee_context(
+        user_row=base_user,
+        user_id=base_user["id"],
+        reference_datetime=reference_datetime,
+        reference_date=reference_date,
+    ) or base_user
+    shift_start = parse_shift_start(effective_user.get("shift_start") or DEFAULT_SHIFT_START)
+    base_break_limit_minutes = parse_break_limit_minutes(
+        effective_user.get("break_limit_minutes")
+        if effective_user.get("break_limit_minutes") is not None
+        else BREAK_LIMIT_MINUTES
+    )
+    if actual_time_in:
+        details = get_tardiness_policy_adjustment(
+            actual_time_in,
+            shift_start,
+            base_break_limit_minutes=base_break_limit_minutes,
+            policy_enabled=is_tardiness_policy_enabled(company_settings),
+        )
+    else:
+        details = {
+            "actual_time_in": None,
+            "recorded_time_in": None,
+            "late_flag": 0,
+            "late_minutes": 0,
+            "effective_break_limit_minutes": base_break_limit_minutes,
+            "policy_applied": 0,
+            "policy_deduction_minutes": 0,
+            "no_breaks_allowed": 0,
+        }
+    details["shift_start"] = shift_start
+    details["base_break_limit_minutes"] = base_break_limit_minutes
+    return details
+
+
+def describe_tardiness_policy_adjustment(details):
+    if not details or not details.get("policy_applied"):
+        return ""
+    recorded_display = format_time_12h(details.get("recorded_time_in"))
+    if details.get("no_breaks_allowed"):
+        return (
+            f"Tardiness policy adjusted recorded time in to {recorded_display} "
+            f"and disabled breaks for this shift. Any break taken will count as overbreak."
+        )
+    return (
+        f"Tardiness policy adjusted recorded time in to {recorded_display} "
+        f"and reduced break allowance to {details.get('effective_break_limit_minutes', 0)} minute(s)."
+    )
 
 
 def record_employee_schedule_history(user_row, actor_id=None, effective_at=None, commit=False):
@@ -4006,49 +4081,77 @@ def perform_attendance_action(user_id, action_type, actor_id=None, source_label=
         return False, override_block_message, user
 
     if action_key == "time_in":
+        action_timestamp = now_str()
+        action_work_date = action_timestamp[:10]
         if attendance and attendance["time_in"] and not attendance["time_out"]:
             return False, "Employee is already timed in.", user
 
+        time_in_details = resolve_attendance_time_in_details(
+            user_row=user,
+            actual_time_in=action_timestamp,
+            work_date=action_work_date,
+        )
+        recorded_time_in = time_in_details["recorded_time_in"] or action_timestamp
+        policy_note = describe_tardiness_policy_adjustment(time_in_details)
+
         execute_db("""
             INSERT INTO attendance (
-                user_id, work_date, time_in, time_out, status, proof_file, notes,
-                late_flag, late_minutes, created_at, updated_at
+                user_id, work_date, time_in, actual_time_in, time_out, status, proof_file, notes,
+                late_flag, late_minutes, effective_break_limit_minutes, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             user_id,
-            today_str(),
-            now_str(),
+            action_work_date,
+            recorded_time_in,
+            action_timestamp,
             None,
             "Timed In",
             None,
             f"{source_label} action",
-            *calculate_late_info(now_str(), parse_shift_start(user["shift_start"] if user else DEFAULT_SHIFT_START)),
-            now_str(),
-            now_str()
+            time_in_details["late_flag"],
+            time_in_details["late_minutes"],
+            time_in_details["effective_break_limit_minutes"],
+            action_timestamp,
+            action_timestamp
         ), commit=True)
 
         latest_attendance = get_current_attendance(user_id)
-        shift_start = parse_shift_start(user["shift_start"] if user else DEFAULT_SHIFT_START)
         if latest_attendance and latest_attendance["late_flag"]:
+            late_message = (
+                f"You timed in late by {latest_attendance['late_minutes']} minute(s). "
+                f"Shift start: {time_in_details['shift_start']} ET."
+            )
+            if policy_note:
+                late_message = f"{late_message} {policy_note}"
             create_notification(
                 user_id,
                 "Late Time-In",
-                f"You timed in late by {latest_attendance['late_minutes']} minute(s). Shift start: {shift_start} ET."
+                late_message
             )
         else:
-            create_notification(user_id, "Timed In", f"You timed in at {now_str()} ET.")
+            create_notification(user_id, "Timed In", f"You timed in at {recorded_time_in} ET.")
         log_activity(actor_id or user_id, "KIOSK TIME IN", f"{source_label} time in for {user['full_name']}")
         invalidate_admin_employee_rows_cache()
-        return True, "Time in successful.", user
+        success_message = "Time in successful."
+        if policy_note:
+            success_message = f"{success_message} {policy_note}"
+        return True, success_message, user
 
     if action_key == "start_break":
+        action_timestamp = now_str()
         if not attendance or not attendance["time_in"] or attendance["time_out"]:
             return False, "Employee must be timed in first.", user
         if open_break:
             return False, "Employee is already on break.", user
 
-        break_limit_minutes = get_employee_break_limit(user)
+        break_limit_minutes = get_employee_break_limit(
+            attendance,
+            reference_datetime=attendance.get("time_in"),
+            reference_date=attendance.get("work_date"),
+        )
+        if break_limit_minutes <= 0:
+            return False, "Breaks are not allowed for this shift under the tardiness policy.", user
         used_break_minutes = total_break_minutes(attendance["id"])
         if used_break_minutes >= break_limit_minutes:
             return False, f"Daily break limit already used ({break_limit_minutes} minutes).", user
@@ -4056,19 +4159,20 @@ def perform_attendance_action(user_id, action_type, actor_id=None, source_label=
         execute_db("""
             INSERT INTO breaks (user_id, attendance_id, work_date, break_start, created_at)
             VALUES (?, ?, ?, ?, ?)
-        """, (user_id, attendance["id"], attendance["work_date"], now_str(), now_str()), commit=True)
+        """, (user_id, attendance["id"], attendance["work_date"], action_timestamp, action_timestamp), commit=True)
         execute_db("""
             UPDATE attendance
             SET status = ?, updated_at = ?
             WHERE id = ?
-        """, ("On Break", now_str(), attendance["id"]), commit=True)
+        """, ("On Break", action_timestamp, attendance["id"]), commit=True)
         remaining_break = max(break_limit_minutes - used_break_minutes, 0)
-        create_notification(user_id, "Break Started", f"You started break at {now_str()} ET. Remaining break allowance: {remaining_break} minute(s).")
+        create_notification(user_id, "Break Started", f"You started break at {action_timestamp} ET. Remaining break allowance: {remaining_break} minute(s).")
         log_activity(actor_id or user_id, "KIOSK BREAK START", f"{source_label} break start for {user['full_name']}")
         invalidate_admin_employee_rows_cache()
         return True, "Break started.", user
 
     if action_key == "end_break":
+        action_timestamp = now_str()
         if not open_break:
             return False, "No active break found.", user
 
@@ -4076,18 +4180,22 @@ def perform_attendance_action(user_id, action_type, actor_id=None, source_label=
             UPDATE breaks
             SET break_end = ?
             WHERE id = ?
-        """, (now_str(), open_break["id"]), commit=True)
+        """, (action_timestamp, open_break["id"]), commit=True)
 
         if attendance:
             execute_db("""
                 UPDATE attendance
                 SET status = ?, updated_at = ?
                 WHERE id = ?
-            """, ("Timed In", now_str(), attendance["id"]), commit=True)
+            """, ("Timed In", action_timestamp, attendance["id"]), commit=True)
 
         total_break = total_break_minutes(attendance["id"]) if attendance else 0
-        break_limit_minutes = get_employee_break_limit(user)
-        create_notification(user_id, "Break Ended", f"You ended break at {now_str()} ET.")
+        break_limit_minutes = get_employee_break_limit(
+            attendance,
+            reference_datetime=attendance.get("time_in") if attendance else None,
+            reference_date=attendance.get("work_date") if attendance else "",
+        )
+        create_notification(user_id, "Break Ended", f"You ended break at {action_timestamp} ET.")
         if attendance and is_overbreak(total_break, break_limit_minutes):
             create_notification(
                 user_id,
@@ -4099,6 +4207,7 @@ def perform_attendance_action(user_id, action_type, actor_id=None, source_label=
         return True, "Break ended.", user
 
     if action_key == "time_out":
+        action_timestamp = now_str()
         if not attendance or not attendance["time_in"]:
             return False, "Employee is not timed in.", user
         if attendance["time_out"]:
@@ -4114,19 +4223,23 @@ def perform_attendance_action(user_id, action_type, actor_id=None, source_label=
                 UPDATE breaks
                 SET break_end = ?
                 WHERE id = ?
-            """, (now_str(), open_break["id"]), commit=True)
+            """, (action_timestamp, open_break["id"]), commit=True)
 
         execute_db("""
             UPDATE attendance
             SET time_out = ?, status = ?, updated_at = ?
             WHERE id = ?
-        """, (now_str(), "Timed Out", now_str(), attendance["id"]), commit=True)
+        """, (action_timestamp, "Timed Out", action_timestamp, attendance["id"]), commit=True)
 
         updated_attendance = get_attendance_by_id(attendance["id"])
         total_break = total_break_minutes(attendance["id"]) if attendance else 0
-        break_limit_minutes = get_employee_break_limit(user)
+        break_limit_minutes = get_employee_break_limit(
+            updated_attendance,
+            reference_datetime=updated_attendance.get("time_in") if updated_attendance else None,
+            reference_date=updated_attendance.get("work_date") if updated_attendance else "",
+        )
         ok, msg = append_attendance_to_google_sheet(user, updated_attendance)
-        create_notification(user_id, "Timed Out", f"You timed out at {now_str()} ET.")
+        create_notification(user_id, "Timed Out", f"You timed out at {action_timestamp} ET.")
         if attendance and is_overbreak(total_break, break_limit_minutes):
             create_notification(
                 user_id,
@@ -4171,6 +4284,7 @@ def perform_attendance_action(user_id, action_type, actor_id=None, source_label=
         if now_dt().replace(tzinfo=None) < shift_end_naive:
             return False, "Overtime can only start after the regular shift ends.", user
 
+        action_timestamp = now_str()
         try:
             execute_db("""
                 INSERT INTO overtime_sessions (user_id, attendance_id, work_date, overtime_start, created_at)
@@ -4180,7 +4294,7 @@ def perform_attendance_action(user_id, action_type, actor_id=None, source_label=
                 latest_reference["id"],
                 overtime_start_dt.strftime("%Y-%m-%d"),
                 overtime_start_dt.strftime("%Y-%m-%d %H:%M:%S"),
-                now_str()
+                action_timestamp
             ), commit=True)
         except sqlite3.IntegrityError:
             return False, "Employee already has an active overtime session.", user
@@ -4203,6 +4317,7 @@ def perform_attendance_action(user_id, action_type, actor_id=None, source_label=
         return True, "Overtime started.", user
 
     if action_key == "overtime_end":
+        action_timestamp = now_str()
         open_overtime = get_open_overtime_session(user_id, actor_id=actor_id, source_label=source_label)
         if not open_overtime:
             return False, "No active overtime session found.", user
@@ -4211,10 +4326,10 @@ def perform_attendance_action(user_id, action_type, actor_id=None, source_label=
             UPDATE overtime_sessions
             SET overtime_end = ?
             WHERE id = ?
-        """, (now_str(), open_overtime["id"]), commit=True)
+        """, (action_timestamp, open_overtime["id"]), commit=True)
         closed_session = get_overtime_session_by_id(open_overtime["id"])
         overtime_minutes = overtime_minutes_for_session(closed_session)
-        create_notification(user_id, "Overtime Ended", f"Overtime ended at {now_str()} ET.")
+        create_notification(user_id, "Overtime Ended", f"Overtime ended at {action_timestamp} ET.")
         log_activity(actor_id or user_id, "KIOSK OVERTIME END", f"{source_label} overtime end for {user['full_name']} ({minutes_to_hm(overtime_minutes)})", target_user_id=user_id)
         invalidate_admin_employee_rows_cache()
         return True, "Overtime ended.", user
@@ -4538,23 +4653,7 @@ def get_matching_attendance_context_for_request(user_id, work_date, request_type
 
 
 def calculate_late_info(time_in_str, shift_start):
-    if not time_in_str:
-        return 0, 0
-
-    shift_start = parse_shift_start(shift_start)
-    time_in_dt = datetime.strptime(time_in_str, "%Y-%m-%d %H:%M:%S")
-    shift_dt = datetime.strptime(
-        f"{time_in_dt.strftime('%Y-%m-%d')} {shift_start}:00",
-        "%Y-%m-%d %H:%M:%S"
-    )
-
-    late_threshold = shift_dt + timedelta(minutes=LATE_GRACE_MINUTES)
-
-    if time_in_dt >= late_threshold:
-        late_minutes = int((time_in_dt - shift_dt).total_seconds() // 60)
-        return 1, late_minutes
-
-    return 0, 0
+    return core_calculate_late_info(time_in_str, shift_start)
 
 
 def total_break_minutes(attendance_id, include_open=False):
@@ -4643,10 +4742,10 @@ def record_external_backup_marker(note="", actor_id=None):
         INSERT INTO company_settings (
             id, id_signatory_name, id_signatory_title, id_signature_file,
             scanner_attendance_mode, scanner_lock_timeout_seconds, scanner_exit_pin_hash,
-            overtime_multiplier, last_external_backup_at, last_external_backup_by,
+            overtime_multiplier, tardiness_policy_enabled, last_external_backup_at, last_external_backup_by,
             last_external_backup_note
         )
-        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             last_external_backup_at = excluded.last_external_backup_at,
             last_external_backup_by = excluded.last_external_backup_by,
@@ -4659,6 +4758,11 @@ def record_external_backup_marker(note="", actor_id=None):
         int(settings.get("scanner_lock_timeout_seconds") or 90),
         settings.get("scanner_exit_pin_hash"),
         float(settings.get("overtime_multiplier") or 1.25),
+        int(
+            settings.get("tardiness_policy_enabled")
+            if settings.get("tardiness_policy_enabled") is not None
+            else TARDINESS_POLICY_ENABLED_DEFAULT
+        ),
         backup_at,
         actor_id,
         backup_note,
@@ -5089,6 +5193,9 @@ def get_employee_break_limit(user_row, reference_datetime=None, reference_date="
     if not hasattr(user_row, "get") and hasattr(user_row, "keys"):
         user_row = dict(user_row)
 
+    if hasattr(user_row, "get") and user_row.get("effective_break_limit_minutes") is not None:
+        return get_effective_break_limit_minutes(user_row, BREAK_LIMIT_MINUTES)
+
     effective_user = user_row
     if hasattr(user_row, "get"):
         lookup_user_id = user_row.get("user_id") or (user_row.get("id") if user_row.get("role") == "employee" else None)
@@ -5099,7 +5206,10 @@ def get_employee_break_limit(user_row, reference_datetime=None, reference_date="
                 reference_datetime=reference_datetime or user_row.get("time_in") or user_row.get("created_at"),
                 reference_date=reference_date or user_row.get("work_date") or today_str()
             ) or user_row
-    return parse_break_limit_minutes(effective_user["break_limit_minutes"])
+    return get_effective_break_limit_minutes(
+        effective_user,
+        effective_user["break_limit_minutes"] if effective_user.get("break_limit_minutes") is not None else BREAK_LIMIT_MINUTES
+    )
 
 
 def save_uploaded_file(file_obj, prefix="file", allowed_exts=None):
@@ -7586,7 +7696,11 @@ def dashboard():
     todays_break_minutes = total_break_minutes(today_attendance["id"], include_open=True) if today_attendance else 0
     todays_work_minutes = total_work_minutes(today_attendance) if today_attendance else 0
     todays_break_sessions = build_break_sessions(today_attendance["id"]) if today_attendance else []
-    break_limit_minutes = get_employee_break_limit(user)
+    break_limit_minutes = get_employee_break_limit(
+        today_attendance or user,
+        reference_datetime=today_attendance.get("time_in") if today_attendance else None,
+        reference_date=today_attendance.get("work_date") if today_attendance else today_str(),
+    )
     over_break_minutes = get_overbreak_minutes(todays_break_minutes, break_limit_minutes)
     leave_summary = get_leave_balance_summary(user)
     error_record_summary = get_employee_error_record_summary(user["id"])
@@ -7657,26 +7771,6 @@ def employee_activity():
     return render_template("employee_activity.html", user=user, logs=logs)
 
 
-def get_unread_notification_count(user_id):
-    unread = fetchone("""
-        SELECT COUNT(*) AS cnt
-        FROM notifications
-        WHERE user_id = ? AND is_read = 0
-    """, (user_id,))
-    return int(unread["cnt"] or 0) if unread else 0
-
-
-def get_latest_notifications(user_id, limit=6):
-    safe_limit = max(1, int(limit or 6))
-    return fetchall("""
-        SELECT *
-        FROM notifications
-        WHERE user_id = ?
-        ORDER BY id DESC
-        LIMIT ?
-    """, (user_id, safe_limit))
-
-
 @app.route("/notifications")
 @login_required()
 def notifications_page():
@@ -7694,19 +7788,11 @@ def notifications_page():
 @login_required()
 def notifications_preview():
     unread_count = get_unread_notification_count(session["user_id"])
-    preview_rows = []
-    for row in get_latest_notifications(session["user_id"], limit=6):
-        item = dict(row)
-        preview_rows.append({
-            "title": item.get("title") or "",
-            "message": item.get("message") or "",
-            "is_unread": int(item.get("is_read") or 0) == 0,
-            "created_display": format_datetime_12h(item.get("created_at")),
-        })
-    return jsonify({
-        "unread_count": unread_count,
-        "items": preview_rows,
-    })
+    preview_rows = build_notification_preview_rows(
+        get_latest_notifications(session["user_id"], limit=6),
+        format_datetime_12h,
+    )
+    return jsonify({"unread_count": unread_count, "items": preview_rows})
 
 
 @app.route("/history")
@@ -8092,6 +8178,7 @@ def admin_profile():
                 flash("Your admin account cannot change attendance settings.", "danger")
                 return redirect(url_for("admin_profile"))
             scanner_attendance_mode = 1 if request.form.get("scanner_attendance_mode") == "1" else 0
+            tardiness_policy_enabled = 1 if request.form.get("tardiness_policy_enabled") == "1" else 0
             scanner_lock_timeout_seconds = parse_positive_int(request.form.get("scanner_lock_timeout_seconds", "90"), 90)
             scanner_lock_timeout_seconds = max(min(scanner_lock_timeout_seconds, 900), 15)
             overtime_multiplier_raw = (request.form.get("overtime_multiplier", "") or "").strip()
@@ -8116,9 +8203,10 @@ def admin_profile():
             execute_db("""
                 INSERT INTO company_settings (
                     id, id_signatory_name, id_signatory_title, id_signature_file,
-                    scanner_attendance_mode, scanner_lock_timeout_seconds, scanner_exit_pin_hash, overtime_multiplier
+                    scanner_attendance_mode, scanner_lock_timeout_seconds, scanner_exit_pin_hash, overtime_multiplier,
+                    tardiness_policy_enabled
                 )
-                VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     id_signatory_name = excluded.id_signatory_name,
                     id_signatory_title = excluded.id_signatory_title,
@@ -8126,7 +8214,8 @@ def admin_profile():
                     scanner_attendance_mode = excluded.scanner_attendance_mode,
                     scanner_lock_timeout_seconds = excluded.scanner_lock_timeout_seconds,
                     scanner_exit_pin_hash = excluded.scanner_exit_pin_hash,
-                    overtime_multiplier = excluded.overtime_multiplier
+                    overtime_multiplier = excluded.overtime_multiplier,
+                    tardiness_policy_enabled = excluded.tardiness_policy_enabled
             """, (
                 current_settings.get("id_signatory_name") or "Kirk Danny Fernandez",
                 current_settings.get("id_signatory_title") or "Head Of Operations",
@@ -8134,9 +8223,16 @@ def admin_profile():
                 scanner_attendance_mode,
                 scanner_lock_timeout_seconds,
                 scanner_exit_pin_hash,
-                overtime_multiplier
+                overtime_multiplier,
+                tardiness_policy_enabled,
             ), commit=True)
-            log_activity(session["user_id"], "UPDATE ATTENDANCE SETTINGS", f"Scanner mode {'enabled' if scanner_attendance_mode else 'disabled'}, kiosk timeout {scanner_lock_timeout_seconds}s, overtime multiplier {overtime_multiplier:.2f}x")
+            log_activity(
+                session["user_id"],
+                "UPDATE ATTENDANCE SETTINGS",
+                f"Scanner mode {'enabled' if scanner_attendance_mode else 'disabled'}, "
+                f"tardiness policy {'enabled' if tardiness_policy_enabled else 'disabled'}, "
+                f"kiosk timeout {scanner_lock_timeout_seconds}s, overtime multiplier {overtime_multiplier:.2f}x"
+            )
             flash("Attendance and kiosk settings updated.", "success")
             return redirect(url_for("admin_profile"))
 
@@ -8337,40 +8433,61 @@ def time_in():
             flash("Invalid upload file type.", "danger")
             return redirect(url_for("dashboard"))
 
+    action_timestamp = now_str()
+    action_work_date = action_timestamp[:10]
+    time_in_details = resolve_attendance_time_in_details(
+        user_row=user,
+        actual_time_in=action_timestamp,
+        work_date=action_work_date,
+    )
+    recorded_time_in = time_in_details["recorded_time_in"] or action_timestamp
+    policy_note = describe_tardiness_policy_adjustment(time_in_details)
+
     execute_db("""
         INSERT INTO attendance (
-            user_id, work_date, time_in, time_out, status, proof_file, notes,
-            late_flag, late_minutes, created_at, updated_at
+            user_id, work_date, time_in, actual_time_in, time_out, status, proof_file, notes,
+            late_flag, late_minutes, effective_break_limit_minutes, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         user_id,
-        today_str(),
-        now_str(),
+        action_work_date,
+        recorded_time_in,
+        action_timestamp,
         None,
         "Timed In",
         proof_filename,
         request.form.get("notes", "").strip(),
-        *calculate_late_info(now_str(), parse_shift_start(user["shift_start"] if user else DEFAULT_SHIFT_START)),
-        now_str(),
-        now_str()
+        time_in_details["late_flag"],
+        time_in_details["late_minutes"],
+        time_in_details["effective_break_limit_minutes"],
+        action_timestamp,
+        action_timestamp
     ), commit=True)
 
-    shift_start = parse_shift_start(user["shift_start"] if user else DEFAULT_SHIFT_START)
     latest_attendance = get_current_attendance(user_id)
 
     if latest_attendance and latest_attendance["late_flag"]:
+        late_message = (
+            f"You timed in late by {latest_attendance['late_minutes']} minute(s). "
+            f"Shift start: {time_in_details['shift_start']} ET."
+        )
+        if policy_note:
+            late_message = f"{late_message} {policy_note}"
         create_notification(
             user_id,
             "Late Time-In",
-            f"You timed in late by {latest_attendance['late_minutes']} minute(s). Shift start: {shift_start} ET."
+            late_message
         )
     else:
-        create_notification(user_id, "Timed In", f"You timed in at {now_str()} ET.")
+        create_notification(user_id, "Timed In", f"You timed in at {recorded_time_in} ET.")
 
-    log_activity(user_id, "TIME IN", f"Employee timed in. Shift: {shift_start}")
+    log_activity(user_id, "TIME IN", f"Employee timed in. Shift: {time_in_details['shift_start']}")
     invalidate_admin_employee_rows_cache()
-    flash("Time in successful.", "success")
+    success_message = "Time in successful."
+    if policy_note:
+        success_message = f"{success_message} {policy_note}"
+    flash(success_message, "success")
     return redirect(url_for("dashboard"))
 
 
@@ -8399,25 +8516,33 @@ def start_break():
         flash("You are already on break.", "warning")
         return redirect(url_for("dashboard"))
 
-    break_limit_minutes = get_employee_break_limit(user)
+    break_limit_minutes = get_employee_break_limit(
+        attendance,
+        reference_datetime=attendance.get("time_in"),
+        reference_date=attendance.get("work_date"),
+    )
+    if break_limit_minutes <= 0:
+        flash("Breaks are not allowed for this shift under the tardiness policy.", "warning")
+        return redirect(url_for("dashboard"))
     used_break_minutes = total_break_minutes(attendance["id"])
     if used_break_minutes >= break_limit_minutes:
         flash(f"Your daily break limit of {break_limit_minutes} minutes has already been used.", "warning")
         return redirect(url_for("dashboard"))
 
+    action_timestamp = now_str()
     execute_db("""
         INSERT INTO breaks (user_id, attendance_id, work_date, break_start, created_at)
         VALUES (?, ?, ?, ?, ?)
-    """, (user_id, attendance["id"], attendance["work_date"], now_str(), now_str()), commit=True)
+    """, (user_id, attendance["id"], attendance["work_date"], action_timestamp, action_timestamp), commit=True)
 
     execute_db("""
         UPDATE attendance
         SET status = ?, updated_at = ?
         WHERE id = ?
-    """, ("On Break", now_str(), attendance["id"]), commit=True)
+    """, ("On Break", action_timestamp, attendance["id"]), commit=True)
 
     remaining_break = max(break_limit_minutes - used_break_minutes, 0)
-    create_notification(user_id, "Break Started", f"You started break at {now_str()} ET. Remaining break allowance: {remaining_break} minute(s).")
+    create_notification(user_id, "Break Started", f"You started break at {action_timestamp} ET. Remaining break allowance: {remaining_break} minute(s).")
     log_activity(user_id, "BREAK START", "Employee started break")
     invalidate_admin_employee_rows_cache()
     flash("Break started.", "info")
@@ -8445,23 +8570,28 @@ def end_break():
         flash("No active break found.", "warning")
         return redirect(url_for("dashboard"))
 
+    action_timestamp = now_str()
     execute_db("""
         UPDATE breaks
         SET break_end = ?
         WHERE id = ?
-    """, (now_str(), open_break["id"]), commit=True)
+    """, (action_timestamp, open_break["id"]), commit=True)
 
     if attendance:
         execute_db("""
             UPDATE attendance
             SET status = ?, updated_at = ?
             WHERE id = ?
-    """, ("Timed In", now_str(), attendance["id"]), commit=True)
+    """, ("Timed In", action_timestamp, attendance["id"]), commit=True)
 
-    create_notification(user_id, "Break Ended", f"You ended break at {now_str()} ET.")
+    create_notification(user_id, "Break Ended", f"You ended break at {action_timestamp} ET.")
     if attendance:
         total_break = total_break_minutes(attendance["id"])
-        break_limit_minutes = get_employee_break_limit(user)
+        break_limit_minutes = get_employee_break_limit(
+            attendance,
+            reference_datetime=attendance.get("time_in"),
+            reference_date=attendance.get("work_date"),
+        )
         if is_overbreak(total_break, break_limit_minutes):
             create_notification(
                 user_id,
@@ -8499,26 +8629,31 @@ def time_out():
         return redirect(url_for("dashboard"))
 
     open_break = get_open_break(user_id, attendance)
+    action_timestamp = now_str()
     if open_break:
         execute_db("""
             UPDATE breaks
             SET break_end = ?
             WHERE id = ?
-        """, (now_str(), open_break["id"]), commit=True)
+        """, (action_timestamp, open_break["id"]), commit=True)
 
     execute_db("""
         UPDATE attendance
         SET time_out = ?, status = ?, updated_at = ?
         WHERE id = ?
-    """, (now_str(), "Timed Out", now_str(), attendance["id"]), commit=True)
+    """, (action_timestamp, "Timed Out", action_timestamp, attendance["id"]), commit=True)
 
     total_break = total_break_minutes(attendance["id"])
-    break_limit_minutes = get_employee_break_limit(user)
     user_row = get_user_by_id(user_id)
     updated_attendance = get_attendance_by_id(attendance["id"])
+    break_limit_minutes = get_employee_break_limit(
+        updated_attendance,
+        reference_datetime=updated_attendance.get("time_in") if updated_attendance else None,
+        reference_date=updated_attendance.get("work_date") if updated_attendance else "",
+    )
     ok, msg = append_attendance_to_google_sheet(user_row, updated_attendance)
 
-    create_notification(user_id, "Timed Out", f"You timed out at {now_str()} ET.")
+    create_notification(user_id, "Timed Out", f"You timed out at {action_timestamp} ET.")
     if attendance and is_overbreak(total_break, break_limit_minutes):
         create_notification(
             user_id,
@@ -8847,7 +8982,11 @@ def build_admin_employee_rows_snapshot():
             "break_window_start": display_user["break_window_start"] or DEFAULT_BREAK_WINDOW_START,
             "break_window_end": display_user["break_window_end"] or DEFAULT_BREAK_WINDOW_END,
             "schedule_window_summary": f"{display_user['shift_start'] or DEFAULT_SHIFT_START} - {display_user['shift_end'] or DEFAULT_SHIFT_END}",
-            "break_limit_minutes": parse_break_limit_minutes(display_user.get("break_limit_minutes") if hasattr(display_user, "get") else display_user["break_limit_minutes"]),
+            "break_limit_minutes": get_employee_break_limit(
+                attendance or display_user,
+                reference_datetime=attendance.get("time_in") if attendance else None,
+                reference_date=attendance.get("work_date") if attendance else today_str(),
+            ),
             "profile_image": display_user["profile_image"],
             "profile_image_available": 1 if cached_file_exists(display_user["profile_image"]) else 0,
             "is_active": user["is_active"],
@@ -9081,27 +9220,39 @@ def update_attendance_record_by_admin(attendance_id, time_in_value="", time_out_
     if final_time_in and final_time_out and final_time_out < final_time_in:
         raise ValueError("Time out cannot be earlier than time in.")
 
-    late_flag, late_minutes = calculate_late_info(final_time_in, parse_shift_start(effective_user["shift_start"] if effective_user else DEFAULT_SHIFT_START))
+    time_in_details = resolve_attendance_time_in_details(
+        user_row=effective_user or user,
+        actual_time_in=final_time_in,
+        work_date=attendance["work_date"],
+    )
+    recorded_time_in = time_in_details["recorded_time_in"] if final_time_in else None
+    late_flag = time_in_details["late_flag"]
+    late_minutes = time_in_details["late_minutes"]
+    effective_break_limit_minutes = time_in_details["effective_break_limit_minutes"]
+    if recorded_time_in and final_time_out and final_time_out < recorded_time_in:
+        raise ValueError("Time out cannot be earlier than the tardiness-adjusted time in.")
     open_break = get_open_break_for_attendance(attendance_id)
     if final_time_out:
         final_status = "Timed Out"
     elif open_break:
         final_status = "On Break"
-    elif final_time_in:
+    elif recorded_time_in:
         final_status = "Timed In"
     else:
         final_status = "Offline"
 
     execute_db("""
         UPDATE attendance
-        SET time_in = ?, time_out = ?, status = ?, late_flag = ?, late_minutes = ?, updated_at = ?
+        SET time_in = ?, actual_time_in = ?, time_out = ?, status = ?, late_flag = ?, late_minutes = ?, effective_break_limit_minutes = ?, updated_at = ?
         WHERE id = ?
     """, (
+        recorded_time_in,
         final_time_in,
         final_time_out,
         final_status,
         late_flag,
         late_minutes,
+        effective_break_limit_minutes,
         now_str(),
         attendance_id
     ), commit=True)
@@ -9328,7 +9479,13 @@ def enrich_history_record(row, break_limit_minutes, employee_row=None):
     row = dict(row)
     record_type = row.get("request_type") or "Attendance"
     is_attendance = row.get("source_type", "attendance") == "attendance"
-    if employee_row:
+    if is_attendance and row.get("effective_break_limit_minutes") is not None:
+        break_limit_minutes = get_employee_break_limit(
+            row,
+            reference_datetime=row.get("time_in") or row.get("created_at"),
+            reference_date=row.get("work_date")
+        )
+    elif employee_row:
         break_limit_minutes = get_employee_break_limit(
             employee_row,
             reference_datetime=row.get("time_in") or row.get("created_at"),
@@ -9906,13 +10063,25 @@ def apply_attendance_correction(user_id, work_date, time_in_value="", break_star
         reference_datetime=final_time_in or normalize_history_reference(reference_date=target_work_date),
         reference_date=target_work_date
     )
-    late_flag, late_minutes = calculate_late_info(final_time_in, parse_shift_start(effective_user["shift_start"] if effective_user else DEFAULT_SHIFT_START))
+    time_in_details = resolve_attendance_time_in_details(
+        user_row=effective_user or user,
+        actual_time_in=final_time_in,
+        work_date=target_work_date,
+    )
+    recorded_time_in = time_in_details["recorded_time_in"] if final_time_in else None
+    late_flag = time_in_details["late_flag"]
+    late_minutes = time_in_details["late_minutes"]
+    effective_break_limit_minutes = time_in_details["effective_break_limit_minutes"]
+    if recorded_time_in and final_time_out and final_time_out < recorded_time_in:
+        raise ValueError("Time out cannot be earlier than the tardiness-adjusted time in.")
+    if final_break_start and recorded_time_in and final_break_start < recorded_time_in:
+        raise ValueError("Break start cannot be earlier than the tardiness-adjusted time in.")
 
     if final_time_out:
         final_status = "Timed Out"
     elif final_break_start and not final_break_end:
         final_status = "On Break"
-    elif final_time_in:
+    elif recorded_time_in:
         final_status = "Timed In"
     else:
         final_status = "Offline"
@@ -9920,27 +10089,30 @@ def apply_attendance_correction(user_id, work_date, time_in_value="", break_star
     if attendance:
         execute_db("""
             UPDATE attendance
-            SET time_in = ?, time_out = ?, status = ?, late_flag = ?, late_minutes = ?, updated_at = ?
+            SET time_in = ?, actual_time_in = ?, time_out = ?, status = ?, late_flag = ?, late_minutes = ?, effective_break_limit_minutes = ?, updated_at = ?
             WHERE id = ?
         """, (
+            recorded_time_in,
             final_time_in,
             final_time_out,
             final_status,
             late_flag,
             late_minutes,
+            effective_break_limit_minutes,
             now_str(),
             attendance["id"]
         ), commit=True)
     elif final_time_in or final_time_out or final_break_start or final_break_end:
         execute_db("""
             INSERT INTO attendance (
-                user_id, work_date, time_in, time_out, status, proof_file, notes,
-                late_flag, late_minutes, created_at, updated_at
+                user_id, work_date, time_in, actual_time_in, time_out, status, proof_file, notes,
+                late_flag, late_minutes, effective_break_limit_minutes, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             user_id,
             target_work_date,
+            recorded_time_in,
             final_time_in,
             final_time_out,
             final_status,
@@ -9948,6 +10120,7 @@ def apply_attendance_correction(user_id, work_date, time_in_value="", break_star
             "Updated through correction request",
             late_flag,
             late_minutes,
+            effective_break_limit_minutes,
             now_str(),
             now_str()
         ), commit=True)

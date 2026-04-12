@@ -6,6 +6,14 @@ from attendance_core.config import (
     DEFAULT_SCHEDULE_DAYS,
     DEFAULT_SHIFT_END,
     DEFAULT_SHIFT_START,
+    LATE_GRACE_MINUTES,
+    TARDINESS_POLICY_STEP_ONE_BREAK_DEDUCTION_MINUTES,
+    TARDINESS_POLICY_STEP_ONE_MAX_MINUTES,
+    TARDINESS_POLICY_STEP_ONE_SHIFT_DEDUCTION_MINUTES,
+    TARDINESS_POLICY_STEP_THREE_MAX_MINUTES,
+    TARDINESS_POLICY_STEP_THREE_SHIFT_DEDUCTION_MINUTES,
+    TARDINESS_POLICY_STEP_TWO_MAX_MINUTES,
+    TARDINESS_POLICY_STEP_TWO_SHIFT_DEDUCTION_MINUTES,
     WEEKDAY_OPTIONS,
 )
 
@@ -135,6 +143,14 @@ def parse_break_limit_minutes(value):
         return BREAK_LIMIT_MINUTES
 
 
+def parse_non_negative_minutes(value, fallback=0):
+    try:
+        minutes = int(str(value).strip())
+        return minutes if minutes >= 0 else fallback
+    except Exception:
+        return fallback
+
+
 def normalize_optional_clock_time(value):
     raw_value = (value or "").strip()
     if not raw_value:
@@ -152,6 +168,90 @@ def parse_db_datetime(datetime_str):
         return datetime.strptime(datetime_str, "%Y-%m-%d %H:%M:%S")
     except Exception:
         return None
+
+
+def calculate_late_info(time_in_str, shift_start):
+    if not time_in_str:
+        return 0, 0
+
+    shift_start = parse_shift_start(shift_start)
+    time_in_dt = datetime.strptime(time_in_str, "%Y-%m-%d %H:%M:%S")
+    shift_dt = datetime.strptime(
+        f"{time_in_dt.strftime('%Y-%m-%d')} {shift_start}:00",
+        "%Y-%m-%d %H:%M:%S"
+    )
+    late_threshold = shift_dt + timedelta(minutes=LATE_GRACE_MINUTES)
+
+    if time_in_dt >= late_threshold:
+        late_minutes = int((time_in_dt - shift_dt).total_seconds() // 60)
+        return 1, late_minutes
+
+    return 0, 0
+
+
+def get_effective_break_limit_minutes(record_row=None, fallback_break_limit_minutes=BREAK_LIMIT_MINUTES):
+    fallback_limit = parse_non_negative_minutes(fallback_break_limit_minutes, fallback=BREAK_LIMIT_MINUTES)
+    if record_row and hasattr(record_row, "get"):
+        override_limit = record_row.get("effective_break_limit_minutes")
+        if override_limit is not None:
+            return parse_non_negative_minutes(override_limit, fallback=fallback_limit)
+    return fallback_limit
+
+
+def get_tardiness_policy_adjustment(
+    time_in_str,
+    shift_start,
+    base_break_limit_minutes=BREAK_LIMIT_MINUTES,
+    policy_enabled=False,
+):
+    base_break_limit = parse_non_negative_minutes(base_break_limit_minutes, fallback=BREAK_LIMIT_MINUTES)
+    late_flag, late_minutes = calculate_late_info(time_in_str, shift_start)
+    result = {
+        "actual_time_in": time_in_str,
+        "recorded_time_in": time_in_str,
+        "late_flag": late_flag,
+        "late_minutes": late_minutes,
+        "effective_break_limit_minutes": base_break_limit,
+        "policy_applied": 0,
+        "policy_deduction_minutes": 0,
+        "no_breaks_allowed": 0,
+    }
+    if not policy_enabled or not late_flag or not time_in_str:
+        return result
+
+    time_in_dt = datetime.strptime(time_in_str, "%Y-%m-%d %H:%M:%S")
+    shift_dt = datetime.strptime(
+        f"{time_in_dt.strftime('%Y-%m-%d')} {parse_shift_start(shift_start)}:00",
+        "%Y-%m-%d %H:%M:%S"
+    )
+
+    if late_minutes <= TARDINESS_POLICY_STEP_ONE_MAX_MINUTES:
+        minimum_recorded_dt = shift_dt + timedelta(minutes=TARDINESS_POLICY_STEP_ONE_SHIFT_DEDUCTION_MINUTES)
+        effective_break_limit_minutes = max(
+            base_break_limit - TARDINESS_POLICY_STEP_ONE_BREAK_DEDUCTION_MINUTES,
+            0,
+        )
+        no_breaks_allowed = 0
+    elif late_minutes <= TARDINESS_POLICY_STEP_TWO_MAX_MINUTES:
+        minimum_recorded_dt = shift_dt + timedelta(minutes=TARDINESS_POLICY_STEP_TWO_SHIFT_DEDUCTION_MINUTES)
+        effective_break_limit_minutes = 0
+        no_breaks_allowed = 1
+    elif late_minutes <= TARDINESS_POLICY_STEP_THREE_MAX_MINUTES:
+        minimum_recorded_dt = shift_dt + timedelta(minutes=TARDINESS_POLICY_STEP_THREE_SHIFT_DEDUCTION_MINUTES)
+        effective_break_limit_minutes = 0
+        no_breaks_allowed = 1
+    else:
+        minimum_recorded_dt = shift_dt + timedelta(minutes=TARDINESS_POLICY_STEP_THREE_SHIFT_DEDUCTION_MINUTES)
+        effective_break_limit_minutes = 0
+        no_breaks_allowed = 1
+
+    recorded_dt = max(time_in_dt, minimum_recorded_dt)
+    result["recorded_time_in"] = recorded_dt.strftime("%Y-%m-%d %H:%M:%S")
+    result["effective_break_limit_minutes"] = effective_break_limit_minutes
+    result["policy_applied"] = 1 if result["recorded_time_in"] != time_in_str or effective_break_limit_minutes != base_break_limit else 0
+    result["policy_deduction_minutes"] = max(int((recorded_dt - shift_dt).total_seconds() // 60), 0)
+    result["no_breaks_allowed"] = no_breaks_allowed
+    return result
 
 
 def combine_work_date_and_time(work_date, clock_time, not_before=None):
@@ -178,7 +278,8 @@ def extract_clock_time(value):
 
 
 def get_overbreak_minutes(break_minutes, break_limit_minutes=BREAK_LIMIT_MINUTES):
-    return max(break_minutes - parse_break_limit_minutes(break_limit_minutes), 0)
+    limit_minutes = parse_non_negative_minutes(break_limit_minutes, fallback=BREAK_LIMIT_MINUTES)
+    return max(parse_non_negative_minutes(break_minutes, fallback=0) - limit_minutes, 0)
 
 
 def is_overbreak(break_minutes, break_limit_minutes=BREAK_LIMIT_MINUTES):
