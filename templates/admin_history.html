@@ -137,7 +137,7 @@
                             {% if item.row.proof_file %}
                                 {% if is_image(item.row.proof_file) %}
                                     <a href="{{ url_for('uploaded_file', filename=item.row.proof_file) }}" target="_blank">
-                                        <img src="{{ url_for('uploaded_file', filename=item.row.proof_file) }}" class="proof-preview" style="width:58px;height:58px;border-radius:12px;">
+                                        <img src="{{ url_for('uploaded_file', filename=item.row.proof_file) }}" class="proof-preview" style="width:58px;height:58px;border-radius:12px;" loading="lazy" decoding="async">
                                     </a>
                                 {% else %}
                                     <a href="{{ url_for('uploaded_file', filename=item.row.proof_file) }}" target="_blank">View</a>

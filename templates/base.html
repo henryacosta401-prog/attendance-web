@@ -263,6 +263,8 @@
             border: 1px solid rgba(255,255,255,0.06);
             background: rgba(255,255,255,0.03);
             transition: 0.18s ease;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
         }
 
         .nav-menu-link:hover {
@@ -296,6 +298,8 @@
             font-weight: 700;
             color: #dbeafe;
             transition: 0.18s ease;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
         }
 
         .pill-link:hover {
@@ -557,6 +561,8 @@
             align-items: center;
             justify-content: center;
             gap: 8px;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
         }
 
         .btn:hover {
@@ -1765,20 +1771,32 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     }
 
-    document.querySelectorAll("form").forEach(function (form) {
-        form.addEventListener("submit", function () {
-            if (form.dataset.preserveScroll === "off") {
+    document.addEventListener("submit", function (event) {
+        const form = event.target;
+        if (!(form instanceof HTMLFormElement) || form.dataset.preserveScroll === "off") {
+            return;
+        }
+        const method = (form.getAttribute("method") || "get").toLowerCase();
+        if (method === "post" || form.dataset.preserveScroll === "on") {
+            storeScrollState(form, { mode: "path" });
+        }
+    }, true);
+
+    document.addEventListener("click", function (event) {
+        if (event.defaultPrevented) {
+            return;
+        }
+
+        const target = event.target;
+        if (!(target instanceof Element)) {
+            return;
+        }
+
+        const anchor = target.closest("a[href]");
+        if (anchor instanceof HTMLAnchorElement) {
+            if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
                 return;
             }
-            const method = (form.getAttribute("method") || "get").toLowerCase();
-            if (method === "post" || form.dataset.preserveScroll === "on") {
-                storeScrollState(form, { mode: "path" });
-            }
-        });
-    });
-
-    document.querySelectorAll("a[href]").forEach(function (anchor) {
-        anchor.addEventListener("click", function () {
             if (anchor.dataset.preserveScroll === "off") {
                 return;
             }
@@ -1800,14 +1818,113 @@ document.addEventListener("DOMContentLoaded", function () {
             if (anchor.dataset.preserveScroll === "on" || resolvedUrl.pathname === window.location.pathname) {
                 storeScrollState(anchor, { mode: "path" });
             }
-        });
-    });
+            return;
+        }
 
-    document.querySelectorAll("button[data-preserve-scroll][type='button']").forEach(function (element) {
-        element.addEventListener("click", function () {
-            storeScrollState(element, { mode: "path" });
+        const preserveScrollButton = target.closest("button[data-preserve-scroll][type='button']");
+        if (preserveScrollButton instanceof HTMLButtonElement) {
+            storeScrollState(preserveScrollButton, { mode: "path" });
+        }
+    }, true);
+});
+
+document.addEventListener("DOMContentLoaded", function () {
+    const navbar = document.querySelector(".navbar");
+    if (!navbar) {
+        return;
+    }
+
+    const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    const saveDataEnabled = connection && connection.saveData;
+    const slowNetwork = connection && typeof connection.effectiveType === "string" && /(^|-)2g$/i.test(connection.effectiveType);
+    if (saveDataEnabled || slowNetwork) {
+        return;
+    }
+
+    const prefetchProbe = document.createElement("link");
+    const supportsPrefetch = !!(prefetchProbe.relList && prefetchProbe.relList.supports && prefetchProbe.relList.supports("prefetch"));
+    const prefetchedUrls = new Set();
+
+    function resolvePrefetchUrl(rawHref) {
+        if (!rawHref) {
+            return null;
+        }
+
+        let resolvedUrl;
+        try {
+            resolvedUrl = new URL(rawHref, window.location.href);
+        } catch (error) {
+            return null;
+        }
+
+        if (resolvedUrl.origin !== window.location.origin) {
+            return null;
+        }
+        if (!/^https?:$/i.test(resolvedUrl.protocol)) {
+            return null;
+        }
+        if (
+            resolvedUrl.pathname === window.location.pathname &&
+            resolvedUrl.search === window.location.search
+        ) {
+            return null;
+        }
+        return resolvedUrl;
+    }
+
+    function warmNavigation(rawHref, strategy) {
+        const resolvedUrl = resolvePrefetchUrl(rawHref);
+        if (!resolvedUrl) {
+            return;
+        }
+
+        const cacheKey = `${resolvedUrl.pathname}${resolvedUrl.search}`;
+        if (prefetchedUrls.has(cacheKey)) {
+            return;
+        }
+        prefetchedUrls.add(cacheKey);
+
+        if (supportsPrefetch) {
+            const link = document.createElement("link");
+            link.rel = "prefetch";
+            link.as = "document";
+            link.href = resolvedUrl.href;
+            link.setAttribute("fetchpriority", "low");
+            document.head.appendChild(link);
+            return;
+        }
+
+        if (strategy !== "intent") {
+            return;
+        }
+
+        fetch(resolvedUrl.href, {
+            credentials: "same-origin",
+            headers: { "X-Prefetch": "1" }
+        }).catch(function () {
+            prefetchedUrls.delete(cacheKey);
         });
-    });
+    }
+
+    function handleWarmIntent(event) {
+        const target = event.target;
+        if (!(target instanceof Element)) {
+            return;
+        }
+        const anchor = target.closest("a[href]");
+        if (!(anchor instanceof HTMLAnchorElement) || !navbar.contains(anchor)) {
+            return;
+        }
+        if (!anchor.classList.contains("pill-link") && !anchor.classList.contains("nav-menu-link")) {
+            return;
+        }
+        warmNavigation(anchor.href, "intent");
+    }
+
+    navbar.addEventListener("mouseover", handleWarmIntent);
+    navbar.addEventListener("focusin", handleWarmIntent);
+    navbar.addEventListener("pointerdown", handleWarmIntent);
+    navbar.addEventListener("touchstart", handleWarmIntent, { passive: true });
 });
 
 document.addEventListener("DOMContentLoaded", function () {

@@ -415,7 +415,7 @@
                             <td>
                                 <div class="row-user">
                                     {% if emp.profile_image and uploaded_file_exists(emp.profile_image) %}
-                                        <img class="avatar" src="{{ url_for('uploaded_file', filename=emp.profile_image) }}" alt="avatar">
+                                        <img class="avatar" src="{{ url_for('uploaded_file', filename=emp.profile_image) }}" alt="avatar" loading="lazy" decoding="async">
                                     {% else %}
                                         <div class="avatar" style="display:inline-flex;align-items:center;justify-content:center;font-weight:800;background:rgba(148,163,184,0.18);color:#dbeafe;">{{ get_avatar_initials(emp.full_name) }}</div>
                                     {% endif %}
