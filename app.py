@@ -1,4 +1,5 @@
 import calendar
+import importlib
 import os
 import secrets
 import shutil
@@ -118,6 +119,11 @@ from attendance_core.date_ranges import (
     parse_iso_date,
     payroll_date_text,
 )
+from attendance_core.employee_ids import (
+    build_default_employee_code,
+    get_employee_card_number,
+    normalize_employee_code,
+)
 from attendance_core.formatters import (
     format_currency,
     minutes_to_decimal_hours,
@@ -170,12 +176,18 @@ except Exception:
 
 # Optional Cloudinary storage
 CLOUDINARY_SDK_ENABLED = False
+cloudinary = None
+cloudinary_uploader = None
 try:
-    import cloudinary
-    import cloudinary.uploader
-    CLOUDINARY_SDK_ENABLED = True
+    cloudinary_spec = importlib.util.find_spec("cloudinary")
+    cloudinary_uploader_spec = importlib.util.find_spec("cloudinary.uploader") if cloudinary_spec else None
+    if cloudinary_spec and cloudinary_uploader_spec:
+        cloudinary = importlib.import_module("cloudinary")
+        cloudinary_uploader = importlib.import_module("cloudinary.uploader")
+        CLOUDINARY_SDK_ENABLED = True
 except Exception:
     cloudinary = None
+    cloudinary_uploader = None
     CLOUDINARY_SDK_ENABLED = False
 
 app = Flask(__name__)
@@ -255,7 +267,7 @@ def destroy_cloudinary_asset(filename):
     if not asset or not cloudinary_storage_enabled():
         return
     try:
-        cloudinary.uploader.destroy(
+        cloudinary_uploader.destroy(
             asset["public_id"],
             resource_type=asset["resource_type"],
             invalidate=True,
@@ -276,7 +288,7 @@ def upload_file_to_cloudinary(file_obj, prefix, safe_name, ext):
     try:
         if hasattr(file_obj, "stream") and hasattr(file_obj.stream, "seek"):
             file_obj.stream.seek(0)
-        result = cloudinary.uploader.upload(
+        result = cloudinary_uploader.upload(
             file_obj,
             public_id=public_id,
             resource_type=resource_type,
@@ -479,8 +491,10 @@ def column_exists(table_name, column_name):
     return any(row[1] == column_name for row in rows)
 
 
-def cursor_has_duplicate_employee_barcodes(cursor, postgres=False):
-    trim_expr = "BTRIM(COALESCE(barcode_id, ''))" if postgres else "TRIM(COALESCE(barcode_id, ''))"
+def cursor_has_duplicate_employee_identifier_values(cursor, field_name, postgres=False):
+    if field_name not in {"barcode_id", "employee_code"}:
+        return False
+    trim_expr = f"BTRIM(COALESCE({field_name}, ''))" if postgres else f"TRIM(COALESCE({field_name}, ''))"
     cursor.execute(f"""
         SELECT 1
         FROM users
@@ -493,33 +507,33 @@ def cursor_has_duplicate_employee_barcodes(cursor, postgres=False):
     return cursor.fetchone() is not None
 
 
-def ensure_employee_barcode_unique_index_sqlite(cursor):
-    if cursor_has_duplicate_employee_barcodes(cursor, postgres=False):
+def ensure_employee_identifier_unique_index_sqlite(cursor, field_name, index_name):
+    if cursor_has_duplicate_employee_identifier_values(cursor, field_name, postgres=False):
         return
     try:
-        cursor.execute("""
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_users_employee_barcode_unique
-            ON users(TRIM(COALESCE(barcode_id, '')))
-            WHERE role = 'employee' AND TRIM(COALESCE(barcode_id, '')) <> ''
+        cursor.execute(f"""
+            CREATE UNIQUE INDEX IF NOT EXISTS {index_name}
+            ON users(TRIM(COALESCE({field_name}, '')))
+            WHERE role = 'employee' AND TRIM(COALESCE({field_name}, '')) <> ''
         """)
     except (sqlite3.IntegrityError, sqlite3.OperationalError):
         pass
 
 
-def ensure_employee_barcode_unique_index_postgres(cursor):
-    if cursor_has_duplicate_employee_barcodes(cursor, postgres=True):
+def ensure_employee_identifier_unique_index_postgres(cursor, field_name, index_name):
+    if cursor_has_duplicate_employee_identifier_values(cursor, field_name, postgres=True):
         return
     try:
-        cursor.execute("SAVEPOINT employee_barcode_unique_index")
-        cursor.execute("""
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_users_employee_barcode_unique
-            ON users ((BTRIM(COALESCE(barcode_id, ''))))
-            WHERE role = 'employee' AND BTRIM(COALESCE(barcode_id, '')) <> ''
+        cursor.execute("SAVEPOINT employee_identifier_unique_index")
+        cursor.execute(f"""
+            CREATE UNIQUE INDEX IF NOT EXISTS {index_name}
+            ON users ((BTRIM(COALESCE({field_name}, ''))))
+            WHERE role = 'employee' AND BTRIM(COALESCE({field_name}, '')) <> ''
         """)
-        cursor.execute("RELEASE SAVEPOINT employee_barcode_unique_index")
+        cursor.execute("RELEASE SAVEPOINT employee_identifier_unique_index")
     except Exception:
-        cursor.execute("ROLLBACK TO SAVEPOINT employee_barcode_unique_index")
-        cursor.execute("RELEASE SAVEPOINT employee_barcode_unique_index")
+        cursor.execute("ROLLBACK TO SAVEPOINT employee_identifier_unique_index")
+        cursor.execute("RELEASE SAVEPOINT employee_identifier_unique_index")
 
 
 def get_bootstrap_admin_password():
@@ -649,6 +663,7 @@ def init_sqlite_db():
             emergency_contact_phone TEXT,
             id_issue_date TEXT,
             id_expiration_date TEXT,
+            employee_code TEXT,
             barcode_id TEXT,
             hourly_rate REAL NOT NULL DEFAULT 0,
             sick_leave_days INTEGER NOT NULL DEFAULT 7,
@@ -1004,6 +1019,8 @@ def init_sqlite_db():
         cursor.execute("ALTER TABLE users ADD COLUMN id_issue_date TEXT")
     if "id_expiration_date" not in existing_cols_users:
         cursor.execute("ALTER TABLE users ADD COLUMN id_expiration_date TEXT")
+    if "employee_code" not in existing_cols_users:
+        cursor.execute("ALTER TABLE users ADD COLUMN employee_code TEXT")
     if "barcode_id" not in existing_cols_users:
         cursor.execute("ALTER TABLE users ADD COLUMN barcode_id TEXT")
     if "hourly_rate" not in existing_cols_users:
@@ -1038,7 +1055,13 @@ def init_sqlite_db():
         cursor.execute("ALTER TABLE users ADD COLUMN break_limit_minutes INTEGER NOT NULL DEFAULT 15")
     if "is_active" not in existing_cols_users:
         cursor.execute("ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
-    ensure_employee_barcode_unique_index_sqlite(cursor)
+    cursor.execute("""
+        UPDATE users
+        SET employee_code = printf('ID-%04d', id)
+        WHERE role = 'employee' AND TRIM(COALESCE(employee_code, '')) = ''
+    """)
+    ensure_employee_identifier_unique_index_sqlite(cursor, "employee_code", "idx_users_employee_code_unique")
+    ensure_employee_identifier_unique_index_sqlite(cursor, "barcode_id", "idx_users_employee_barcode_unique")
 
     existing_cols_company_settings = [row[1] for row in cursor.execute("PRAGMA table_info(company_settings)").fetchall()]
     if not existing_cols_company_settings:
@@ -1707,6 +1730,7 @@ def init_postgres_db():
                 emergency_contact_phone TEXT,
                 id_issue_date TEXT,
                 id_expiration_date TEXT,
+                employee_code TEXT,
                 barcode_id TEXT,
                 hourly_rate NUMERIC(12, 2) NOT NULL DEFAULT 0,
                 sick_leave_days INTEGER NOT NULL DEFAULT 7,
@@ -1733,6 +1757,7 @@ def init_postgres_db():
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS emergency_contact_phone TEXT")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS id_issue_date TEXT")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS id_expiration_date TEXT")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_code TEXT")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS barcode_id TEXT")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS hourly_rate NUMERIC(12, 2) NOT NULL DEFAULT 0")
         cur.execute(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS sick_leave_days INTEGER NOT NULL DEFAULT {DEFAULT_SICK_LEAVE_DAYS}")
@@ -1747,7 +1772,13 @@ def init_postgres_db():
         cur.execute(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS break_window_start TEXT DEFAULT '{DEFAULT_BREAK_WINDOW_START}'")
         cur.execute(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS break_window_end TEXT DEFAULT '{DEFAULT_BREAK_WINDOW_END}'")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS break_limit_minutes INTEGER NOT NULL DEFAULT 15")
-        ensure_employee_barcode_unique_index_postgres(cur)
+        cur.execute("""
+            UPDATE users
+            SET employee_code = 'ID-' || LPAD(CAST(id AS TEXT), 4, '0')
+            WHERE role = 'employee' AND BTRIM(COALESCE(employee_code, '')) = ''
+        """)
+        ensure_employee_identifier_unique_index_postgres(cur, "employee_code", "idx_users_employee_code_unique")
+        ensure_employee_identifier_unique_index_postgres(cur, "barcode_id", "idx_users_employee_barcode_unique")
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS schedule_presets (
@@ -2871,8 +2902,32 @@ def log_scanner_activity(scanner_user_id, action_type, barcode_value, result_sta
     ), commit=True)
 
 
+def find_employee_identifier_conflict(identifier_value, exclude_user_id=None):
+    barcode_value = (identifier_value or "").strip()
+    employee_code_value = normalize_employee_code(identifier_value)
+    if not barcode_value and not employee_code_value:
+        return None
+
+    sql = """
+        SELECT id, full_name, employee_code, barcode_id
+        FROM users
+        WHERE role = 'employee'
+          AND (
+              TRIM(COALESCE(barcode_id, '')) = ?
+              OR TRIM(COALESCE(employee_code, '')) = ?
+          )
+    """
+    params = [barcode_value, employee_code_value]
+    if exclude_user_id is not None:
+        sql += " AND id != ?"
+        params.append(int(exclude_user_id))
+    sql += " ORDER BY id ASC LIMIT 1"
+    return fetchone(sql, params)
+
+
 def find_employee_barcode_matches(barcode_id):
     cleaned = (barcode_id or "").strip()
+    normalized_employee_code = normalize_employee_code(cleaned)
     result = {
         "cleaned": cleaned,
         "matches": [],
@@ -2893,6 +2948,19 @@ def find_employee_barcode_matches(barcode_id):
         result["matches"] = direct_matches
         result["is_duplicate"] = len(direct_matches) > 1
         result["match_type"] = "barcode"
+        return result
+
+    employee_code_matches = fetchall("""
+        SELECT *
+        FROM users
+        WHERE role = 'employee' AND TRIM(COALESCE(employee_code, '')) = ?
+        ORDER BY id ASC
+        LIMIT 2
+    """, (normalized_employee_code,))
+    if employee_code_matches:
+        result["matches"] = employee_code_matches
+        result["is_duplicate"] = len(employee_code_matches) > 1
+        result["match_type"] = "employee_code"
         return result
 
     if cleaned.upper().startswith("EMP-"):
@@ -5130,16 +5198,6 @@ def get_avatar_initials(name):
     return initials or "U"
 
 
-def get_employee_card_number(user_row):
-    if not user_row:
-        return ""
-    barcode_value = user_row["barcode_id"] if "barcode_id" in user_row.keys() else ""
-    if barcode_value and str(barcode_value).strip():
-        return str(barcode_value).strip()
-    user_id = user_row["id"] if "id" in user_row.keys() else 0
-    return f"EMP-{int(user_id or 0):04d}"
-
-
 CODE128_PATTERNS = [
     "212222", "222122", "222221", "121223", "121322", "131222", "122213", "122312", "132212", "221213",
     "221312", "231212", "112232", "122132", "122231", "113222", "123122", "123221", "223211", "221132",
@@ -5599,6 +5657,7 @@ def summarize_employee_admin_changes(before_row, after_values):
         "emergency_contact_phone": "Emergency Contact Number",
         "id_issue_date": "ID Issue Date",
         "id_expiration_date": "ID Expiration Date",
+        "employee_code": "Employee ID",
         "barcode_id": "Barcode ID",
         "hourly_rate": "Hourly Rate",
         "sick_leave_days": "Sick Leave Allotment",
@@ -7383,29 +7442,16 @@ def append_attendance_to_google_sheet(user_row, attendance_row):
 def inject_globals():
     user = None
     unread_count = 0
-    latest_notifications = []
 
     if session.get("user_id"):
         user = get_user_by_id(session["user_id"])
         if user:
-            unread = fetchone("""
-                SELECT COUNT(*) AS cnt FROM notifications
-                WHERE user_id = ? AND is_read = 0
-            """, (session["user_id"],))
-            unread_count = unread["cnt"] if unread else 0
-            latest_notifications = fetchall("""
-                SELECT *
-                FROM notifications
-                WHERE user_id = ?
-                ORDER BY id DESC
-                LIMIT 6
-            """, (session["user_id"],))
+            unread_count = get_unread_notification_count(session["user_id"])
 
     return dict(
         current_user=user,
         company_settings=get_company_settings(),
         unread_count=unread_count,
-        latest_notifications=latest_notifications,
         admin_can=admin_can_permission,
         admin_permission_options=ADMIN_PERMISSION_OPTIONS,
         admin_role_preset_options=ADMIN_ROLE_PRESET_OPTIONS,
@@ -7611,23 +7657,56 @@ def employee_activity():
     return render_template("employee_activity.html", user=user, logs=logs)
 
 
-@app.route("/notifications")
-@login_required()
-def notifications_page():
-    user = get_user_by_id(session["user_id"])
-    notifications = fetchall("""
+def get_unread_notification_count(user_id):
+    unread = fetchone("""
+        SELECT COUNT(*) AS cnt
+        FROM notifications
+        WHERE user_id = ? AND is_read = 0
+    """, (user_id,))
+    return int(unread["cnt"] or 0) if unread else 0
+
+
+def get_latest_notifications(user_id, limit=6):
+    safe_limit = max(1, int(limit or 6))
+    return fetchall("""
         SELECT *
         FROM notifications
         WHERE user_id = ?
         ORDER BY id DESC
-        LIMIT 100
-    """, (session["user_id"],))
+        LIMIT ?
+    """, (user_id, safe_limit))
+
+
+@app.route("/notifications")
+@login_required()
+def notifications_page():
+    user = get_user_by_id(session["user_id"])
+    notifications = get_latest_notifications(session["user_id"], limit=100)
 
     return render_template(
         "notifications.html",
         user=user,
         notifications=notifications
     )
+
+
+@app.route("/notifications/preview")
+@login_required()
+def notifications_preview():
+    unread_count = get_unread_notification_count(session["user_id"])
+    preview_rows = []
+    for row in get_latest_notifications(session["user_id"], limit=6):
+        item = dict(row)
+        preview_rows.append({
+            "title": item.get("title") or "",
+            "message": item.get("message") or "",
+            "is_unread": int(item.get("is_read") or 0) == 0,
+            "created_display": format_datetime_12h(item.get("created_at")),
+        })
+    return jsonify({
+        "unread_count": unread_count,
+        "items": preview_rows,
+    })
 
 
 @app.route("/history")
@@ -10054,8 +10133,6 @@ def admin_payroll():
     if current_run:
         current_run = enrich_admin_payroll_run(current_run)
     recent_runs = get_recent_payroll_runs()
-    payslip_download_requests = get_recent_payslip_download_requests()
-    payslip_request_summary = get_payslip_download_request_summary()
     editing_recurring_rule = get_payroll_recurring_rule(request.args.get("edit_recurring_rule", ""))
 
     return render_template(
@@ -10073,10 +10150,30 @@ def admin_payroll():
         recurring_rules=recurring_rules,
         current_run=current_run,
         recent_runs=recent_runs,
-        payslip_download_requests=payslip_download_requests,
-        payslip_request_summary=payslip_request_summary,
         employee_filter_label=get_payroll_employee_filter_label(employee_filter),
         editing_recurring_rule=editing_recurring_rule
+    )
+
+
+@app.route("/admin/payroll/download-requests-panel")
+@login_required(role="admin")
+def admin_payroll_download_requests_panel():
+    filters = normalize_payroll_filters(
+        request.args.get("period", "this_month"),
+        request.args.get("date_from", "").strip(),
+        request.args.get("date_to", "").strip(),
+        request.args.get("department", "").strip(),
+        request.args.get("employee_id", "").strip()
+    )
+    return render_template(
+        "_payroll_download_requests_panel.html",
+        payslip_download_requests=get_recent_payslip_download_requests(),
+        payslip_request_summary=get_payslip_download_request_summary(),
+        period=filters["period"],
+        date_from=filters["date_from"].strftime("%Y-%m-%d"),
+        date_to=filters["date_to"].strftime("%Y-%m-%d"),
+        department_filter=filters["department_filter"],
+        employee_filter=filters["employee_filter"],
     )
 
 
@@ -12095,6 +12192,7 @@ def manage_employees():
             request.form.get("id_issue_date", ""),
             request.form.get("id_expiration_date", "")
         )
+        employee_code = normalize_employee_code(request.form.get("employee_code", ""))
         barcode_id = request.form.get("barcode_id", "").strip()
         hourly_rate = parse_money_value(request.form.get("hourly_rate", "0"))
         sick_leave_days = parse_non_negative_int(request.form.get("sick_leave_days", DEFAULT_SICK_LEAVE_DAYS), DEFAULT_SICK_LEAVE_DAYS)
@@ -12126,10 +12224,16 @@ def manage_employees():
             flash(f"Preset {selected_preset['name']} is scoped to {selected_preset['department_scope']}. Choose a matching department or use a custom schedule.", "danger")
             return redirect(url_for("manage_employees"))
 
+        if employee_code:
+            existing_identifier = find_employee_identifier_conflict(employee_code)
+            if existing_identifier:
+                flash("Employee ID already exists or matches another employee barcode.", "warning")
+                return redirect(url_for("manage_employees"))
+
         if barcode_id:
-            existing_barcode = fetchone("SELECT id FROM users WHERE TRIM(COALESCE(barcode_id, '')) = ?", (barcode_id,))
+            existing_barcode = find_employee_identifier_conflict(barcode_id)
             if existing_barcode:
-                flash("Barcode ID already exists.", "warning")
+                flash("Barcode ID already exists or matches another employee ID.", "warning")
                 return redirect(url_for("manage_employees"))
 
         profile_image = None
@@ -12147,9 +12251,9 @@ def manage_employees():
         execute_db("""
             INSERT INTO users (
                 full_name, username, password_hash, role, profile_image,
-                department, position, emergency_contact_name, emergency_contact_phone, id_issue_date, id_expiration_date, barcode_id, hourly_rate, sick_leave_days, paid_leave_days, sick_leave_used_manual, paid_leave_used_manual, schedule_days, shift_start, shift_end, schedule_preset_id, break_window_start, break_window_end, break_limit_minutes, is_active, created_at
+                department, position, emergency_contact_name, emergency_contact_phone, id_issue_date, id_expiration_date, employee_code, barcode_id, hourly_rate, sick_leave_days, paid_leave_days, sick_leave_used_manual, paid_leave_used_manual, schedule_days, shift_start, shift_end, schedule_preset_id, break_window_start, break_window_end, break_limit_minutes, is_active, created_at
             )
-            VALUES (?, ?, ?, 'employee', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+            VALUES (?, ?, ?, 'employee', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
         """, (
             full_name,
             username,
@@ -12161,6 +12265,7 @@ def manage_employees():
             emergency_contact_phone,
             id_issue_date,
             id_expiration_date,
+            employee_code or None,
             barcode_id,
             hourly_rate,
             sick_leave_days,
@@ -12179,6 +12284,13 @@ def manage_employees():
 
         new_user = fetchone("SELECT id FROM users WHERE username = ?", (username,))
         if new_user:
+            resolved_employee_code = employee_code or build_default_employee_code(new_user["id"])
+            if not employee_code:
+                execute_db(
+                    "UPDATE users SET employee_code = ? WHERE id = ?",
+                    (resolved_employee_code, new_user["id"]),
+                    commit=True,
+                )
             created_employee = get_user_by_id(new_user["id"])
             if created_employee:
                 record_employee_schedule_history(
@@ -12198,6 +12310,7 @@ def manage_employees():
                     "emergency_contact_phone": emergency_contact_phone or "(not set)",
                     "id_issue_date": id_issue_date or "(auto)",
                     "id_expiration_date": id_expiration_date or "(auto)",
+                    "employee_code": resolved_employee_code,
                     "barcode_id": barcode_id or "(not set)",
                     "hourly_rate": hourly_rate,
                     "sick_leave_days": sick_leave_days,
@@ -12232,10 +12345,12 @@ def manage_employees():
                 OR LOWER(username) LIKE ?
                 OR LOWER(COALESCE(department, '')) LIKE ?
                 OR LOWER(COALESCE(position, '')) LIKE ?
+                OR LOWER(COALESCE(employee_code, '')) LIKE ?
+                OR LOWER(COALESCE(barcode_id, '')) LIKE ?
             )
         """
         search_like = f"%{employee_search.lower()}%"
-        params.extend([search_like, search_like, search_like, search_like])
+        params.extend([search_like, search_like, search_like, search_like, search_like, search_like])
 
     sql += " ORDER BY u.id DESC"
     employees = fetchall(sql, params)
@@ -12371,6 +12486,7 @@ def edit_employee(user_id):
             request.form.get("id_issue_date", ""),
             request.form.get("id_expiration_date", "")
         )
+        employee_code = normalize_employee_code(request.form.get("employee_code", "")) or build_default_employee_code(user_id)
         barcode_id = request.form.get("barcode_id", "").strip()
         hourly_rate = parse_money_value(request.form.get("hourly_rate", user["hourly_rate"] or 0))
         sick_leave_days = parse_non_negative_int(request.form.get("sick_leave_days", user["sick_leave_days"] if user["sick_leave_days"] is not None else DEFAULT_SICK_LEAVE_DAYS), DEFAULT_SICK_LEAVE_DAYS)
@@ -12408,13 +12524,15 @@ def edit_employee(user_id):
             flash(f"Preset {selected_preset['name']} is scoped to {selected_preset['department_scope']}. Choose a matching department or use a custom schedule.", "danger")
             return redirect(url_for("edit_employee", user_id=user_id))
 
+        existing_employee_code = find_employee_identifier_conflict(employee_code, exclude_user_id=user_id)
+        if existing_employee_code:
+            flash("Employee ID already exists or matches another employee barcode.", "warning")
+            return redirect(url_for("edit_employee", user_id=user_id))
+
         if barcode_id:
-            existing_barcode = fetchone("""
-                SELECT id FROM users
-                WHERE TRIM(COALESCE(barcode_id, '')) = ? AND id != ?
-            """, (barcode_id, user_id))
+            existing_barcode = find_employee_identifier_conflict(barcode_id, exclude_user_id=user_id)
             if existing_barcode:
-                flash("Barcode ID already used by another employee.", "warning")
+                flash("Barcode ID already used or matches another employee ID.", "warning")
                 return redirect(url_for("edit_employee", user_id=user_id))
 
         profile_image = user["profile_image"]
@@ -12434,21 +12552,21 @@ def edit_employee(user_id):
             execute_db("""
                 UPDATE users
                 SET full_name = ?, username = ?, password_hash = ?, profile_image = ?,
-                    department = ?, position = ?, emergency_contact_name = ?, emergency_contact_phone = ?, id_issue_date = ?, id_expiration_date = ?, barcode_id = ?, hourly_rate = ?, sick_leave_days = ?, paid_leave_days = ?, sick_leave_used_manual = ?, paid_leave_used_manual = ?, schedule_days = ?, shift_start = ?, shift_end = ?, schedule_preset_id = ?, break_window_start = ?, break_window_end = ?, break_limit_minutes = ?, is_active = ?
+                    department = ?, position = ?, emergency_contact_name = ?, emergency_contact_phone = ?, id_issue_date = ?, id_expiration_date = ?, employee_code = ?, barcode_id = ?, hourly_rate = ?, sick_leave_days = ?, paid_leave_days = ?, sick_leave_used_manual = ?, paid_leave_used_manual = ?, schedule_days = ?, shift_start = ?, shift_end = ?, schedule_preset_id = ?, break_window_start = ?, break_window_end = ?, break_limit_minutes = ?, is_active = ?
                 WHERE id = ?
             """, (
                 full_name, username, generate_password_hash(password), profile_image,
-                department, position, emergency_contact_name, emergency_contact_phone, id_issue_date, id_expiration_date, barcode_id, hourly_rate, sick_leave_days, paid_leave_days, sick_leave_used_manual, paid_leave_used_manual, schedule_days, shift_start, shift_end, schedule_preset_id, user["break_window_start"] or DEFAULT_BREAK_WINDOW_START, user["break_window_end"] or DEFAULT_BREAK_WINDOW_END, break_limit_minutes, is_active, user_id
+                department, position, emergency_contact_name, emergency_contact_phone, id_issue_date, id_expiration_date, employee_code, barcode_id, hourly_rate, sick_leave_days, paid_leave_days, sick_leave_used_manual, paid_leave_used_manual, schedule_days, shift_start, shift_end, schedule_preset_id, user["break_window_start"] or DEFAULT_BREAK_WINDOW_START, user["break_window_end"] or DEFAULT_BREAK_WINDOW_END, break_limit_minutes, is_active, user_id
             ), commit=True)
         else:
             execute_db("""
                 UPDATE users
                 SET full_name = ?, username = ?, profile_image = ?,
-                    department = ?, position = ?, emergency_contact_name = ?, emergency_contact_phone = ?, id_issue_date = ?, id_expiration_date = ?, barcode_id = ?, hourly_rate = ?, sick_leave_days = ?, paid_leave_days = ?, sick_leave_used_manual = ?, paid_leave_used_manual = ?, schedule_days = ?, shift_start = ?, shift_end = ?, schedule_preset_id = ?, break_window_start = ?, break_window_end = ?, break_limit_minutes = ?, is_active = ?
+                    department = ?, position = ?, emergency_contact_name = ?, emergency_contact_phone = ?, id_issue_date = ?, id_expiration_date = ?, employee_code = ?, barcode_id = ?, hourly_rate = ?, sick_leave_days = ?, paid_leave_days = ?, sick_leave_used_manual = ?, paid_leave_used_manual = ?, schedule_days = ?, shift_start = ?, shift_end = ?, schedule_preset_id = ?, break_window_start = ?, break_window_end = ?, break_limit_minutes = ?, is_active = ?
                 WHERE id = ?
             """, (
                 full_name, username, profile_image,
-                department, position, emergency_contact_name, emergency_contact_phone, id_issue_date, id_expiration_date, barcode_id, hourly_rate, sick_leave_days, paid_leave_days, sick_leave_used_manual, paid_leave_used_manual, schedule_days, shift_start, shift_end, schedule_preset_id, user["break_window_start"] or DEFAULT_BREAK_WINDOW_START, user["break_window_end"] or DEFAULT_BREAK_WINDOW_END, break_limit_minutes, is_active, user_id
+                department, position, emergency_contact_name, emergency_contact_phone, id_issue_date, id_expiration_date, employee_code, barcode_id, hourly_rate, sick_leave_days, paid_leave_days, sick_leave_used_manual, paid_leave_used_manual, schedule_days, shift_start, shift_end, schedule_preset_id, user["break_window_start"] or DEFAULT_BREAK_WINDOW_START, user["break_window_end"] or DEFAULT_BREAK_WINDOW_END, break_limit_minutes, is_active, user_id
             ), commit=True)
 
         log_activity(
@@ -12461,6 +12579,7 @@ def edit_employee(user_id):
                 "emergency_contact_phone": emergency_contact_phone or "(not set)",
                 "id_issue_date": id_issue_date or "(auto)",
                 "id_expiration_date": id_expiration_date or "(auto)",
+                "employee_code": employee_code,
                 "barcode_id": barcode_id or "(not set)",
                 "hourly_rate": hourly_rate,
                 "sick_leave_days": sick_leave_days,
@@ -12753,31 +12872,31 @@ def scanner_kiosk_scan():
     if not barcode_value:
         log_scanner_activity(
             scanner_user_id, action_type, barcode_value, "error",
-            "Scan or enter a barcode first.",
+            "Scan or enter an employee ID or barcode first.",
             **scanner_log_kwargs
         )
-        return jsonify({"ok": False, "message": "Scan or enter a barcode first."}), 400
+        return jsonify({"ok": False, "message": "Scan or enter an employee ID or barcode first."}), 400
 
     barcode_lookup = find_employee_barcode_matches(barcode_value)
     if barcode_lookup["is_duplicate"]:
         log_scanner_activity(
             scanner_user_id, action_type, barcode_value, "error",
-            "This barcode is assigned to multiple employees. Fix the duplicate Barcode ID records first.",
+            "This scan value matches multiple employees. Fix the employee ID or barcode records first.",
             **scanner_log_kwargs
         )
         return jsonify({
             "ok": False,
-            "message": "This barcode is assigned to multiple employees. Fix the duplicate Barcode ID records first."
+            "message": "This scan value matches multiple employees. Fix the employee ID or barcode records first."
         }), 409
 
     employee = barcode_lookup["matches"][0] if barcode_lookup["matches"] else None
     if not employee:
         log_scanner_activity(
             scanner_user_id, action_type, barcode_value, "error",
-            "No employee matched that barcode. Check the employee Barcode ID first.",
+            "No employee matched that scan value. Check the employee ID or barcode first.",
             **scanner_log_kwargs
         )
-        return jsonify({"ok": False, "message": "No employee matched that barcode. Check the employee Barcode ID first."}), 404
+        return jsonify({"ok": False, "message": "No employee matched that scan value. Check the employee ID or barcode first."}), 404
 
     ok, message, employee_row = perform_attendance_action(
         employee["id"],
@@ -12811,6 +12930,8 @@ def scanner_kiosk_scan():
         "avatar_initials": get_avatar_initials(employee_for_payload["full_name"]),
         "profile_image_url": url_for("uploaded_file", filename=employee_for_payload["profile_image"]) if employee_for_payload["profile_image"] and uploaded_file_exists(employee_for_payload["profile_image"]) else None,
         "barcode_value": barcode_value,
+        "match_type": barcode_lookup["match_type"],
+        "employee_code": employee_for_payload["employee_code"] or get_employee_card_number(employee_for_payload),
         "status": "On Overtime" if overtime_session else (attendance["status"] if attendance else "Offline"),
         "time_in": attendance["time_in"] if attendance else None,
         "time_out": attendance["time_out"] if attendance else None,

@@ -59,6 +59,10 @@
 
 <div class="grid grid-2" style="margin-top:12px;">
     <div>
+        <label>Employee ID</label>
+        <input class="input" type="text" name="employee_code" value="{{ employee.employee_code if employee.employee_code else get_employee_card_number(employee) }}">
+    </div>
+    <div>
         <label>Barcode ID</label>
         <input class="input" type="text" name="barcode_id" value="{{ employee.barcode_id if employee.barcode_id else '' }}">
     </div>

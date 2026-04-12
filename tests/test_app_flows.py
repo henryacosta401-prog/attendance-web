@@ -48,6 +48,7 @@ class AppFlowsTestCase(unittest.TestCase):
         department="Ops",
         position="Agent",
         barcode_id="",
+        employee_code="",
         hourly_rate=0,
         admin_permissions=None,
         admin_role_preset="",
@@ -63,11 +64,11 @@ class AppFlowsTestCase(unittest.TestCase):
                 """
                 INSERT INTO users (
                     full_name, username, password_hash, role, department, position,
-                    barcode_id, hourly_rate, schedule_days, shift_start, shift_end,
+                    employee_code, barcode_id, hourly_rate, schedule_days, shift_start, shift_end,
                     admin_permissions, admin_role_preset, break_limit_minutes,
                     is_active, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     full_name,
@@ -76,6 +77,7 @@ class AppFlowsTestCase(unittest.TestCase):
                     role,
                     department,
                     position,
+                    employee_code or None,
                     barcode_id or None,
                     hourly_rate,
                     schedule_days,
@@ -244,6 +246,42 @@ class AppFlowsTestCase(unittest.TestCase):
         self.assertEqual(scanner_log["action_type"], "time_in")
         self.assertEqual(scanner_log["result_status"], "success")
         self.assertEqual(scanner_log["employee_name_snapshot"], "Henry Scanner")
+
+    def test_scanner_scan_accepts_employee_id_value(self):
+        scanner = self.create_user("scanner-employee-id", role="scanner", position="Scanner")
+        employee = self.create_user(
+            "employee-id-user",
+            role="employee",
+            full_name="Casey Employee ID",
+            employee_code="ID-0420",
+            barcode_id="BAR-0420",
+        )
+        csrf_token = self.set_session_user(scanner)
+
+        response = self.client.post(
+            "/scanner/scan",
+            data={
+                "csrf_token": csrf_token,
+                "action_type": "time_in",
+                "barcode_value": "  id-0420  ",
+            },
+            headers={"User-Agent": "Codex Test Scanner"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["match_type"], "employee_code")
+        self.assertEqual(payload["employee_code"], "ID-0420")
+
+        with attendance_app.app.app_context():
+            attendance = attendance_app.fetchone(
+                "SELECT * FROM attendance WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+                (employee["id"],),
+            )
+
+        self.assertIsNotNone(attendance)
+        self.assertIsNotNone(attendance["time_in"])
 
     def test_released_payroll_snapshot_cannot_be_saved_back_to_draft(self):
         admin = self.create_user("payroll-admin", role="admin", admin_permissions="dashboard,payroll,reports")

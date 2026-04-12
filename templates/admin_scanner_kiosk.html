@@ -269,7 +269,7 @@ body.kiosk-mode .divider {
     <div>
         <div class="scanner-kicker">Tablet Kiosk</div>
         <div class="scanner-title">Attendance Scanner</div>
-        <div class="scanner-subtitle">Choose the action, scan the employee’s Code 128 ID barcode, and let the app record the attendance step with the same rules used everywhere else.</div>
+        <div class="scanner-subtitle">Choose the action, scan the employee’s printed ID barcode, or enter the employee ID manually, and let the app record the attendance step with the same rules used everywhere else.</div>
     </div>
     <div class="scanner-toolbar-actions">
         <button class="btn btn-primary" type="button" id="fullscreenBtn">Fullscreen</button>
@@ -306,7 +306,7 @@ body.kiosk-mode .divider {
 
             <div class="divider"></div>
 
-            <div class="section-title">2. Scan Barcode</div>
+            <div class="section-title">2. Scan ID or Barcode</div>
             <div class="scanner-controls" style="margin-bottom:12px;">
                 <select class="input scanner-camera-select" id="cameraSelect">
                     <option value="">Default Camera</option>
@@ -318,7 +318,7 @@ body.kiosk-mode .divider {
             <div class="scanner-stage is-idle" id="scannerStage">
                 <video id="scannerVideo" autoplay playsinline muted></video>
                 <div class="scanner-overlay" id="scannerOverlay">
-                    Point the tablet camera at the printed employee ID barcode. If the browser does not support live scanning, use the manual barcode field below.
+                    Point the tablet camera at the printed employee ID barcode. If the browser does not support live scanning, use the employee ID or barcode field below.
                 </div>
             </div>
 
@@ -327,11 +327,11 @@ body.kiosk-mode .divider {
             <div class="section-title">Manual Fallback</div>
             <div class="scanner-manual">
                 <div class="scanner-help">
-                    Use this if the camera is blocked, the tablet browser does not support barcode detection, or you want to test a barcode value manually.
+                    Use this if the camera is blocked, the tablet browser does not support barcode detection, or you want to enter an employee ID or barcode manually.
                 </div>
                 <div class="scanner-manual-row">
-                    <input class="input" type="text" id="manualBarcodeInput" placeholder="Enter barcode value, e.g. EMP-0001">
-                    <button class="btn btn-success" type="button" id="manualSubmitBtn">Submit Barcode</button>
+                    <input class="input" type="text" id="manualBarcodeInput" placeholder="Enter employee ID or barcode, e.g. ID-0001">
+                    <button class="btn btn-success" type="button" id="manualSubmitBtn">Submit Scan</button>
                 </div>
             </div>
         </section>
@@ -340,7 +340,7 @@ body.kiosk-mode .divider {
             <div class="section-title">Scan Result</div>
             <div class="scanner-result">
                 <div class="scanner-banner" id="scannerBanner">
-                    Ready to scan. Choose an action, then point the camera at the employee ID barcode.
+                    Ready to scan. Choose an action, then scan the employee barcode or enter the employee ID.
                 </div>
 
                 <div class="scanner-kv">
@@ -357,7 +357,7 @@ body.kiosk-mode .divider {
                         <div class="value" id="resultStatus">-</div>
                     </div>
                     <div class="cardlet">
-                        <div class="label">Barcode</div>
+                        <div class="label">Employee ID</div>
                         <div class="value" id="resultBarcode">-</div>
                     </div>
                     <div class="cardlet">
@@ -473,7 +473,7 @@ document.addEventListener("DOMContentLoaded", () => {
         scannerVideo.srcObject = null;
         state.isScanning = false;
         scannerStage.classList.add("is-idle");
-        scannerOverlay.textContent = "Camera stopped. Start the camera again or use the manual barcode field below.";
+        scannerOverlay.textContent = "Camera stopped. Start the camera again or use the manual employee ID or barcode field below.";
     }
 
     async function startCamera() {
@@ -492,7 +492,7 @@ document.addEventListener("DOMContentLoaded", () => {
             scannerStage.classList.remove("is-idle");
             scannerOverlay.textContent = state.detector
                 ? "Camera is live. Hold the barcode steady inside the guide box."
-                : "Live camera started. This browser does not support automatic Code 128 detection, so use the manual barcode field below.";
+                : "Live camera started. This browser does not support automatic Code 128 detection, so use the manual employee ID or barcode field below.";
             await loadCameras();
 
             if (state.detector) {
@@ -501,7 +501,7 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         } catch (error) {
             console.error(error);
-            scannerOverlay.textContent = "Unable to access the camera. Check browser permissions, then try again or use the manual barcode field.";
+            scannerOverlay.textContent = "Unable to access the camera. Check browser permissions, then try again or use the manual employee ID or barcode field.";
         }
     }
 
@@ -550,7 +550,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
             resultEmployee.textContent = payload.employee_name || "-";
             resultStatus.textContent = payload.status || "-";
-            resultBarcode.textContent = payload.barcode_value || barcodeValue || "-";
+            resultBarcode.textContent = payload.employee_code || payload.barcode_value || barcodeValue || "-";
             resultTimeIn.textContent = payload.time_in || "-";
             resultTimeOut.textContent = payload.time_out || "-";
             resultBreakMinutes.textContent = payload.break_minutes ?? "-";
@@ -568,7 +568,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const value = manualBarcodeInput.value.trim();
         if (!value) {
             scannerBanner.className = "scanner-banner is-error";
-            scannerBanner.textContent = "Enter a barcode value first.";
+            scannerBanner.textContent = "Enter an employee ID or barcode first.";
             manualBarcodeInput.focus();
             return;
         }

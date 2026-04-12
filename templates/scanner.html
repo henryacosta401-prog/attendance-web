@@ -1104,7 +1104,7 @@
 
         <section class="status-card">
             <div class="status-topbar">
-                <div class="status-banner" id="statusBanner">Waiting for barcode scan...</div>
+                <div class="status-banner" id="statusBanner">Waiting for ID or barcode scan...</div>
                 <div class="camera-controls" aria-label="Camera selection">
                     <button class="camera-toggle is-active" type="button" data-camera="environment">Back Camera</button>
                     <button class="camera-toggle" type="button" data-camera="user">Front Camera</button>
@@ -1124,7 +1124,7 @@
                     <div class="meta-value" id="metaStatus">Idle</div>
                 </div>
                 <div class="meta-item">
-                    <div class="meta-label">Barcode</div>
+                    <div class="meta-label">Employee ID</div>
                     <div class="meta-value" id="metaBarcode">-</div>
                 </div>
                 <div class="meta-item">
@@ -1303,7 +1303,7 @@
 
         async function startCamera() {
             if (!navigator.mediaDevices?.getUserMedia) {
-                cameraOverlay.textContent = "Camera is not available in this browser. Use the barcode scanner input.";
+                cameraOverlay.textContent = "Camera is not available in this browser. Use the employee ID or barcode scanner input.";
                 return;
             }
 
@@ -1317,7 +1317,7 @@
                 await cameraVideo.play();
 
                 if (!barcodeDetector) {
-                    cameraOverlay.textContent = "Camera is live. This browser has no built-in barcode detection, so use the barcode scanner input.";
+                    cameraOverlay.textContent = "Camera is live. This browser has no built-in barcode detection, so use the employee ID or barcode scanner input.";
                     return;
                 }
 
@@ -1325,7 +1325,7 @@
                 runCameraScanLoop();
             } catch (error) {
                 console.error(error);
-                cameraOverlay.textContent = "Camera access was blocked. Allow camera permission or use the barcode scanner input.";
+                cameraOverlay.textContent = "Camera access was blocked. Allow camera permission or use the employee ID or barcode scanner input.";
             }
         }
 
@@ -1401,7 +1401,7 @@
             metaBarcode.textContent = "-";
             metaEmployee.textContent = "-";
             statusBanner.className = "status-banner";
-            statusBanner.textContent = "Waiting for barcode scan...";
+            statusBanner.textContent = "Waiting for ID or barcode scan...";
             if (resetAction) {
                 setSelectedAction("time_in");
             } else {
@@ -1416,7 +1416,7 @@
             employeeStatus.textContent = payload.message || (ok ? "Attendance recorded." : "Unable to record attendance.");
             scanResultChip.textContent = ok ? getActionDisplay(payload.action_type) : "Scan Failed";
             metaStatus.textContent = payload.status || (ok ? "Updated" : "Error");
-            metaBarcode.textContent = payload.barcode_value || "-";
+            metaBarcode.textContent = payload.employee_code || payload.barcode_value || "-";
             metaEmployee.textContent = payload.employee_name || "-";
 
             if (payload.profile_image_url) {
@@ -1434,7 +1434,7 @@
             statusBanner.className = `status-banner ${ok ? "is-success" : "is-error"}`;
             statusBanner.textContent = payload.message || (ok ? "Attendance recorded." : "Unable to record attendance.");
             cameraOverlay.textContent = ok
-                ? "Scan recorded. Present the next employee barcode when ready."
+                ? "Scan recorded. Present the next employee ID or barcode when ready."
                 : "Scan failed. Check the message above, then try again.";
             playTone(ok ? "success" : "error");
             resetInactivityTimer();

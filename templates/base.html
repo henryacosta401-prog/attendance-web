@@ -1202,6 +1202,7 @@
     data-tour-role="{{ session.get('role', 'guest') }}"
     data-tour-endpoint="{{ request.endpoint or '' }}"
     data-service-worker-url="{{ url_for('service_worker') }}"
+    data-notifications-endpoint="{{ url_for('notifications_preview') }}"
 >
 
 {% if session.get('user_id') and request.endpoint != 'login' %}
@@ -1416,6 +1417,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const navRight = document.querySelector(".nav-right");
     if (!navRight) return;
 
+    const notificationsEndpoint = document.body.dataset.notificationsEndpoint;
     const pillSpans = navRight.querySelectorAll("span.pill-link");
     if (pillSpans.length >= 2) {
         const notificationPill = pillSpans[1];
@@ -1424,31 +1426,21 @@ document.addEventListener("DOMContentLoaded", function () {
         dropdownWrapper.innerHTML = `
             <button class="pill-link notification-toggle ${window.location.pathname === "{{ url_for('notifications_page') }}" ? "active" : ""}" data-tour-id="nav-notifications" type="button" id="notificationToggle" aria-expanded="false">
                 <span>Notifications</span>
-                <span class="notification-badge">{{ unread_count }}</span>
+                <span class="notification-badge" id="notificationBadge">{{ unread_count }}</span>
             </button>
             <div class="notification-dropdown" id="notificationDropdown">
                 <div class="notification-header">
                     <div>
                         <div style="font-weight:900;color:white;">Notifications</div>
-                        <div class="small muted">{{ unread_count }} unread</div>
+                        <div class="small muted" id="notificationUnreadLabel">{{ unread_count }} unread</div>
                     </div>
                     <form method="POST" action="{{ url_for('read_all_notifications') }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <button class="btn btn-dark" type="submit">Mark All Read</button>
                     </form>
                 </div>
-                <div class="notification-list">
-                    {% if latest_notifications %}
-                        {% for notif in latest_notifications %}
-                            <div class="notification-card {% if notif.is_read == 0 %}unread{% endif %}">
-                                <div style="font-weight:900;color:white;">{{ notif.title }}</div>
-                                <div class="small muted" style="margin-top:5px;">{{ notif.message }}</div>
-                                <div class="small muted" style="margin-top:8px;">{{ format_datetime_12h(notif.created_at) }}</div>
-                            </div>
-                        {% endfor %}
-                    {% else %}
-                        <div class="small muted">No notifications yet.</div>
-                    {% endif %}
+                <div class="notification-list" id="notificationList">
+                    <div class="small muted">Open to load recent notifications.</div>
                 </div>
                 <div class="notification-actions">
                     <a class="btn btn-gray" href="{{ url_for('notifications_page') }}">View All</a>
@@ -1461,16 +1453,95 @@ document.addEventListener("DOMContentLoaded", function () {
         const toggle = document.getElementById("notificationToggle");
         const dropdown = document.getElementById("notificationDropdown");
         const closeBtn = document.getElementById("notificationClose");
+        const notificationBadge = document.getElementById("notificationBadge");
+        const notificationUnreadLabel = document.getElementById("notificationUnreadLabel");
+        const notificationList = document.getElementById("notificationList");
+        let notificationsLoadedAt = 0;
+        let notificationsLoading = false;
+
+        function escapeHtml(value) {
+            return String(value ?? "").replace(/[&<>"']/g, function (char) {
+                return {
+                    "&": "&amp;",
+                    "<": "&lt;",
+                    ">": "&gt;",
+                    "\"": "&quot;",
+                    "'": "&#39;"
+                }[char];
+            });
+        }
+
+        function renderNotifications(items) {
+            if (!notificationList) {
+                return;
+            }
+            if (!items.length) {
+                notificationList.innerHTML = `<div class="small muted">No notifications yet.</div>`;
+                return;
+            }
+            notificationList.innerHTML = items.map(function (item) {
+                return `
+                    <div class="notification-card ${item.is_unread ? "unread" : ""}">
+                        <div style="font-weight:900;color:white;">${escapeHtml(item.title)}</div>
+                        <div class="small muted" style="margin-top:5px;">${escapeHtml(item.message)}</div>
+                        <div class="small muted" style="margin-top:8px;">${escapeHtml(item.created_display)}</div>
+                    </div>
+                `;
+            }).join("");
+        }
+
+        async function loadNotifications(forceReload) {
+            if (!notificationsEndpoint || notificationsLoading) {
+                return;
+            }
+            if (!forceReload && notificationsLoadedAt && (Date.now() - notificationsLoadedAt) < 30000) {
+                return;
+            }
+
+            notificationsLoading = true;
+            if (notificationList && (!notificationsLoadedAt || forceReload)) {
+                notificationList.innerHTML = `<div class="small muted">Loading notifications...</div>`;
+            }
+            try {
+                const response = await fetch(notificationsEndpoint, {
+                    credentials: "same-origin",
+                    headers: { "X-Requested-With": "fetch" }
+                });
+                if (!response.ok) {
+                    throw new Error(`Notification preview failed with ${response.status}`);
+                }
+                const payload = await response.json();
+                const unreadCount = Number(payload.unread_count || 0);
+                if (notificationBadge) {
+                    notificationBadge.textContent = String(unreadCount);
+                }
+                if (notificationUnreadLabel) {
+                    notificationUnreadLabel.textContent = `${unreadCount} unread`;
+                }
+                renderNotifications(Array.isArray(payload.items) ? payload.items : []);
+                notificationsLoadedAt = Date.now();
+            } catch (error) {
+                console.error("Notification preview failed:", error);
+                if (notificationList) {
+                    notificationList.innerHTML = `<div class="small muted">Unable to load notifications right now.</div>`;
+                }
+            } finally {
+                notificationsLoading = false;
+            }
+        }
 
         function closeDropdown() {
             dropdown.classList.remove("open");
             toggle.setAttribute("aria-expanded", "false");
         }
 
-        toggle.addEventListener("click", function (event) {
+        toggle.addEventListener("click", async function (event) {
             event.stopPropagation();
             const isOpen = dropdown.classList.toggle("open");
             toggle.setAttribute("aria-expanded", isOpen ? "true" : "false");
+            if (isOpen) {
+                await loadNotifications(false);
+            }
         });
 
         if (closeBtn) {

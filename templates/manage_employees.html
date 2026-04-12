@@ -44,8 +44,12 @@
                 <label style="display:block; margin-top:12px;">ID Expiration Date</label>
                 <input class="input" type="date" name="id_expiration_date">
 
+                <label style="display:block; margin-top:12px;">Employee ID</label>
+                <input class="input" type="text" name="employee_code" placeholder="e.g. ID-0001">
+                <div class="small muted" style="margin-top:8px;">Leave blank to auto-generate the employee ID shown on the card front.</div>
+
                 <label style="display:block; margin-top:12px;">Barcode ID</label>
-                <input class="input" type="text" name="barcode_id" placeholder="e.g. EMP-0001">
+                <input class="input" type="text" name="barcode_id" placeholder="e.g. SS-2026-0001">
 
                 <label style="display:block; margin-top:12px;">Hourly Rate</label>
                 <input class="input" type="number" name="hourly_rate" placeholder="e.g. 18.50" min="0" step="0.01">
@@ -397,6 +401,7 @@
                             <th>Position</th>
                             <th>Schedule</th>
                             <th>Shift</th>
+                            <th>Employee ID</th>
                             <th>Barcode</th>
                             <th>Hourly Rate</th>
                             <th>Leave Balance</th>
@@ -445,6 +450,7 @@
                                 {% endif %}
                             </td>
                             <td>{{ emp.shift_start if emp.shift_start else '09:00' }} - {{ emp.shift_end if emp.shift_end else '18:00' }}</td>
+                            <td>{{ get_employee_card_number(emp) }}</td>
                             <td>{{ emp.barcode_id if emp.barcode_id else '-' }}</td>
                             <td>{{ format_currency(emp.hourly_rate) }}</td>
                             <td>
