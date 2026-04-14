@@ -3887,6 +3887,22 @@ def get_current_attendance(user_id):
     return get_today_attendance(user_id)
 
 
+def get_live_attendance_context(user_id, attendance_row=None, overtime_row=None, source_label="System"):
+    if attendance_row:
+        return attendance_row
+    attendance = get_current_attendance(user_id)
+    if attendance:
+        return attendance
+    open_overtime = overtime_row or get_open_overtime_session(
+        user_id,
+        actor_id=user_id,
+        source_label=source_label,
+    )
+    if open_overtime and open_overtime.get("attendance_id"):
+        return get_attendance_by_id(open_overtime["attendance_id"])
+    return None
+
+
 def get_latest_attendance_with_time_in(user_id):
     return fetchone("""
         SELECT *
@@ -5304,7 +5320,11 @@ def clear_resolved_break_limit_notifications(user_row, attendance_row=None, incl
     user_id = user_row.get("id") if hasattr(user_row, "get") else None
     if not user_id:
         return 0
-    attendance = attendance_row or get_current_attendance(user_id)
+    attendance = get_live_attendance_context(
+        user_id,
+        attendance_row=attendance_row,
+        source_label="Break notification cleanup",
+    )
     if not attendance or not attendance.get("id") or not attendance.get("time_in"):
         return 0
 
@@ -7825,7 +7845,16 @@ def dashboard():
         flash("Your session expired. Please log in again.", "warning")
         return redirect(url_for("login"))
 
-    today_attendance = get_current_attendance(user["id"])
+    open_overtime = get_open_overtime_session(
+        user["id"],
+        actor_id=user["id"],
+        source_label="Employee dashboard",
+    )
+    today_attendance = get_live_attendance_context(
+        user["id"],
+        overtime_row=open_overtime,
+        source_label="Employee dashboard",
+    )
     open_break = get_open_break(user["id"], today_attendance)
     clear_resolved_break_limit_notifications(
         user,
@@ -7847,7 +7876,7 @@ def dashboard():
         LIMIT 10
     """, (user["id"],))
 
-    current_status = get_user_live_status(user["id"])
+    current_status = "On Overtime" if open_overtime else get_user_live_status(user["id"])
     override_status = get_employee_override_status_for_date(user["id"], today_str())
     if override_status:
         current_status = override_status["label"]
@@ -9055,6 +9084,21 @@ def build_admin_employee_rows_snapshot():
     today_context_map = get_effective_employee_context_map(users, reference_date=today_str())
     attendance_map = get_admin_current_attendance_map()
     open_overtime_map = get_admin_open_overtime_map()
+    missing_linked_attendance_ids = [
+        int(overtime_row["attendance_id"])
+        for user_id, overtime_row in open_overtime_map.items()
+        if user_id not in attendance_map and overtime_row.get("attendance_id")
+    ]
+    if missing_linked_attendance_ids:
+        placeholders = ", ".join(["?"] * len(missing_linked_attendance_ids))
+        for row in fetchall(f"""
+            SELECT *
+            FROM attendance
+            WHERE id IN ({placeholders})
+            ORDER BY user_id ASC, id DESC
+        """, tuple(missing_linked_attendance_ids)):
+            row_dict = dict(row)
+            attendance_map.setdefault(int(row_dict["user_id"]), row_dict)
     attendance_ids = [int(row["id"]) for row in attendance_map.values()]
     open_break_map = get_admin_open_break_map(attendance_ids)
     break_minutes_map = get_admin_break_minutes_map(attendance_ids)
