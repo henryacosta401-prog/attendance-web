@@ -102,7 +102,7 @@ def build_correction_change_summary(before_values, after_values):
 
 
 def describe_request_review_result(request_type, work_date, requested_time_out=""):
-    if request_type in LEAVE_REQUEST_TYPES:
+    if request_type in (LEAVE_REQUEST_TYPES | {"Absent"}):
         return f"{request_type} approved for {work_date}."
     if request_type == "Undertime":
         return f"Undertime request approved for {work_date}" + (f" at {requested_time_out}." if requested_time_out else ".")
@@ -113,7 +113,7 @@ def normalize_request_date_range(work_date, end_work_date=""):
     start_date = parse_iso_date(work_date)
     end_date = parse_iso_date(end_work_date, start_date)
     if not start_date:
-        raise ValueError("Please choose a valid leave date.")
+        raise ValueError("Please choose a valid request date.")
     if not end_date:
         end_date = start_date
     if end_date < start_date:

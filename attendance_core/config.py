@@ -84,6 +84,7 @@ INCIDENT_DISCIPLINARY_POLICY = {
 INCIDENT_ACTION_STATUSES = ("Coaching", "Suspension", "NTE", "Termination")
 DISCIPLINARY_ACTION_TYPES = ("Coaching", "NTE", "Suspension", "Termination")
 ATTENDANCE_REQUEST_TYPES = {
+    "Absent",
     "Missed Time In",
     "Missed Time Out",
     "Wrong Break",

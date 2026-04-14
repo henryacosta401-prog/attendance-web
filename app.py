@@ -169,6 +169,22 @@ from attendance_core.workflows import (
     split_datetime_to_time,
 )
 
+ABSENT_REQUEST_TYPES = {"Absent"}
+DATE_RANGE_REQUEST_TYPES = LEAVE_REQUEST_TYPES | ABSENT_REQUEST_TYPES
+NO_TIMESTAMP_REQUEST_TYPES = DATE_RANGE_REQUEST_TYPES
+APPROVED_SPECIAL_REQUEST_TYPES = DATE_RANGE_REQUEST_TYPES | {"Undertime"}
+
+
+def get_special_request_priority(request_type):
+    if request_type in LEAVE_REQUEST_TYPES:
+        return 3
+    if request_type in ABSENT_REQUEST_TYPES:
+        return 2
+    if request_type == "Undertime":
+        return 1
+    return 0
+
+
 # Optional Postgres support
 POSTGRES_ENABLED = False
 try:
@@ -4060,6 +4076,8 @@ def get_attendance_override_block_message(override_status, action_key, attendanc
     end_date = override_end_date or today_str()
     if override_type == "Suspension":
         return f"Employee is suspended until {end_date}."
+    if override_type == "Absent":
+        return f"Employee has an approved absent request for {end_date}."
     return f"Employee is on {override_type} until {end_date}."
 
 
@@ -4389,7 +4407,7 @@ def is_scheduled_today(user_row):
     return is_scheduled_on_date(user_row, today_str())
 
 
-def get_approved_leave_for_date(user_id, work_date):
+def get_approved_override_request_for_date(user_id, work_date):
     if not user_id or not work_date:
         return None
     return fetchone("""
@@ -4399,7 +4417,7 @@ def get_approved_leave_for_date(user_id, work_date):
           AND work_date <= ?
           AND COALESCE(end_work_date, work_date) >= ?
           AND status = 'Approved'
-          AND request_type IN ('Sick Leave', 'Paid Leave')
+          AND request_type IN ('Absent', 'Sick Leave', 'Paid Leave')
         ORDER BY id DESC LIMIT 1
     """, (user_id, work_date, work_date))
 
@@ -4414,7 +4432,7 @@ def get_employee_override_status_for_date(user_id, work_date):
             "details": suspension.get("details") or "",
             "end_date": suspension.get("end_date") or suspension.get("action_date") or work_date,
         }
-    leave = get_approved_leave_for_date(user_id, work_date)
+    leave = get_approved_override_request_for_date(user_id, work_date)
     if leave:
         leave = dict(leave)
         return {
@@ -4432,7 +4450,7 @@ def is_absent_today(user_row, attendance_row):
     if not is_scheduled_today(user_row):
         return False
     if has_app_context():
-        if get_approved_leave_for_date(user_row["id"], today_str()):
+        if get_approved_override_request_for_date(user_row["id"], today_str()):
             return False
         if get_suspension_for_date(user_row["id"], today_str()):
             return False
@@ -5438,23 +5456,43 @@ def get_request_day_count(row_or_work_date, end_work_date=""):
         return len(expand_request_dates(row_or_work_date.get("work_date"), row_or_work_date.get("end_work_date")))
     return len(expand_request_dates(row_or_work_date, end_work_date))
 
-def has_overlapping_leave_request(user_id, request_type, work_date, end_work_date, exclude_id=None):
+
+def find_overlapping_date_range_request(user_id, work_date, end_work_date, request_types=None, exclude_id=None):
     start_str, end_str = normalize_request_date_range(work_date, end_work_date)
-    sql = """
-        SELECT id
+    normalized_types = tuple(sorted(request_types or DATE_RANGE_REQUEST_TYPES))
+    placeholders = ", ".join("?" for _ in normalized_types)
+    sql = f"""
+        SELECT *
         FROM correction_requests
         WHERE user_id = ?
-          AND request_type = ?
+          AND request_type IN ({placeholders})
           AND status IN ('Pending', 'Approved')
           AND work_date <= ?
           AND COALESCE(end_work_date, work_date) >= ?
     """
-    params = [user_id, request_type, end_str, start_str]
+    params = [user_id, *normalized_types, end_str, start_str]
     if exclude_id:
         sql += " AND id != ?"
         params.append(exclude_id)
     sql += " ORDER BY id DESC LIMIT 1"
     return fetchone(sql, params)
+
+
+def get_attendance_dates_in_request_range(user_id, work_date, end_work_date=""):
+    start_str, end_str = normalize_request_date_range(work_date, end_work_date)
+    return [
+        row["work_date"]
+        for row in fetchall(
+            """
+            SELECT DISTINCT work_date
+            FROM attendance
+            WHERE user_id = ?
+              AND work_date BETWEEN ? AND ?
+            ORDER BY work_date ASC
+            """,
+            (user_id, start_str, end_str),
+        )
+    ]
 
 
 def get_overlap_days(start_a, end_a, start_b, end_b):
@@ -6857,7 +6895,7 @@ def build_employee_attendance_calendar(user_row, year, month):
 
     request_map = {}
     for row in [dict(item) for item in get_approved_special_requests(user_id=user_row["id"], date_from=date_from_text, date_to=date_to_text)]:
-        request_dates = expand_request_dates(row["work_date"], row.get("end_work_date")) if row["request_type"] in LEAVE_REQUEST_TYPES else [row["work_date"]]
+        request_dates = expand_request_dates(row["work_date"], row.get("end_work_date")) if row["request_type"] in DATE_RANGE_REQUEST_TYPES else [row["work_date"]]
         for request_work_date in request_dates:
             matched_attendance, _ = get_matching_attendance_context_for_request(
                 row["user_id"],
@@ -6869,9 +6907,7 @@ def build_employee_attendance_calendar(user_row, year, month):
             if target_work_date < date_from_text or target_work_date > date_to_text:
                 continue
             existing = request_map.get(target_work_date)
-            if existing and existing.get("request_type") in LEAVE_REQUEST_TYPES:
-                continue
-            if row["request_type"] in LEAVE_REQUEST_TYPES or not existing:
+            if not existing or get_special_request_priority(row["request_type"]) > get_special_request_priority(existing.get("request_type")):
                 request_map[target_work_date] = row
 
     suspension_map = {}
@@ -6915,10 +6951,11 @@ def build_employee_attendance_calendar(user_row, year, month):
         if attendance_row:
             row = dict(attendance_row)
             row["source_type"] = "attendance"
-            row["request_type"] = special_request["request_type"] if special_request else ""
-            row["admin_note"] = special_request["admin_note"] if special_request else ""
-            row["message"] = special_request["message"] if special_request else ""
-            row["requested_time_out"] = special_request["requested_time_out"] if special_request else ""
+            effective_special_request = special_request if special_request and special_request["request_type"] not in ABSENT_REQUEST_TYPES else None
+            row["request_type"] = effective_special_request["request_type"] if effective_special_request else ""
+            row["admin_note"] = effective_special_request["admin_note"] if effective_special_request else ""
+            row["message"] = effective_special_request["message"] if effective_special_request else ""
+            row["requested_time_out"] = effective_special_request["requested_time_out"] if effective_special_request else ""
             item = enrich_history_record(row, break_limit_minutes, employee_row=effective_user)
             state_key = "worked"
             label = "Present"
@@ -6930,6 +6967,8 @@ def build_employee_attendance_calendar(user_row, year, month):
                 state_key = "leave"
                 label = item["record_type"]
                 tone = "yellow" if item["record_type"] == "Sick Leave" else "green"
+            elif item["record_type"] in ABSENT_REQUEST_TYPES:
+                state_key, label, tone = "absent", "Absent", "red"
             elif item["record_type"] == "Undertime":
                 state_key, label, tone = "undertime", "Undertime", "yellow"
             elif row.get("late_flag") == 1:
@@ -6983,6 +7022,17 @@ def build_employee_attendance_calendar(user_row, year, month):
                 "tone": "yellow" if special_request["request_type"] == "Sick Leave" else "green",
                 "state_key": "leave",
                 "details": note or f"Approved {special_request['request_type'].lower()} request.",
+                "highlight": True,
+            }
+
+        if special_request and special_request["request_type"] in ABSENT_REQUEST_TYPES:
+            note = special_request.get("admin_note") or special_request.get("message") or ""
+            return {
+                "date": work_date,
+                "label": "Absent",
+                "tone": "red",
+                "state_key": "absent",
+                "details": note or "Approved absent request.",
                 "highlight": True,
             }
 
@@ -8325,7 +8375,7 @@ def employee_corrections():
             flash("Requested time out is required for undertime requests.", "danger")
             return redirect(url_for("employee_corrections"))
 
-        if request_type in LEAVE_REQUEST_TYPES:
+        if request_type in DATE_RANGE_REQUEST_TYPES:
             try:
                 work_date, end_work_date = normalize_request_date_range(work_date, end_work_date or work_date)
             except ValueError as exc:
@@ -8336,10 +8386,23 @@ def employee_corrections():
             requested_break_end = ""
             requested_time_out = ""
 
-            existing_leave = has_overlapping_leave_request(user["id"], request_type, work_date, end_work_date)
-            if existing_leave:
-                flash(f"A {request_type.lower()} request already exists in that date range.", "warning")
+            existing_request = find_overlapping_date_range_request(user["id"], work_date, end_work_date)
+            if existing_request:
+                flash(
+                    f"An approved or pending {existing_request['request_type'].lower()} request already covers that date range.",
+                    "warning",
+                )
                 return redirect(url_for("employee_corrections"))
+
+            if request_type in ABSENT_REQUEST_TYPES:
+                attendance_conflict_dates = get_attendance_dates_in_request_range(user["id"], work_date, end_work_date)
+                if attendance_conflict_dates:
+                    flash(
+                        "Absent requests can only be used for dates without attendance records. "
+                        f"Existing attendance was found on {format_request_date_range(attendance_conflict_dates[0], attendance_conflict_dates[-1])}.",
+                        "warning",
+                    )
+                    return redirect(url_for("employee_corrections"))
         else:
             end_work_date = work_date
 
@@ -8817,19 +8880,19 @@ def get_admin_override_maps():
         row_dict = dict(row)
         suspension_map.setdefault(int(row_dict["user_id"]), row_dict)
 
-    leave_map = {}
+    override_request_map = {}
     for row in fetchall("""
         SELECT *
         FROM correction_requests
         WHERE status = 'Approved'
-          AND request_type IN ('Sick Leave', 'Paid Leave')
+          AND request_type IN ('Absent', 'Sick Leave', 'Paid Leave')
           AND work_date <= ?
           AND COALESCE(end_work_date, work_date) >= ?
         ORDER BY work_date DESC, id DESC
     """, (today_str(), today_str())):
         row_dict = dict(row)
-        leave_map.setdefault(int(row_dict["user_id"]), row_dict)
-    return suspension_map, leave_map
+        override_request_map.setdefault(int(row_dict["user_id"]), row_dict)
+    return suspension_map, override_request_map
 
 
 def get_admin_open_overtime_map():
@@ -8875,7 +8938,7 @@ def build_admin_employee_rows_snapshot():
     attendance_ids = [int(row["id"]) for row in attendance_map.values()]
     open_break_map = get_admin_open_break_map(attendance_ids)
     break_minutes_map = get_admin_break_minutes_map(attendance_ids)
-    suspension_map, leave_map = get_admin_override_maps()
+    suspension_map, override_request_map = get_admin_override_maps()
     file_exists_cache = {}
     attendance_context_cache = {}
 
@@ -8922,8 +8985,8 @@ def build_admin_employee_rows_snapshot():
                 "details": suspension.get("details") or "",
                 "end_date": suspension.get("end_date") or suspension.get("action_date") or today_str(),
             }
-        elif user_id in leave_map:
-            leave = leave_map[user_id]
+        elif user_id in override_request_map:
+            leave = override_request_map[user_id]
             override_status = {
                 "type": leave["request_type"],
                 "label": leave["request_type"],
@@ -8957,7 +9020,7 @@ def build_admin_employee_rows_snapshot():
         elif override_status:
             status_display = override_status["label"]
         elif absent_today:
-            status_display = "Absent"
+            status_display = "Not Timed In"
         elif missing_timeout_today:
             status_display = "Missing Time Out"
         elif undertime_today:
@@ -9277,7 +9340,7 @@ def update_attendance_record_by_admin(attendance_id, time_in_value="", time_out_
 def notify_admins_for_exceptions(exception_groups):
     for row in exception_groups["absent"]:
         create_admin_alert_once(
-            "Absent Today",
+            "Not Timed In Today",
             f"{row['full_name']} is scheduled for today in {row['department'] or 'Unassigned'} and has not timed in yet."
         )
 
@@ -9328,6 +9391,9 @@ def enrich_correction_request_tracking(item):
     item["has_requested_time_details"] = bool(item["requested_time_details"])
     item["has_current_time_details"] = bool(item["current_time_details"])
     item["is_leave_request"] = item.get("request_type") in LEAVE_REQUEST_TYPES
+    item["is_absent_request"] = item.get("request_type") in ABSENT_REQUEST_TYPES
+    item["is_date_range_request"] = item.get("request_type") in DATE_RANGE_REQUEST_TYPES
+    item["is_time_free_request"] = item.get("request_type") in NO_TIMESTAMP_REQUEST_TYPES
     item["status_tone"] = {
         "Pending": "yellow",
         "Approved": "green",
@@ -9446,7 +9512,7 @@ def get_approved_special_requests(user_id=None, search="", department="", date_f
         SELECT c.*, u.full_name, u.username, u.break_limit_minutes
         FROM correction_requests c
         JOIN users u ON u.id = c.user_id
-        WHERE c.status = 'Approved' AND c.request_type IN ('Undertime', 'Sick Leave', 'Paid Leave')
+        WHERE c.status = 'Approved' AND c.request_type IN ('Absent', 'Undertime', 'Sick Leave', 'Paid Leave')
     """
     params = []
 
@@ -9540,33 +9606,7 @@ def build_employee_history_records(user_row, limit=60):
     suspension_rows = [dict(row) for row in get_disciplinary_actions(action_type="Suspension", user_id=user_row["id"])]
     request_map = {}
     for row in special_requests:
-        request_dates = expand_request_dates(row["work_date"], row.get("end_work_date")) if row["request_type"] in LEAVE_REQUEST_TYPES else [row["work_date"]]
-        for request_work_date in request_dates:
-            matched_attendance, _ = get_matching_attendance_context_for_request(
-                row["user_id"],
-                request_work_date,
-                request_type=row["request_type"],
-                requested_time_out=row.get("requested_time_out")
-            )
-            target_work_date = matched_attendance["work_date"] if matched_attendance else request_work_date
-            request_map[(row["user_id"], target_work_date)] = row
-
-    combined = []
-    seen_keys = set()
-
-    for row in attendance_rows:
-        key = (row["user_id"], row["work_date"])
-        special_request = request_map.get(key)
-        row["source_type"] = "attendance"
-        row["request_type"] = special_request["request_type"] if special_request else ""
-        row["admin_note"] = special_request["admin_note"] if special_request else ""
-        row["message"] = special_request["message"] if special_request else ""
-        row["requested_time_out"] = special_request["requested_time_out"] if special_request else ""
-        combined.append(enrich_history_record(row, get_employee_break_limit(user_row), employee_row=user_row))
-        seen_keys.add(key)
-
-    for row in special_requests:
-        request_dates = expand_request_dates(row["work_date"], row.get("end_work_date")) if row["request_type"] in LEAVE_REQUEST_TYPES else [row["work_date"]]
+        request_dates = expand_request_dates(row["work_date"], row.get("end_work_date")) if row["request_type"] in DATE_RANGE_REQUEST_TYPES else [row["work_date"]]
         for request_work_date in request_dates:
             matched_attendance, _ = get_matching_attendance_context_for_request(
                 row["user_id"],
@@ -9576,16 +9616,46 @@ def build_employee_history_records(user_row, limit=60):
             )
             target_work_date = matched_attendance["work_date"] if matched_attendance else request_work_date
             key = (row["user_id"], target_work_date)
-            if key in seen_keys or row["request_type"] not in (LEAVE_REQUEST_TYPES | {"Undertime"}):
+            existing = request_map.get(key)
+            if not existing or get_special_request_priority(row["request_type"]) > get_special_request_priority(existing.get("request_type")):
+                request_map[key] = row
+
+    combined = []
+    seen_keys = set()
+
+    for row in attendance_rows:
+        key = (row["user_id"], row["work_date"])
+        special_request = request_map.get(key)
+        row["source_type"] = "attendance"
+        effective_special_request = special_request if special_request and special_request["request_type"] not in ABSENT_REQUEST_TYPES else None
+        row["request_type"] = effective_special_request["request_type"] if effective_special_request else ""
+        row["admin_note"] = effective_special_request["admin_note"] if effective_special_request else ""
+        row["message"] = effective_special_request["message"] if effective_special_request else ""
+        row["requested_time_out"] = effective_special_request["requested_time_out"] if effective_special_request else ""
+        combined.append(enrich_history_record(row, get_employee_break_limit(user_row), employee_row=user_row))
+        seen_keys.add(key)
+
+    for row in special_requests:
+        request_dates = expand_request_dates(row["work_date"], row.get("end_work_date")) if row["request_type"] in DATE_RANGE_REQUEST_TYPES else [row["work_date"]]
+        for request_work_date in request_dates:
+            matched_attendance, _ = get_matching_attendance_context_for_request(
+                row["user_id"],
+                request_work_date,
+                request_type=row["request_type"],
+                requested_time_out=row.get("requested_time_out")
+            )
+            target_work_date = matched_attendance["work_date"] if matched_attendance else request_work_date
+            key = (row["user_id"], target_work_date)
+            if key in seen_keys or row["request_type"] not in APPROVED_SPECIAL_REQUEST_TYPES:
                 continue
-            is_leave_request = row["request_type"] in LEAVE_REQUEST_TYPES
+            is_time_free_request = row["request_type"] in NO_TIMESTAMP_REQUEST_TYPES
             synthetic_row = {
                 "id": None,
                 "user_id": row["user_id"],
                 "work_date": target_work_date,
                 "time_in": None,
-                "time_out": None if is_leave_request else row.get("requested_time_out"),
-                "status": row["request_type"] if is_leave_request else "Approved Undertime",
+                "time_out": None if is_time_free_request else row.get("requested_time_out"),
+                "status": row["request_type"] if is_time_free_request else "Approved Undertime",
                 "proof_file": None,
                 "late_flag": 0,
                 "late_minutes": 0,
@@ -9668,7 +9738,7 @@ def build_admin_history_records(search="", department="", type_filter="", late_o
     )]
     request_map = {}
     for row in special_requests:
-        request_dates = expand_request_dates(row["work_date"], row.get("end_work_date")) if row["request_type"] in LEAVE_REQUEST_TYPES else [row["work_date"]]
+        request_dates = expand_request_dates(row["work_date"], row.get("end_work_date")) if row["request_type"] in DATE_RANGE_REQUEST_TYPES else [row["work_date"]]
         for request_work_date in request_dates:
             matched_attendance, _ = get_matching_attendance_context_for_request(
                 row["user_id"],
@@ -9677,7 +9747,10 @@ def build_admin_history_records(search="", department="", type_filter="", late_o
                 requested_time_out=row.get("requested_time_out")
             )
             target_work_date = matched_attendance["work_date"] if matched_attendance else request_work_date
-            request_map[(row["user_id"], target_work_date)] = row
+            key = (row["user_id"], target_work_date)
+            existing = request_map.get(key)
+            if not existing or get_special_request_priority(row["request_type"]) > get_special_request_priority(existing.get("request_type")):
+                request_map[key] = row
     attendance_key_map = {(row["user_id"], row["work_date"]): row for row in attendance_rows}
 
     enriched = []
@@ -9688,10 +9761,11 @@ def build_admin_history_records(search="", department="", type_filter="", late_o
         key = (row["user_id"], row["work_date"])
         special_request = request_map.get(key)
         row["source_type"] = "attendance"
-        row["request_type"] = special_request["request_type"] if special_request else ""
-        row["admin_note"] = special_request["admin_note"] if special_request else ""
-        row["message"] = special_request["message"] if special_request else ""
-        row["requested_time_out"] = special_request["requested_time_out"] if special_request else ""
+        effective_special_request = special_request if special_request and special_request["request_type"] not in ABSENT_REQUEST_TYPES else None
+        row["request_type"] = effective_special_request["request_type"] if effective_special_request else ""
+        row["admin_note"] = effective_special_request["admin_note"] if effective_special_request else ""
+        row["message"] = effective_special_request["message"] if effective_special_request else ""
+        row["requested_time_out"] = effective_special_request["requested_time_out"] if effective_special_request else ""
 
         item = enrich_history_record(row, parse_break_limit_minutes(row["break_limit_minutes"]), employee_row=employee)
         if type_filter and item["record_type"] != type_filter:
@@ -9704,7 +9778,7 @@ def build_admin_history_records(search="", department="", type_filter="", late_o
         seen_keys.add(key)
 
     for row in special_requests:
-        request_dates = expand_request_dates(row["work_date"], row.get("end_work_date")) if row["request_type"] in LEAVE_REQUEST_TYPES else [row["work_date"]]
+        request_dates = expand_request_dates(row["work_date"], row.get("end_work_date")) if row["request_type"] in DATE_RANGE_REQUEST_TYPES else [row["work_date"]]
         for request_work_date in request_dates:
             matched_attendance, _ = get_matching_attendance_context_for_request(
                 row["user_id"],
@@ -9714,9 +9788,9 @@ def build_admin_history_records(search="", department="", type_filter="", late_o
             )
             target_work_date = matched_attendance["work_date"] if matched_attendance else request_work_date
             key = (row["user_id"], target_work_date)
-            if key in seen_keys or row["request_type"] not in (LEAVE_REQUEST_TYPES | {"Undertime"}):
+            if key in seen_keys or row["request_type"] not in APPROVED_SPECIAL_REQUEST_TYPES:
                 continue
-            is_leave_request = row["request_type"] in LEAVE_REQUEST_TYPES
+            is_time_free_request = row["request_type"] in NO_TIMESTAMP_REQUEST_TYPES
             synthetic_row = {
                 "id": None,
                 "user_id": row["user_id"],
@@ -9725,8 +9799,8 @@ def build_admin_history_records(search="", department="", type_filter="", late_o
                 "break_limit_minutes": row["break_limit_minutes"],
                 "work_date": target_work_date,
                 "time_in": None,
-                "time_out": None if is_leave_request else row.get("requested_time_out"),
-                "status": row["request_type"] if is_leave_request else "Approved Undertime",
+                "time_out": None if is_time_free_request else row.get("requested_time_out"),
+                "status": row["request_type"] if is_time_free_request else "Approved Undertime",
                 "proof_file": None,
                 "late_flag": 0,
                 "late_minutes": 0,
@@ -9829,7 +9903,7 @@ def build_admin_history_records(search="", department="", type_filter="", late_o
                     continue
                 if key in suspension_date_keys:
                     continue
-                if special_request and special_request["request_type"] in LEAVE_REQUEST_TYPES:
+                if special_request and special_request["request_type"] in DATE_RANGE_REQUEST_TYPES:
                     continue
                 if not is_scheduled_on_date(effective_employee, work_date):
                     continue
@@ -11369,7 +11443,7 @@ def export_admin_exceptions_excel():
     exception_groups = get_exception_collections(get_admin_employee_rows(department_filter=department))
     selected_rows = exception_groups.get(exception_type, [])
     titles = {
-        "absent": "Absent Today",
+        "absent": "Not Timed In Today",
         "late": "Late Today",
         "over_break": "Over Break",
         "missing_timeout": "Missing Time Out",
@@ -11504,7 +11578,7 @@ def update_correction_request(request_id):
         flash(str(exc), "danger")
         return redirect(url_for("admin_corrections"))
 
-    if correction["request_type"] in LEAVE_REQUEST_TYPES:
+    if correction["request_type"] in NO_TIMESTAMP_REQUEST_TYPES:
         requested_time_in = ""
         requested_break_start = ""
         requested_break_end = ""
@@ -11517,14 +11591,44 @@ def update_correction_request(request_id):
     reviewed_by = session["user_id"] if status in {"Approved", "Rejected"} else None
 
     if status == "Approved":
-        if correction["request_type"] in (LEAVE_REQUEST_TYPES | {"Undertime"}):
-            requested_time_out_dt = combine_work_date_and_time(correction["work_date"], requested_time_out) if requested_time_out else None
-            attendance, _ = get_matching_attendance_context_for_request(
+        if correction["request_type"] in DATE_RANGE_REQUEST_TYPES:
+            overlapping_request = find_overlapping_date_range_request(
                 correction["user_id"],
                 correction["work_date"],
-                request_type=correction["request_type"],
-                requested_time_out=requested_time_out_dt
+                correction.get("end_work_date") or correction["work_date"],
+                exclude_id=request_id,
             )
+            if overlapping_request:
+                flash(
+                    f"An approved or pending {overlapping_request['request_type'].lower()} request already covers that date range.",
+                    "warning",
+                )
+                return redirect(url_for("admin_corrections"))
+        if correction["request_type"] in ABSENT_REQUEST_TYPES:
+            attendance_conflict_dates = get_attendance_dates_in_request_range(
+                correction["user_id"],
+                correction["work_date"],
+                correction.get("end_work_date") or correction["work_date"],
+            )
+            if attendance_conflict_dates:
+                flash(
+                    "Absent requests can only be approved for dates without attendance records. "
+                    f"Existing attendance was found on {format_request_date_range(attendance_conflict_dates[0], attendance_conflict_dates[-1])}.",
+                    "warning",
+                )
+                return redirect(url_for("admin_corrections"))
+
+        if correction["request_type"] in APPROVED_SPECIAL_REQUEST_TYPES:
+            if correction["request_type"] == "Undertime":
+                requested_time_out_dt = combine_work_date_and_time(correction["work_date"], requested_time_out) if requested_time_out else None
+                attendance, _ = get_matching_attendance_context_for_request(
+                    correction["user_id"],
+                    correction["work_date"],
+                    request_type=correction["request_type"],
+                    requested_time_out=requested_time_out_dt
+                )
+            else:
+                attendance = None
             if correction["request_type"] == "Undertime" and attendance and requested_time_out:
                 try:
                     applied_changes = apply_attendance_correction(
@@ -11568,6 +11672,11 @@ def update_correction_request(request_id):
     if correction["request_type"] == "Undertime":
         requested_break_start = ""
         requested_break_end = ""
+    elif correction["request_type"] in NO_TIMESTAMP_REQUEST_TYPES:
+        requested_time_in = ""
+        requested_break_start = ""
+        requested_break_end = ""
+        requested_time_out = ""
 
     requested_time_in_dt, requested_break_start_dt, requested_break_end_dt, requested_time_out_dt = resolve_correction_datetimes(
         preview_work_date,
@@ -11602,7 +11711,7 @@ def update_correction_request(request_id):
     ), commit=True)
 
     notification_message = f"Your {correction['request_type']} request for {correction['work_date']} is now {status}."
-    if correction["request_type"] in LEAVE_REQUEST_TYPES:
+    if correction["request_type"] in DATE_RANGE_REQUEST_TYPES:
         notification_message = f"Your {correction['request_type']} request for {format_request_date_range(correction['work_date'], correction.get('end_work_date'))} is now {status}."
     if status == "Approved" and applied_changes:
         notification_message = f"{notification_message} Applied: {applied_changes}"

@@ -261,7 +261,7 @@
     <div class="correction-layout">
         <section class="correction-panel" data-tour-id="correction-request-form">
             <div class="section-title" style="margin-bottom:10px;">Submit Request</div>
-            <div class="section-subtitle" style="margin-bottom:16px;">Use this form for missed attendance, wrong break times, undertime, or leave requests. Leave requests can cover multiple days.</div>
+            <div class="section-subtitle" style="margin-bottom:16px;">Use this form for missed attendance, wrong break times, undertime, leave requests, or absent requests.</div>
 
             <div class="correction-balance-grid">
                 <div class="correction-balance-card">
@@ -282,6 +282,7 @@
                 <label>Request Type</label>
                 <select name="request_type" class="input" required>
                     <option value="">Select type</option>
+                    <option>Absent</option>
                     <option>Missed Time In</option>
                     <option>Missed Time Out</option>
                     <option>Wrong Break</option>
@@ -292,13 +293,13 @@
                     <option>Other</option>
                 </select>
 
-                <label style="display:block; margin-top:12px;">Work Date / Leave Start</label>
+                <label style="display:block; margin-top:12px;">Work Date / Request Start</label>
                 <input type="date" name="work_date" class="input" required>
 
-                <div id="leave-end-wrap" style="margin-top:12px; display:none;">
-                    <label>Leave End Date</label>
+                <div id="date-range-wrap" style="margin-top:12px; display:none;">
+                    <label>Request End Date</label>
                     <input type="date" name="end_work_date" class="input">
-                    <div class="small muted" style="margin-top:6px;">Leave requests can cover multiple days and will be counted against your balance after approval.</div>
+                    <div class="small muted" style="margin-top:6px;">Leave and absent requests can cover multiple days. Approved leave uses your balance; approved absent requests do not.</div>
                 </div>
 
                 <div class="correction-form-grid" style="margin-top:12px;">
@@ -321,7 +322,7 @@
                 </div>
 
                 <label style="display:block; margin-top:12px;">Details</label>
-                <textarea name="message" class="textarea" rows="5" placeholder="Explain the issue, the correct timestamps, or the leave reason..." required></textarea>
+                <textarea name="message" class="textarea" rows="5" placeholder="Explain the issue, the correct timestamps, or the leave/absence reason..." required></textarea>
 
                 <button class="btn btn-primary" type="submit" style="width:100%; margin-top:16px;">Submit Request</button>
             </form>
@@ -363,6 +364,8 @@
                                         </div>
                                     {% elif item.is_leave_request %}
                                         <div class="correction-note-box">This request covers approved leave dates rather than timestamp changes.</div>
+                                    {% elif item.is_absent_request %}
+                                        <div class="correction-note-box">This request covers approved absent dates rather than timestamp changes.</div>
                                     {% else %}
                                         <div class="correction-note-box">No specific timestamp changes were entered. Admin will review your details note.</div>
                                     {% endif %}
@@ -418,7 +421,7 @@
             {% else %}
                 <div class="empty-state">
                     <div class="section-title" style="margin-bottom:8px;">No requests yet</div>
-                    <p class="muted">Your submitted corrections, undertime requests, and leave requests will appear here once you start using the tracker.</p>
+                    <p class="muted">Your submitted corrections, undertime requests, leave requests, and absent requests will appear here once you start using the tracker.</p>
                 </div>
             {% endif %}
         </section>
@@ -428,17 +431,17 @@
 <script>
 (() => {
     const requestType = document.querySelector('select[name="request_type"]');
-    const leaveEndWrap = document.getElementById('leave-end-wrap');
+    const dateRangeWrap = document.getElementById('date-range-wrap');
     const timeInputs = document.querySelectorAll('input[name="requested_time_in"], input[name="requested_time_out"], input[name="requested_break_start"], input[name="requested_break_end"]');
 
     function syncLeaveMode() {
-        const isLeave = requestType && (requestType.value === 'Sick Leave' || requestType.value === 'Paid Leave');
-        if (leaveEndWrap) {
-            leaveEndWrap.style.display = isLeave ? 'block' : 'none';
+        const usesDateRange = requestType && ['Sick Leave', 'Paid Leave', 'Absent'].includes(requestType.value);
+        if (dateRangeWrap) {
+            dateRangeWrap.style.display = usesDateRange ? 'block' : 'none';
         }
         timeInputs.forEach((input) => {
-            input.disabled = isLeave;
-            if (isLeave) {
+            input.disabled = usesDateRange;
+            if (usesDateRange) {
                 input.value = '';
             }
         });

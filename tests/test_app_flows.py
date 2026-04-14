@@ -648,6 +648,128 @@ class AppFlowsTestCase(unittest.TestCase):
         self.assertEqual(notification["title"], "Correction Request Updated")
         self.assertIn("Approved", notification["message"])
 
+    def test_employee_can_submit_multi_day_absent_request_and_admin_history_uses_it(self):
+        admin = self.create_user(
+            "absent-admin",
+            role="admin",
+            admin_permissions="dashboard,attendance",
+            admin_role_preset="attendance_supervisor",
+        )
+        employee = self.create_user("absent-request-employee", role="employee")
+        csrf_token = self.set_session_user(employee, csrf_token="absent-request-csrf")
+
+        response = self.client.post(
+            "/corrections",
+            data={
+                "csrf_token": csrf_token,
+                "request_type": "Absent",
+                "work_date": "2026-04-08",
+                "end_work_date": "2026-04-09",
+                "requested_time_in": "",
+                "requested_break_start": "",
+                "requested_break_end": "",
+                "requested_time_out": "",
+                "message": "Medical absence.",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+
+        with attendance_app.app.app_context():
+            correction = attendance_app.fetchone(
+                "SELECT * FROM correction_requests WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+                (employee["id"],),
+            )
+
+        self.assertEqual(correction["request_type"], "Absent")
+        self.assertEqual(correction["work_date"], "2026-04-08")
+        self.assertEqual(correction["end_work_date"], "2026-04-09")
+        self.assertFalse(correction["requested_time_in"])
+        self.assertFalse(correction["requested_time_out"])
+
+        admin_csrf = self.set_session_user(admin, csrf_token="absent-approve-csrf")
+        approve_response = self.client.post(
+            f"/admin/corrections/{correction['id']}/update",
+            data={
+                "csrf_token": admin_csrf,
+                "status": "Approved",
+                "admin_note": "Approved absence.",
+                "requested_time_in": "",
+                "requested_break_start": "",
+                "requested_break_end": "",
+                "requested_time_out": "",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(approve_response.status_code, 302)
+
+        with attendance_app.app.app_context():
+            updated = attendance_app.fetchone("SELECT * FROM correction_requests WHERE id = ?", (correction["id"],))
+            employee_row = attendance_app.get_user_by_id(employee["id"])
+            employee_history = attendance_app.build_employee_history_records(employee_row, limit=10)
+            admin_history = attendance_app.build_admin_history_records(
+                type_filter="Absent",
+                date_from="2026-04-08",
+                date_to="2026-04-09",
+                limit=10,
+            )
+
+        self.assertEqual(updated["status"], "Approved")
+        self.assertIn("Absent approved", updated["applied_changes"] or "")
+        employee_absent_dates = [
+            item["row"]["work_date"]
+            for item in employee_history
+            if item["record_type"] == "Absent"
+        ]
+        admin_absent_dates = [
+            item["row"]["work_date"]
+            for item in admin_history
+            if item["row"]["user_id"] == employee["id"] and item["record_type"] == "Absent"
+        ]
+        self.assertIn("2026-04-08", employee_absent_dates)
+        self.assertIn("2026-04-09", employee_absent_dates)
+        self.assertEqual(admin_absent_dates.count("2026-04-08"), 1)
+        self.assertEqual(admin_absent_dates.count("2026-04-09"), 1)
+
+    def test_employee_absent_request_is_blocked_when_attendance_exists(self):
+        employee = self.create_user("absent-attendance-conflict", role="employee")
+        self.create_attendance(
+            employee["id"],
+            "2026-04-08",
+            "2026-04-08 09:00:00",
+            "2026-04-08 18:00:00",
+            status="Timed Out",
+        )
+        csrf_token = self.set_session_user(employee, csrf_token="absent-conflict-csrf")
+
+        response = self.client.post(
+            "/corrections",
+            data={
+                "csrf_token": csrf_token,
+                "request_type": "Absent",
+                "work_date": "2026-04-08",
+                "end_work_date": "2026-04-08",
+                "requested_time_in": "",
+                "requested_break_start": "",
+                "requested_break_end": "",
+                "requested_time_out": "",
+                "message": "Should be blocked.",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+
+        with attendance_app.app.app_context():
+            correction = attendance_app.fetchone(
+                "SELECT * FROM correction_requests WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+                (employee["id"],),
+            )
+
+        self.assertIsNone(correction)
+
     def test_rejecting_pending_leave_correction_updates_status_and_notification(self):
         admin = self.create_user(
             "reject-correction-admin",

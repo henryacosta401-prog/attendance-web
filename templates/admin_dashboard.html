@@ -145,7 +145,7 @@ document.addEventListener("DOMContentLoaded", function () {
         if (status === "Timed Out") return "admin-pill-blue";
         if (status === "Undertime") return "admin-pill-yellow";
         if (status === "Suspended") return "admin-pill-purple";
-        if (status === "Absent" || status === "Inactive" || status === "Missing Time Out") return "admin-pill-red";
+        if (status === "Absent" || status === "Not Timed In" || status === "Inactive" || status === "Missing Time Out") return "admin-pill-red";
         return "admin-pill-gray";
     }
     function avatarMarkup(emp) {
@@ -221,7 +221,7 @@ document.addEventListener("DOMContentLoaded", function () {
             tbody.innerHTML = rows.map(emp => {
                 const proofHtml = emp.proof_file && emp.proof_file_available && emp.proof_file_url ? `<a href="${escapeHtml(emp.proof_file_url)}" target="_blank" rel="noopener" class="admin-subtext">Open proof</a>` : (emp.proof_file ? `<span class="admin-subtext">Proof file missing</span>` : `<span class="admin-subtext">No proof uploaded</span>`);
                 const flags = [];
-                if (emp.absent_flag) flags.push(`<span class="admin-pill admin-pill-red">Absent</span>`);
+                if (emp.absent_flag) flags.push(`<span class="admin-pill admin-pill-red">Not Timed In</span>`);
                 if (emp.suspension_flag) flags.push(`<span class="admin-pill admin-pill-purple">Suspended</span>`);
                 if (emp.late_flag) flags.push(`<span class="admin-pill admin-pill-red">Late ${safeMinutes(emp.late_minutes, 0)}m</span>`);
                 if (emp.undertime_flag) flags.push(`<span class="admin-pill admin-pill-yellow">Undertime</span>`);
@@ -331,7 +331,7 @@ document.addEventListener("DOMContentLoaded", function () {
             <p class="admin-panel-subtitle">Search, filter, and page through the live roster from one primary workspace instead of scanning multiple dashboards first.</p>
             <div class="admin-filter-grid">
                 <div><label>Search</label><input id="searchBox" class="input" type="text" value="{{ search }}" placeholder="Search employee"></div>
-                <div><label>Status</label><select id="statusFilter" class="input"><option value="">All</option><option value="Absent" {% if status_filter == 'Absent' %}selected{% endif %}>Absent</option><option value="Suspended" {% if status_filter == 'Suspended' %}selected{% endif %}>Suspended</option><option value="Timed In" {% if status_filter == 'Timed In' %}selected{% endif %}>Timed In</option><option value="On Break" {% if status_filter == 'On Break' %}selected{% endif %}>On Break</option><option value="Timed Out" {% if status_filter == 'Timed Out' %}selected{% endif %}>Timed Out</option><option value="Undertime" {% if status_filter == 'Undertime' %}selected{% endif %}>Undertime</option><option value="Missing Time Out" {% if status_filter == 'Missing Time Out' %}selected{% endif %}>Missing Time Out</option><option value="Offline" {% if status_filter == 'Offline' %}selected{% endif %}>Offline</option><option value="Off Day" {% if status_filter == 'Off Day' %}selected{% endif %}>Off Day</option><option value="Inactive" {% if status_filter == 'Inactive' %}selected{% endif %}>Inactive</option></select></div>
+                <div><label>Status</label><select id="statusFilter" class="input"><option value="">All</option><option value="Not Timed In" {% if status_filter == 'Not Timed In' %}selected{% endif %}>Not Timed In</option><option value="Absent" {% if status_filter == 'Absent' %}selected{% endif %}>Absent</option><option value="Suspended" {% if status_filter == 'Suspended' %}selected{% endif %}>Suspended</option><option value="Timed In" {% if status_filter == 'Timed In' %}selected{% endif %}>Timed In</option><option value="On Break" {% if status_filter == 'On Break' %}selected{% endif %}>On Break</option><option value="Timed Out" {% if status_filter == 'Timed Out' %}selected{% endif %}>Timed Out</option><option value="Undertime" {% if status_filter == 'Undertime' %}selected{% endif %}>Undertime</option><option value="Missing Time Out" {% if status_filter == 'Missing Time Out' %}selected{% endif %}>Missing Time Out</option><option value="Offline" {% if status_filter == 'Offline' %}selected{% endif %}>Offline</option><option value="Off Day" {% if status_filter == 'Off Day' %}selected{% endif %}>Off Day</option><option value="Inactive" {% if status_filter == 'Inactive' %}selected{% endif %}>Inactive</option></select></div>
                 <div><label>Department</label><select id="departmentFilter" class="input"><option value="">All Departments</option>{% for dept in departments %}<option value="{{ dept }}" {% if department_filter == dept %}selected{% endif %}>{{ dept }}</option>{% endfor %}</select></div>
                 <div><label>Rows</label><select id="pageSize" class="input">{% for size in [10, 25, 50, 100] %}<option value="{{ size }}" {% if pagination.page_size == size %}selected{% endif %}>Show {{ size }}</option>{% endfor %}</select></div>
                 <div><label>Attention Filter</label><label class="admin-filter-check"><input id="overBreakOnly" type="checkbox" {% if over_break_only == '1' %}checked{% endif %}><span>Overbreak only</span></label></div>
@@ -353,10 +353,10 @@ document.addEventListener("DOMContentLoaded", function () {
                                 <td><div class="admin-row-user">{% if emp.profile_image and emp.profile_image_available %}<img class="admin-avatar" src="{{ url_for('uploaded_file', filename=emp.profile_image) }}" alt="avatar" loading="lazy" decoding="async">{% else %}<div class="admin-avatar-placeholder">{{ emp.avatar_initials }}</div>{% endif %}<div><div class="admin-name">{{ emp.full_name }}</div><div class="admin-username">@{{ emp.username }}</div></div></div></td>
                                 <td><div>{{ emp.department or '-' }}</div><div class="admin-subtext">{{ emp.position or '-' }}</div></td>
                                 <td><div>{{ emp.schedule_summary }}</div><div class="admin-subtext">{{ emp.schedule_window_summary }}</div></td>
-                                <td>{% set live_class = 'admin-pill-gray' %}{% if emp.status_display == 'Timed In' %}{% set live_class = 'admin-pill-green' %}{% elif emp.status_display in ['On Break', 'Undertime'] %}{% set live_class = 'admin-pill-yellow' %}{% elif emp.status_display == 'Timed Out' %}{% set live_class = 'admin-pill-blue' %}{% elif emp.status_display == 'Suspended' %}{% set live_class = 'admin-pill-purple' %}{% elif emp.status_display in ['Absent', 'Inactive', 'Missing Time Out'] %}{% set live_class = 'admin-pill-red' %}{% endif %}<span class="admin-pill {{ live_class }}">{{ emp.status_display }}</span></td>
+                                <td>{% set live_class = 'admin-pill-gray' %}{% if emp.status_display == 'Timed In' %}{% set live_class = 'admin-pill-green' %}{% elif emp.status_display in ['On Break', 'Undertime'] %}{% set live_class = 'admin-pill-yellow' %}{% elif emp.status_display == 'Timed Out' %}{% set live_class = 'admin-pill-blue' %}{% elif emp.status_display == 'Suspended' %}{% set live_class = 'admin-pill-purple' %}{% elif emp.status_display in ['Absent', 'Not Timed In', 'Inactive', 'Missing Time Out'] %}{% set live_class = 'admin-pill-red' %}{% endif %}<span class="admin-pill {{ live_class }}">{{ emp.status_display }}</span></td>
                                 <td><div>{{ format_datetime_12h(emp.time_in) if emp.time_in else '-' }}</div><div class="admin-subtext">{% if emp.time_out %}Out {{ format_datetime_12h(emp.time_out) }}{% else %}Expected out {{ emp.shift_end }}{% endif %}</div></td>
                                 <td><div>{{ emp.break_minutes }}m used</div><div class="admin-subtext">Limit {{ emp.break_limit_minutes }}m</div></td>
-                                <td><div class="admin-flags">{% if emp.absent_flag == 1 %}<span class="admin-pill admin-pill-red">Absent</span>{% endif %}{% if emp.suspension_flag == 1 %}<span class="admin-pill admin-pill-purple">Suspended</span>{% endif %}{% if emp.late_flag == 1 %}<span class="admin-pill admin-pill-red">Late {{ emp.late_minutes }}m</span>{% endif %}{% if emp.undertime_flag == 1 %}<span class="admin-pill admin-pill-yellow">Undertime</span>{% endif %}{% if emp.over_break_flag == 1 %}<span class="admin-pill admin-pill-yellow">Over break {{ emp.over_break_minutes }}m</span>{% endif %}{% if emp.missing_timeout_flag == 1 %}<span class="admin-pill admin-pill-red">Missing time out</span>{% endif %}{% if emp.scheduled_today == 0 %}<span class="admin-pill admin-pill-gray">Off today</span>{% endif %}</div><div style="margin-top:8px;">{% if emp.proof_file and emp.proof_file_available %}<a class="admin-subtext" href="{{ url_for('uploaded_file', filename=emp.proof_file) }}" target="_blank" rel="noopener">Open proof</a>{% elif emp.proof_file %}<span class="admin-subtext">Proof file missing</span>{% else %}<span class="admin-subtext">No proof uploaded</span>{% endif %}</div></td>
+                                <td><div class="admin-flags">{% if emp.absent_flag == 1 %}<span class="admin-pill admin-pill-red">Not Timed In</span>{% endif %}{% if emp.suspension_flag == 1 %}<span class="admin-pill admin-pill-purple">Suspended</span>{% endif %}{% if emp.late_flag == 1 %}<span class="admin-pill admin-pill-red">Late {{ emp.late_minutes }}m</span>{% endif %}{% if emp.undertime_flag == 1 %}<span class="admin-pill admin-pill-yellow">Undertime</span>{% endif %}{% if emp.over_break_flag == 1 %}<span class="admin-pill admin-pill-yellow">Over break {{ emp.over_break_minutes }}m</span>{% endif %}{% if emp.missing_timeout_flag == 1 %}<span class="admin-pill admin-pill-red">Missing time out</span>{% endif %}{% if emp.scheduled_today == 0 %}<span class="admin-pill admin-pill-gray">Off today</span>{% endif %}</div><div style="margin-top:8px;">{% if emp.proof_file and emp.proof_file_available %}<a class="admin-subtext" href="{{ url_for('uploaded_file', filename=emp.proof_file) }}" target="_blank" rel="noopener">Open proof</a>{% elif emp.proof_file %}<span class="admin-subtext">Proof file missing</span>{% else %}<span class="admin-subtext">No proof uploaded</span>{% endif %}</div></td>
                             </tr>
                             {% endfor %}
                         {% else %}
@@ -377,7 +377,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 <p class="admin-panel-subtitle">Keep the biggest exception buckets visible here, then dive into the live roster or exports only when you need detail.</p>
                 <div class="admin-signal-grid">
                     <div class="admin-signal-card">
-                        <div class="admin-signal-top"><div><div class="admin-exception-label">Absent Today</div><div class="admin-signal-count">{{ exception_groups.absent|length }}</div></div><span class="admin-pill admin-pill-red">Critical</span></div>
+                        <div class="admin-signal-top"><div><div class="admin-exception-label">Not Timed In Today</div><div class="admin-signal-count">{{ exception_groups.absent|length }}</div></div><span class="admin-pill admin-pill-red">Critical</span></div>
                         <div class="admin-signal-copy">Scheduled employees who passed shift start without timing in.</div>
                         <div class="admin-exception-actions" style="margin-top:10px;"><a class="btn btn-primary" href="{{ url_for('export_admin_exceptions_excel', type='absent', department=department_filter) }}">Export</a></div>
                     </div>
@@ -406,7 +406,7 @@ document.addEventListener("DOMContentLoaded", function () {
             <section class="admin-panel" data-tour-id="admin-exception-queue">
                 <h2>Exception Queue</h2>
                 <p class="admin-panel-subtitle">The fastest way to review the people who need follow-up right now.</p>
-                {% for key, title in [('absent', 'Absent Today'), ('late', 'Late Today'), ('undertime', 'Undertime Today'), ('over_break', 'Over Break'), ('missing_timeout', 'Missing Time Out')] %}
+                {% for key, title in [('absent', 'Not Timed In Today'), ('late', 'Late Today'), ('undertime', 'Undertime Today'), ('over_break', 'Over Break'), ('missing_timeout', 'Missing Time Out')] %}
                     <div class="admin-list" style="margin-top:14px;">
                         <div class="admin-subtext" style="font-size:13px; text-transform:uppercase; letter-spacing:0.08em;">{{ title }}</div>
                         {% if exception_groups[key] %}
@@ -424,7 +424,7 @@ document.addEventListener("DOMContentLoaded", function () {
                     <h2>Admin Alerts</h2>
                     <a class="btn btn-gray" href="{{ url_for('notifications_page') }}">View All</a>
                 </div>
-                <p class="admin-panel-subtitle">In-app notifications for absences and missing time-outs.</p>
+                <p class="admin-panel-subtitle">In-app notifications for not-timed-in alerts and missing time-outs.</p>
                 {% if admin_notifications %}
                     <div class="admin-list">
                         {% for notif in admin_notifications %}

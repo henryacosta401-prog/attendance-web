@@ -320,6 +320,8 @@
                         <span class="employee-status-badge employee-status-yellow">Live Status: Sick Leave</span>
                     {% elif current_status == "Paid Leave" %}
                         <span class="employee-status-badge employee-status-green">Live Status: Paid Leave</span>
+                    {% elif current_status == "Absent" %}
+                        <span class="employee-status-badge employee-status-red">Live Status: Absent</span>
                     {% elif current_status == "On Overtime" %}
                         <span class="employee-status-badge employee-status-blue">Live Status: On Overtime</span>
                     {% else %}
@@ -377,7 +379,7 @@
                     <span class="employee-status-badge employee-status-gray">No attendance record yet today</span>
                 {% endif %}
                 {% if override_status %}
-                    <span class="employee-status-badge {% if override_status.type == 'Suspension' %}employee-status-red{% elif override_status.type == 'Sick Leave' %}employee-status-yellow{% else %}employee-status-green{% endif %}">
+                    <span class="employee-status-badge {% if override_status.type in ['Suspension', 'Absent'] %}employee-status-red{% elif override_status.type == 'Sick Leave' %}employee-status-yellow{% else %}employee-status-green{% endif %}">
                         {{ override_status.label }}{% if override_status.type == 'Suspension' %} until {{ override_status.end_date }}{% endif %}
                     </span>
                 {% endif %}

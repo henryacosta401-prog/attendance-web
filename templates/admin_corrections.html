@@ -6,7 +6,7 @@
     <div class="hero">
         <div>
             <h1>Correction Requests</h1>
-            <p class="section-subtitle">Review employee attendance corrections, undertime requests, sick leave, and paid leave requests.</p>
+            <p class="section-subtitle">Review employee attendance corrections, undertime requests, leave requests, and absent requests.</p>
         </div>
         <div class="status status-yellow">Admin Review</div>
     </div>
@@ -79,21 +79,24 @@
                                 <div class="grid grid-2" style="gap:8px;">
                                     <div>
                                         <label>Time In</label>
-                                        <input class="input" type="time" name="requested_time_in" value="{{ item.requested_time_in_input or item.current_time_in_input }}" {% if item.status != 'Pending' %}disabled{% endif %}>
+                                        <input class="input" type="time" name="requested_time_in" value="{{ item.requested_time_in_input or item.current_time_in_input }}" {% if item.status != 'Pending' or item.is_time_free_request %}disabled{% endif %}>
                                     </div>
                                     <div>
                                         <label>Time Out</label>
-                                        <input class="input" type="time" name="requested_time_out" value="{{ item.requested_time_out_input or item.current_time_out_input }}" {% if item.status != 'Pending' %}disabled{% endif %}>
+                                        <input class="input" type="time" name="requested_time_out" value="{{ item.requested_time_out_input or item.current_time_out_input }}" {% if item.status != 'Pending' or item.is_time_free_request %}disabled{% endif %}>
                                     </div>
                                     <div>
                                         <label>Break Start</label>
-                                        <input class="input" type="time" name="requested_break_start" value="{{ item.requested_break_start_input or item.current_break_start_input }}" {% if item.status != 'Pending' %}disabled{% endif %}>
+                                        <input class="input" type="time" name="requested_break_start" value="{{ item.requested_break_start_input or item.current_break_start_input }}" {% if item.status != 'Pending' or item.is_time_free_request %}disabled{% endif %}>
                                     </div>
                                     <div>
                                         <label>Break End</label>
-                                        <input class="input" type="time" name="requested_break_end" value="{{ item.requested_break_end_input or item.current_break_end_input }}" {% if item.status != 'Pending' %}disabled{% endif %}>
+                                        <input class="input" type="time" name="requested_break_end" value="{{ item.requested_break_end_input or item.current_break_end_input }}" {% if item.status != 'Pending' or item.is_time_free_request %}disabled{% endif %}>
                                     </div>
                                 </div>
+                                {% if item.is_time_free_request %}
+                                    <div class="small muted">This {{ item.request_type|lower }} request uses dates and notes only, so no attendance timestamps are edited during review.</div>
+                                {% endif %}
                                 {% if item.status == 'Pending' %}
                                     <select class="input" name="status">
                                         <option value="Pending" {% if item.status == 'Pending' %}selected{% endif %}>Pending</option>
@@ -120,7 +123,7 @@
             </table>
         </div>
     {% else %}
-        <p class="muted">No attendance, sick leave, or paid leave requests found.</p>
+        <p class="muted">No attendance, leave, or absent requests found.</p>
     {% endif %}
 </div>
 {% endblock %}
