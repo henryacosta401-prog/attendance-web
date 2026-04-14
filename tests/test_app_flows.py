@@ -347,6 +347,86 @@ class AppFlowsTestCase(unittest.TestCase):
         self.assertIn("Breaks are not allowed", message)
         self.assertEqual(attendance["effective_break_limit_minutes"], 0)
 
+    def test_tardiness_no_break_rule_stays_locked_even_with_overtime(self):
+        employee = self.create_user(
+            "tardy-no-break-overtime",
+            role="employee",
+            shift_start="16:00",
+            shift_end="00:00",
+            break_limit=30,
+        )
+        late_dt = datetime(2026, 4, 12, 16, 20, 0, tzinfo=attendance_app.APP_TIMEZONE)
+        time_out_dt = datetime(2026, 4, 13, 0, 0, 0, tzinfo=attendance_app.APP_TIMEZONE)
+
+        with attendance_app.app.app_context(), patch.object(attendance_app, "now_dt", return_value=late_dt):
+            ok, _, _ = attendance_app.perform_attendance_action(employee["id"], "time_in", source_label="Test")
+            self.assertTrue(ok)
+
+        with attendance_app.app.app_context(), patch.object(attendance_app, "now_dt", return_value=time_out_dt):
+            ok, _, _ = attendance_app.perform_attendance_action(employee["id"], "time_out", source_label="Test")
+            self.assertTrue(ok)
+
+        with attendance_app.app.app_context():
+            attendance = attendance_app.fetchone(
+                "SELECT * FROM attendance WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+                (employee["id"],),
+            )
+            self.create_overtime_session(
+                employee["id"],
+                attendance["work_date"],
+                "2026-04-13 00:00:00",
+                overtime_end="2026-04-13 01:00:00",
+                attendance_id=attendance["id"],
+            )
+            break_limit_minutes = attendance_app.get_employee_break_limit(
+                attendance,
+                reference_datetime=attendance["time_in"],
+                reference_date=attendance["work_date"],
+            )
+
+        self.assertEqual(attendance["effective_break_limit_minutes"], 0)
+        self.assertEqual(break_limit_minutes, 0)
+
+    def test_tardiness_reduced_break_limit_gets_overtime_bonus_on_reduced_amount(self):
+        employee = self.create_user(
+            "tardy-reduced-break-overtime",
+            role="employee",
+            shift_start="16:00",
+            shift_end="00:00",
+            break_limit=30,
+        )
+        late_dt = datetime(2026, 4, 12, 16, 1, 0, tzinfo=attendance_app.APP_TIMEZONE)
+        time_out_dt = datetime(2026, 4, 13, 0, 0, 0, tzinfo=attendance_app.APP_TIMEZONE)
+
+        with attendance_app.app.app_context(), patch.object(attendance_app, "now_dt", return_value=late_dt):
+            ok, _, _ = attendance_app.perform_attendance_action(employee["id"], "time_in", source_label="Test")
+            self.assertTrue(ok)
+
+        with attendance_app.app.app_context(), patch.object(attendance_app, "now_dt", return_value=time_out_dt):
+            ok, _, _ = attendance_app.perform_attendance_action(employee["id"], "time_out", source_label="Test")
+            self.assertTrue(ok)
+
+        with attendance_app.app.app_context():
+            attendance = attendance_app.fetchone(
+                "SELECT * FROM attendance WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+                (employee["id"],),
+            )
+            self.create_overtime_session(
+                employee["id"],
+                attendance["work_date"],
+                "2026-04-13 00:00:00",
+                overtime_end="2026-04-13 02:00:00",
+                attendance_id=attendance["id"],
+            )
+            break_limit_minutes = attendance_app.get_employee_break_limit(
+                attendance,
+                reference_datetime=attendance["time_in"],
+                reference_date=attendance["work_date"],
+            )
+
+        self.assertEqual(attendance["effective_break_limit_minutes"], 15)
+        self.assertEqual(break_limit_minutes, 25)
+
     def test_admin_can_disable_tardiness_policy(self):
         admin = self.create_user(
             "settings-admin",
@@ -419,6 +499,129 @@ class AppFlowsTestCase(unittest.TestCase):
         self.assertEqual(payroll_rows[0]["total_minutes"], 450)
         self.assertEqual(payroll_rows[0]["total_hours"], 7.5)
         self.assertEqual(payroll_rows[0]["gross_pay"], 450.0)
+
+    def test_overtime_break_bonus_prevents_overbreak_after_one_hour(self):
+        employee = self.create_user(
+            "overtime-break-bonus",
+            role="employee",
+            break_limit=20,
+        )
+        attendance = self.create_attendance(
+            employee["id"],
+            "2026-04-12",
+            "2026-04-12 09:00:00",
+            "2026-04-12 18:00:00",
+            status="Timed Out",
+        )
+
+        with attendance_app.app.app_context():
+            attendance_app.execute_db(
+                """
+                INSERT INTO breaks (
+                    user_id, attendance_id, work_date, break_start, break_end, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    employee["id"],
+                    attendance["id"],
+                    "2026-04-12",
+                    "2026-04-12 12:00:00",
+                    "2026-04-12 12:25:00",
+                    attendance_app.now_str(),
+                ),
+                commit=True,
+            )
+            self.create_overtime_session(
+                employee["id"],
+                "2026-04-12",
+                "2026-04-12 18:00:00",
+                overtime_end="2026-04-12 19:00:00",
+                attendance_id=attendance["id"],
+            )
+
+            attendance_row = attendance_app.get_attendance_by_id(attendance["id"])
+            break_limit_minutes = attendance_app.get_employee_break_limit(
+                attendance_row,
+                reference_datetime=attendance_row["time_in"],
+                reference_date=attendance_row["work_date"],
+            )
+            employee_row = attendance_app.get_user_by_id(employee["id"])
+            history_rows = attendance_app.build_employee_history_records(employee_row, limit=10)
+            history_item = next(item for item in history_rows if item["row"].get("id") == attendance["id"])
+
+        self.assertEqual(break_limit_minutes, 25)
+        self.assertEqual(history_item["break_minutes"], 25)
+        self.assertEqual(history_item["over_break_minutes"], 0)
+
+    def test_live_dashboard_uses_open_overtime_break_bonus(self):
+        employee = self.create_user(
+            "open-overtime-break-bonus",
+            role="employee",
+            break_limit=20,
+        )
+        attendance = self.create_attendance(
+            employee["id"],
+            "2026-04-12",
+            "2026-04-12 09:00:00",
+            "2026-04-12 18:00:00",
+            status="Timed Out",
+        )
+
+        with attendance_app.app.app_context():
+            attendance_app.execute_db(
+                """
+                INSERT INTO breaks (
+                    user_id, attendance_id, work_date, break_start, break_end, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    employee["id"],
+                    attendance["id"],
+                    "2026-04-12",
+                    "2026-04-12 12:00:00",
+                    "2026-04-12 12:25:00",
+                    attendance_app.now_str(),
+                ),
+                commit=True,
+            )
+            self.create_overtime_session(
+                employee["id"],
+                "2026-04-12",
+                "2026-04-12 18:00:00",
+                attendance_id=attendance["id"],
+            )
+            notification_dt = datetime(2026, 4, 12, 18, 5, 0, tzinfo=attendance_app.APP_TIMEZONE)
+            with patch.object(attendance_app, "now_dt", return_value=notification_dt):
+                attendance_app.create_notification(
+                    employee["id"],
+                    "Break Limit Exceeded",
+                    "Temporary warning before overtime bonus applies.",
+                )
+
+        snapshot_now = datetime(2026, 4, 12, 19, 0, 0, tzinfo=attendance_app.APP_TIMEZONE)
+        self.set_session_user(employee, csrf_token="open-overtime-dashboard-csrf")
+
+        with patch.object(attendance_app, "now_dt", return_value=snapshot_now):
+            dashboard_response = self.client.get("/dashboard")
+
+        with attendance_app.app.app_context(), patch.object(attendance_app, "now_dt", return_value=snapshot_now):
+            attendance_app.invalidate_admin_employee_rows_cache()
+            dashboard_rows = attendance_app.build_admin_employee_rows_snapshot()
+            dashboard_row = next(row for row in dashboard_rows if row["user_id"] == employee["id"])
+            remaining_notifications = attendance_app.fetchall(
+                "SELECT title FROM notifications WHERE user_id = ? ORDER BY id DESC",
+                (employee["id"],),
+            )
+
+        self.assertEqual(dashboard_response.status_code, 200)
+        self.assertNotIn(b"Over break by", dashboard_response.data)
+        self.assertEqual(dashboard_row["status"], "On Overtime")
+        self.assertEqual(dashboard_row["break_limit_minutes"], 25)
+        self.assertEqual(dashboard_row["over_break_minutes"], 0)
+        self.assertEqual(dashboard_row["over_break_flag"], 0)
+        self.assertNotIn("Break Limit Exceeded", [row["title"] for row in remaining_notifications])
 
     def test_payroll_admin_download_requests_panel_renders(self):
         admin = self.create_user(

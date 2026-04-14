@@ -81,6 +81,7 @@ from attendance_core.attendance import (
     format_datetime_12h,
     format_time_12h,
     get_attendance_reference_datetime,
+    get_break_limit_with_overtime_bonus,
     get_effective_break_limit_minutes,
     get_overtime_reference_datetime,
     get_overbreak_minutes,
@@ -3985,18 +3986,76 @@ def get_overtime_sessions_in_range(user_id, date_from, date_to):
     """, (user_id, date_from, date_to))
 
 
-def overtime_minutes_for_session(row):
+def overtime_minutes_for_session(row, include_open=False, current_datetime=None):
     if not row:
         return 0
     row = dict(row)
-    if not row.get("overtime_start") or not row.get("overtime_end"):
+    if not row.get("overtime_start"):
         return 0
     try:
         start = datetime.strptime(row["overtime_start"], "%Y-%m-%d %H:%M:%S")
-        end = datetime.strptime(row["overtime_end"], "%Y-%m-%d %H:%M:%S")
     except (TypeError, ValueError):
         return 0
+    end_value = row.get("overtime_end")
+    if end_value:
+        try:
+            end = datetime.strptime(end_value, "%Y-%m-%d %H:%M:%S")
+        except (TypeError, ValueError):
+            return 0
+    else:
+        if not include_open:
+            return 0
+        if isinstance(current_datetime, datetime):
+            end = current_datetime
+        else:
+            end = parse_db_datetime(current_datetime) if current_datetime else parse_db_datetime(now_str())
+        if not end:
+            return 0
     return max(int((end - start).total_seconds() // 60), 0)
+
+
+def get_overtime_minutes_for_attendance(attendance_row, include_open=False):
+    if not attendance_row:
+        return 0
+    row = dict(attendance_row) if not hasattr(attendance_row, "get") and hasattr(attendance_row, "keys") else attendance_row
+    attendance_id = row.get("id") if hasattr(row, "get") and row.get("user_id") else row.get("attendance_id")
+    user_id = row.get("user_id") if hasattr(row, "get") else None
+    work_date = row.get("work_date") if hasattr(row, "get") else ""
+
+    if attendance_id and user_id and work_date:
+        overtime_rows = fetchall("""
+            SELECT *
+            FROM overtime_sessions
+            WHERE attendance_id = ?
+               OR (attendance_id IS NULL AND user_id = ? AND work_date = ?)
+            ORDER BY id ASC
+        """, (attendance_id, user_id, work_date))
+    elif attendance_id:
+        overtime_rows = fetchall("""
+            SELECT *
+            FROM overtime_sessions
+            WHERE attendance_id = ?
+            ORDER BY id ASC
+        """, (attendance_id,))
+    elif user_id and work_date:
+        overtime_rows = fetchall("""
+            SELECT *
+            FROM overtime_sessions
+            WHERE user_id = ? AND work_date = ?
+            ORDER BY id ASC
+        """, (user_id, work_date))
+    else:
+        return 0
+
+    current_snapshot = now_str() if include_open else None
+    return sum(
+        overtime_minutes_for_session(
+            overtime_row,
+            include_open=include_open,
+            current_datetime=current_snapshot,
+        )
+        for overtime_row in overtime_rows
+    )
 
 
 def auto_close_stale_attendance(user_row, attendance_row, actor_id=None, source_label="System"):
@@ -5205,29 +5264,73 @@ def perform_log_cleanup_for_date_range(date_from_value, date_to_value):
     return removed_counts
 
 
-def get_employee_break_limit(user_row, reference_datetime=None, reference_date=""):
+def get_employee_break_limit(user_row, reference_datetime=None, reference_date="", include_open_overtime=False):
     if not user_row:
         return BREAK_LIMIT_MINUTES
     if not hasattr(user_row, "get") and hasattr(user_row, "keys"):
         user_row = dict(user_row)
 
     if hasattr(user_row, "get") and user_row.get("effective_break_limit_minutes") is not None:
-        return get_effective_break_limit_minutes(user_row, BREAK_LIMIT_MINUTES)
+        base_break_limit_minutes = get_effective_break_limit_minutes(user_row, BREAK_LIMIT_MINUTES)
+    else:
+        effective_user = user_row
+        if hasattr(user_row, "get"):
+            lookup_user_id = user_row.get("user_id") or (user_row.get("id") if user_row.get("role") == "employee" else None)
+            if lookup_user_id:
+                effective_user = get_effective_employee_context(
+                    user_row=user_row if user_row.get("role") == "employee" else None,
+                    user_id=lookup_user_id,
+                    reference_datetime=reference_datetime or user_row.get("time_in") or user_row.get("created_at"),
+                    reference_date=reference_date or user_row.get("work_date") or today_str()
+                ) or user_row
+        base_break_limit_minutes = get_effective_break_limit_minutes(
+            effective_user,
+            effective_user["break_limit_minutes"] if effective_user.get("break_limit_minutes") is not None else BREAK_LIMIT_MINUTES
+        )
 
-    effective_user = user_row
-    if hasattr(user_row, "get"):
-        lookup_user_id = user_row.get("user_id") or (user_row.get("id") if user_row.get("role") == "employee" else None)
-        if lookup_user_id:
-            effective_user = get_effective_employee_context(
-                user_row=user_row if user_row.get("role") == "employee" else None,
-                user_id=lookup_user_id,
-                reference_datetime=reference_datetime or user_row.get("time_in") or user_row.get("created_at"),
-                reference_date=reference_date or user_row.get("work_date") or today_str()
-            ) or user_row
-    return get_effective_break_limit_minutes(
-        effective_user,
-        effective_user["break_limit_minutes"] if effective_user.get("break_limit_minutes") is not None else BREAK_LIMIT_MINUTES
+    overtime_minutes = 0
+    if hasattr(user_row, "get") and user_row.get("user_id"):
+        overtime_minutes = get_overtime_minutes_for_attendance(
+            user_row,
+            include_open=include_open_overtime,
+        )
+
+    return get_break_limit_with_overtime_bonus(base_break_limit_minutes, overtime_minutes)
+
+
+def clear_resolved_break_limit_notifications(user_row, attendance_row=None, include_open_overtime=False):
+    if not user_row:
+        return 0
+    user_id = user_row.get("id") if hasattr(user_row, "get") else None
+    if not user_id:
+        return 0
+    attendance = attendance_row or get_current_attendance(user_id)
+    if not attendance or not attendance.get("id") or not attendance.get("time_in"):
+        return 0
+
+    total_break = total_break_minutes(attendance["id"], include_open=True)
+    break_limit_minutes = get_employee_break_limit(
+        attendance,
+        reference_datetime=attendance.get("time_in") or attendance.get("created_at"),
+        reference_date=attendance.get("work_date"),
+        include_open_overtime=include_open_overtime,
     )
+    if is_overbreak(total_break, break_limit_minutes):
+        return 0
+
+    delete_cursor = execute_db("""
+        DELETE FROM notifications
+        WHERE user_id = ?
+          AND title = ?
+          AND created_at >= ?
+          AND created_at <= ?
+    """, (
+        user_id,
+        "Break Limit Exceeded",
+        attendance["time_in"],
+        now_str(),
+    ), commit=True)
+    return max(getattr(delete_cursor, "rowcount", 0) or 0, 0)
 
 
 def save_uploaded_file(file_obj, prefix="file", allowed_exts=None):
@@ -7724,6 +7827,11 @@ def dashboard():
 
     today_attendance = get_current_attendance(user["id"])
     open_break = get_open_break(user["id"], today_attendance)
+    clear_resolved_break_limit_notifications(
+        user,
+        attendance_row=today_attendance,
+        include_open_overtime=True,
+    )
 
     notifications = fetchall("""
         SELECT * FROM notifications
@@ -7750,6 +7858,7 @@ def dashboard():
         today_attendance or user,
         reference_datetime=today_attendance.get("time_in") if today_attendance else None,
         reference_date=today_attendance.get("work_date") if today_attendance else today_str(),
+        include_open_overtime=True,
     )
     over_break_minutes = get_overbreak_minutes(todays_break_minutes, break_limit_minutes)
     leave_summary = get_leave_balance_summary(user)
@@ -7837,6 +7946,12 @@ def notifications_page():
 @app.route("/notifications/preview")
 @login_required()
 def notifications_preview():
+    current_user = get_user_by_id(session["user_id"])
+    if current_user and current_user.get("role") == "employee":
+        clear_resolved_break_limit_notifications(
+            current_user,
+            include_open_overtime=True,
+        )
     unread_count = get_unread_notification_count(session["user_id"])
     preview_rows = build_notification_preview_rows(
         get_latest_notifications(session["user_id"], limit=6),
@@ -9054,6 +9169,7 @@ def build_admin_employee_rows_snapshot():
                 attendance or display_user,
                 reference_datetime=attendance.get("time_in") if attendance else None,
                 reference_date=attendance.get("work_date") if attendance else today_str(),
+                include_open_overtime=True,
             ),
             "profile_image": display_user["profile_image"],
             "profile_image_available": 1 if cached_file_exists(display_user["profile_image"]) else 0,
@@ -9550,7 +9666,7 @@ def enrich_history_record(row, break_limit_minutes, employee_row=None):
     row = dict(row)
     record_type = row.get("request_type") or "Attendance"
     is_attendance = row.get("source_type", "attendance") == "attendance"
-    if is_attendance and row.get("effective_break_limit_minutes") is not None:
+    if is_attendance:
         break_limit_minutes = get_employee_break_limit(
             row,
             reference_datetime=row.get("time_in") or row.get("created_at"),

@@ -7,6 +7,7 @@ from attendance_core.config import (
     DEFAULT_SHIFT_END,
     DEFAULT_SHIFT_START,
     LATE_GRACE_MINUTES,
+    OVERTIME_BREAK_BONUS_MINUTES_PER_HOUR,
     TARDINESS_POLICY_STEP_ONE_BREAK_DEDUCTION_MINUTES,
     TARDINESS_POLICY_STEP_ONE_MAX_MINUTES,
     TARDINESS_POLICY_STEP_ONE_SHIFT_DEDUCTION_MINUTES,
@@ -196,6 +197,31 @@ def get_effective_break_limit_minutes(record_row=None, fallback_break_limit_minu
         if override_limit is not None:
             return parse_non_negative_minutes(override_limit, fallback=fallback_limit)
     return fallback_limit
+
+
+def get_overtime_break_bonus_minutes(
+    overtime_minutes,
+    minutes_per_hour=OVERTIME_BREAK_BONUS_MINUTES_PER_HOUR,
+):
+    total_overtime_minutes = parse_non_negative_minutes(overtime_minutes, fallback=0)
+    bonus_minutes_per_hour = parse_non_negative_minutes(minutes_per_hour, fallback=0)
+    if total_overtime_minutes < 60 or bonus_minutes_per_hour <= 0:
+        return 0
+    return (total_overtime_minutes // 60) * bonus_minutes_per_hour
+
+
+def get_break_limit_with_overtime_bonus(
+    base_break_limit_minutes,
+    overtime_minutes,
+    minutes_per_hour=OVERTIME_BREAK_BONUS_MINUTES_PER_HOUR,
+):
+    base_break_limit = parse_non_negative_minutes(base_break_limit_minutes, fallback=BREAK_LIMIT_MINUTES)
+    if base_break_limit <= 0:
+        return 0
+    return base_break_limit + get_overtime_break_bonus_minutes(
+        overtime_minutes,
+        minutes_per_hour=minutes_per_hour,
+    )
 
 
 def get_tardiness_policy_adjustment(

@@ -14,7 +14,9 @@ from attendance_core.attendance import (
     format_datetime_12h,
     format_time_12h,
     get_attendance_reference_datetime,
+    get_break_limit_with_overtime_bonus,
     get_overbreak_minutes,
+    get_overtime_break_bonus_minutes,
     get_schedule_code_for_date,
     get_schedule_day_codes,
     get_schedule_summary,
@@ -308,6 +310,11 @@ class ArchitectureHelpersTestCase(unittest.TestCase):
         self.assertEqual(parse_break_limit_minutes("20"), 20)
         self.assertEqual(parse_break_limit_minutes("bad"), 15)
         self.assertEqual(get_overbreak_minutes(35, 20), 15)
+        self.assertEqual(get_overtime_break_bonus_minutes(59), 0)
+        self.assertEqual(get_overtime_break_bonus_minutes(60), 5)
+        self.assertEqual(get_overtime_break_bonus_minutes(125), 10)
+        self.assertEqual(get_break_limit_with_overtime_bonus(20, 125), 30)
+        self.assertEqual(get_break_limit_with_overtime_bonus(0, 180), 0)
 
     def test_parse_db_datetime_and_formatters(self):
         parsed = parse_db_datetime("2026-04-07 21:30:15")
