@@ -770,6 +770,51 @@ class AppFlowsTestCase(unittest.TestCase):
 
         self.assertIsNone(correction)
 
+    def test_employee_calendar_uses_approved_absent_request_and_disables_cache(self):
+        employee = self.create_user(
+            "calendar-absent-employee",
+            role="employee",
+            shift_start="16:00",
+            shift_end="00:00",
+            schedule_days="Mon,Tue,Wed,Thu,Fri,Sat",
+        )
+
+        with attendance_app.app.app_context():
+            attendance_app.execute_db(
+                """
+                INSERT INTO correction_requests (
+                    user_id, request_type, work_date, end_work_date, message,
+                    requested_time_in, requested_break_start, requested_break_end, requested_time_out,
+                    applied_changes, status, admin_note, reviewed_by, reviewed_at, created_at
+                )
+                VALUES (?, 'Absent', ?, ?, ?, NULL, NULL, NULL, NULL, ?, 'Approved', ?, NULL, ?, ?)
+                """,
+                (
+                    employee["id"],
+                    "2026-04-08",
+                    "2026-04-09",
+                    "Not feeling well",
+                    "Absent approved for 2026-04-08 to 2026-04-09.",
+                    "Approved absence.",
+                    attendance_app.now_str(),
+                    attendance_app.now_str(),
+                ),
+                commit=True,
+            )
+            employee_row = attendance_app.get_user_by_id(employee["id"])
+            calendar_data = attendance_app.build_employee_attendance_calendar(employee_row, 2026, 4)
+
+        self.assertGreaterEqual(calendar_data["counts"]["absent"], 2)
+        self.assertTrue(any(item["date"] == "2026-04-08" and item["label"] == "Absent" for item in calendar_data["highlights"]))
+
+        self.set_session_user(employee, csrf_token="calendar-employee-csrf")
+        response = self.client.get("/attendance-calendar?year=2026&month=4")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers.get("Cache-Control"), "no-store")
+        self.assertIn(b"This page refreshes automatically while open.", response.data)
+        self.assertIn(b"Approved absence.", response.data)
+
     def test_rejecting_pending_leave_correction_updates_status_and_notification(self):
         admin = self.create_user(
             "reject-correction-admin",

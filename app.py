@@ -13,7 +13,7 @@ from urllib.parse import quote
 from flask import (
     Flask, render_template, request, redirect, url_for,
     session, flash, g, send_from_directory, jsonify, Response, abort,
-    has_app_context
+    has_app_context, make_response
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -7978,11 +7978,16 @@ def employee_attendance_calendar():
         request.args.get("month", "")
     )
     calendar_data = build_employee_attendance_calendar(user, year, month)
-    return render_template(
+    response = make_response(render_template(
         "employee_attendance_calendar.html",
         user=user,
-        calendar_data=calendar_data
-    )
+        calendar_data=calendar_data,
+        auto_refresh_interval_seconds=45,
+    ))
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 
 @app.route("/profile", methods=["GET", "POST"])

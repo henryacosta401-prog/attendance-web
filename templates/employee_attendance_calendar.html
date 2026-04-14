@@ -190,15 +190,59 @@
     }
 }
 </style>
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    const calendarRoot = document.getElementById("employeeCalendarApp");
+    if (!calendarRoot) return;
+
+    const refreshIntervalMs = Number(calendarRoot.dataset.refreshIntervalMs || "45000");
+    const staleThresholdMs = 15000;
+    let refreshTimer = null;
+    let lastRefreshAt = Date.now();
+    let refreshInFlight = false;
+
+    function reloadCalendar() {
+        if (document.hidden || refreshInFlight) return;
+        refreshInFlight = true;
+        window.location.reload();
+    }
+
+    function refreshIfStale(maxAgeMs) {
+        if ((Date.now() - lastRefreshAt) >= maxAgeMs) {
+            reloadCalendar();
+        }
+    }
+
+    function startRefreshLoop() {
+        window.clearInterval(refreshTimer);
+        refreshTimer = window.setInterval(function () {
+            if (!document.hidden) {
+                reloadCalendar();
+            }
+        }, refreshIntervalMs);
+    }
+
+    document.addEventListener("visibilitychange", function () {
+        if (!document.hidden) {
+            refreshIfStale(staleThresholdMs);
+        }
+    });
+    window.addEventListener("focus", function () {
+        refreshIfStale(staleThresholdMs);
+    });
+
+    startRefreshLoop();
+});
+</script>
 {% endblock %}
 
 {% block content %}
-<div class="employee-calendar-shell">
+<div class="employee-calendar-shell" id="employeeCalendarApp" data-refresh-interval-ms="{{ auto_refresh_interval_seconds * 1000 }}">
     <div class="hero-card">
         <div class="hero">
             <div>
                 <h1>Attendance Calendar</h1>
-                <p class="section-subtitle">Track your month at a glance using the same attendance, leave, and suspension records used throughout the app.</p>
+                <p class="section-subtitle">Track your month at a glance using the same attendance, leave, and suspension records used throughout the app. This page refreshes automatically while open.</p>
             </div>
             <a class="btn btn-gray" href="{{ url_for('dashboard') }}">Back to Dashboard</a>
         </div>
