@@ -7059,6 +7059,7 @@ def build_employee_attendance_calendar(user_row, year, month):
             "label": entry["label"],
             "details": entry["details"],
             "tone": entry["tone"],
+            "priority": int(entry.get("highlight_priority") or 0),
         })
 
     def build_entry(work_date):
@@ -7146,6 +7147,7 @@ def build_employee_attendance_calendar(user_row, year, month):
                 "state_key": "leave",
                 "details": note or f"Approved {special_request['request_type'].lower()} request.",
                 "highlight": True,
+                "highlight_priority": 2,
             }
 
         if special_request and special_request["request_type"] in ABSENT_REQUEST_TYPES:
@@ -7157,6 +7159,7 @@ def build_employee_attendance_calendar(user_row, year, month):
                 "state_key": "absent",
                 "details": note or "Approved absent request.",
                 "highlight": True,
+                "highlight_priority": 2,
             }
 
         if special_request and special_request["request_type"] == "Undertime":
@@ -7184,6 +7187,7 @@ def build_employee_attendance_calendar(user_row, year, month):
                 "state_key": "undertime",
                 "details": item["request_note"] or "Approved undertime request.",
                 "highlight": True,
+                "highlight_priority": 2,
             }
 
         special_rule = special_rule_map.get(work_date)
@@ -7276,7 +7280,11 @@ def build_employee_attendance_calendar(user_row, year, month):
 
     prev_year, prev_month = shift_month(year, month, -1)
     next_year, next_month = shift_month(year, month, 1)
-    highlights.sort(key=lambda item: item["date"], reverse=True)
+    highlights.sort(key=lambda item: (item.get("priority", 0), item["date"]), reverse=True)
+    highlights = [
+        {key: value for key, value in item.items() if key != "priority"}
+        for item in highlights
+    ]
 
     return {
         "month_label": month_start.strftime("%B %Y"),
@@ -9194,6 +9202,7 @@ def build_admin_employee_rows_snapshot():
 
         row = {
             "id": display_user["id"],
+            "user_id": display_user["id"],
             "full_name": display_user["full_name"],
             "username": display_user["username"],
             "department": display_user["department"],
