@@ -170,7 +170,8 @@ ADMIN_ENDPOINT_PERMISSIONS = {
     "send_admin_notification": "settings",
     "manage_employees": "employees",
     "edit_employee": "employees",
-    "print_employee_id": "employees",
+    "download_employee_barcode": "employees",
+    "legacy_download_employee_barcode": "employees",
     "delete_employee": "employees",
     "delete_future_schedule_change": "employees",
     "admin_corrections": "attendance",
@@ -212,5 +213,4 @@ ADMIN_ENDPOINT_PERMISSIONS = {
     "export_admin_reports_excel": "reports",
     "admin_data_tools": "settings",
     "download_recovery_pack": "settings",
-    "update_employee_id_signatory": "settings",
 }

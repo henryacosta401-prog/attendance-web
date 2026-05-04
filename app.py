@@ -124,9 +124,6 @@ from attendance_core.date_ranges import (
     parse_iso_date,
     payroll_date_text,
 )
-from attendance_core.employee_ids import (
-    get_employee_card_number,
-)
 from attendance_core.formatters import (
     format_currency,
     minutes_to_decimal_hours,
@@ -854,12 +851,6 @@ def init_sqlite_db():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS company_settings (
             id INTEGER PRIMARY KEY CHECK (id = 1),
-            id_signatory_name TEXT,
-            id_signatory_title TEXT,
-            id_signature_file TEXT,
-            hr_signatory_name TEXT,
-            hr_signatory_title TEXT,
-            hr_signature_file TEXT,
             scanner_attendance_mode INTEGER NOT NULL DEFAULT 0,
             scanner_lock_timeout_seconds INTEGER NOT NULL DEFAULT 90,
             scanner_exit_pin_hash TEXT,
@@ -1110,12 +1101,6 @@ def init_sqlite_db():
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS company_settings (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
-                id_signatory_name TEXT,
-                id_signatory_title TEXT,
-                id_signature_file TEXT,
-                hr_signatory_name TEXT,
-                hr_signatory_title TEXT,
-                hr_signature_file TEXT,
                 scanner_attendance_mode INTEGER NOT NULL DEFAULT 0,
                 scanner_lock_timeout_seconds INTEGER NOT NULL DEFAULT 90,
                 scanner_exit_pin_hash TEXT,
@@ -1127,18 +1112,6 @@ def init_sqlite_db():
             )
         """)
         existing_cols_company_settings = [row[1] for row in cursor.execute("PRAGMA table_info(company_settings)").fetchall()]
-    if "id_signatory_name" not in existing_cols_company_settings:
-        cursor.execute("ALTER TABLE company_settings ADD COLUMN id_signatory_name TEXT")
-    if "id_signatory_title" not in existing_cols_company_settings:
-        cursor.execute("ALTER TABLE company_settings ADD COLUMN id_signatory_title TEXT")
-    if "id_signature_file" not in existing_cols_company_settings:
-        cursor.execute("ALTER TABLE company_settings ADD COLUMN id_signature_file TEXT")
-    if "hr_signatory_name" not in existing_cols_company_settings:
-        cursor.execute("ALTER TABLE company_settings ADD COLUMN hr_signatory_name TEXT")
-    if "hr_signatory_title" not in existing_cols_company_settings:
-        cursor.execute("ALTER TABLE company_settings ADD COLUMN hr_signatory_title TEXT")
-    if "hr_signature_file" not in existing_cols_company_settings:
-        cursor.execute("ALTER TABLE company_settings ADD COLUMN hr_signature_file TEXT")
     if "scanner_attendance_mode" not in existing_cols_company_settings:
         cursor.execute("ALTER TABLE company_settings ADD COLUMN scanner_attendance_mode INTEGER NOT NULL DEFAULT 0")
     if "scanner_lock_timeout_seconds" not in existing_cols_company_settings:
@@ -1305,11 +1278,10 @@ def init_sqlite_db():
 
     cursor.execute("""
         INSERT OR IGNORE INTO company_settings (
-            id, id_signatory_name, id_signatory_title, id_signature_file,
-            scanner_attendance_mode, scanner_lock_timeout_seconds, scanner_exit_pin_hash, overtime_multiplier,
-            tardiness_policy_enabled
+            id, scanner_attendance_mode, scanner_lock_timeout_seconds, scanner_exit_pin_hash,
+            overtime_multiplier, tardiness_policy_enabled
         )
-        VALUES (1, 'Kirk Danny Fernandez', 'Head Of Operations', NULL, 0, 90, NULL, 1.25, 1)
+        VALUES (1, 0, 90, NULL, 1.25, 1)
     """)
 
     # attendance migration
@@ -2101,12 +2073,6 @@ def init_postgres_db():
         cur.execute("""
             CREATE TABLE IF NOT EXISTS company_settings (
                 id INTEGER PRIMARY KEY,
-                id_signatory_name TEXT,
-                id_signatory_title TEXT,
-                id_signature_file TEXT,
-                hr_signatory_name TEXT,
-                hr_signatory_title TEXT,
-                hr_signature_file TEXT,
                 scanner_attendance_mode INTEGER NOT NULL DEFAULT 0,
                 scanner_lock_timeout_seconds INTEGER NOT NULL DEFAULT 90,
                 scanner_exit_pin_hash TEXT,
@@ -2117,12 +2083,6 @@ def init_postgres_db():
                 last_external_backup_note TEXT
             )
         """)
-        cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS id_signatory_name TEXT")
-        cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS id_signatory_title TEXT")
-        cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS id_signature_file TEXT")
-        cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS hr_signatory_name TEXT")
-        cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS hr_signatory_title TEXT")
-        cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS hr_signature_file TEXT")
         cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS scanner_attendance_mode INTEGER NOT NULL DEFAULT 0")
         cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS scanner_lock_timeout_seconds INTEGER NOT NULL DEFAULT 90")
         cur.execute("ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS scanner_exit_pin_hash TEXT")
@@ -2148,11 +2108,10 @@ def init_postgres_db():
         """, (BREAK_LIMIT_MINUTES,))
         cur.execute("""
             INSERT INTO company_settings (
-                id, id_signatory_name, id_signatory_title, id_signature_file,
-                scanner_attendance_mode, scanner_lock_timeout_seconds, scanner_exit_pin_hash, overtime_multiplier,
-                tardiness_policy_enabled
+                id, scanner_attendance_mode, scanner_lock_timeout_seconds, scanner_exit_pin_hash,
+                overtime_multiplier, tardiness_policy_enabled
             )
-            VALUES (1, 'Kirk Danny Fernandez', 'Head Of Operations', NULL, 0, 90, NULL, 1.25, 1)
+            VALUES (1, 0, 90, NULL, 1.25, 1)
             ON CONFLICT (id) DO NOTHING
         """)
         cur.execute("""
@@ -3028,12 +2987,6 @@ def get_company_settings():
         return dict(settings)
     return {
         "id": 1,
-        "id_signatory_name": "Kirk Danny Fernandez",
-        "id_signatory_title": "Head Of Operations",
-        "id_signature_file": None,
-        "hr_signatory_name": "",
-        "hr_signatory_title": "Human Resources Manager",
-        "hr_signature_file": None,
         "scanner_attendance_mode": 0,
         "scanner_lock_timeout_seconds": 90,
         "scanner_exit_pin_hash": None,
@@ -4829,20 +4782,16 @@ def record_external_backup_marker(note="", actor_id=None):
     backup_at = now_str()
     execute_db("""
         INSERT INTO company_settings (
-            id, id_signatory_name, id_signatory_title, id_signature_file,
-            scanner_attendance_mode, scanner_lock_timeout_seconds, scanner_exit_pin_hash,
+            id, scanner_attendance_mode, scanner_lock_timeout_seconds, scanner_exit_pin_hash,
             overtime_multiplier, tardiness_policy_enabled, last_external_backup_at, last_external_backup_by,
             last_external_backup_note
         )
-        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             last_external_backup_at = excluded.last_external_backup_at,
             last_external_backup_by = excluded.last_external_backup_by,
             last_external_backup_note = excluded.last_external_backup_note
     """, (
-        settings.get("id_signatory_name") or "Kirk Danny Fernandez",
-        settings.get("id_signatory_title") or "Head Of Operations",
-        settings.get("id_signature_file"),
         int(settings.get("scanner_attendance_mode") or 0),
         int(settings.get("scanner_lock_timeout_seconds") or 90),
         settings.get("scanner_exit_pin_hash"),
@@ -6000,7 +5949,7 @@ def build_recovery_pack_workbook():
     guide.append(["Step", "Action"])
     guide.append(["1", "Download the recovery pack before any major cleanup, reset, or policy change."])
     guide.append(["2", "Create an external Postgres backup or provider snapshot if production is using Render/Postgres."])
-    guide.append(["3", "Keep uploaded files, barcode assets, and signature images together with this workbook."])
+    guide.append(["3", "Keep uploaded files, proof uploads, and barcode assets together with this workbook."])
     guide.append(["4", "If rebuilding production, restore users and settings first, then attendance/payroll/log data."])
     guide.append(["5", "Use the workbook sheets as the source of truth for schedule presets, payroll rules, and historical workflows."])
     autosize_workbook_sheet(guide)
@@ -7725,7 +7674,6 @@ def inject_globals():
         static_file_exists=static_file_exists,
         uploaded_file_exists=uploaded_file_exists,
         get_avatar_initials=get_avatar_initials,
-        get_employee_card_number=get_employee_card_number,
         generate_code128_svg_data_uri=generate_code128_svg_data_uri,
         format_datetime_12h=format_datetime_12h,
         format_time_12h=format_time_12h,
@@ -8382,24 +8330,17 @@ def admin_profile():
 
             execute_db("""
                 INSERT INTO company_settings (
-                    id, id_signatory_name, id_signatory_title, id_signature_file,
-                    scanner_attendance_mode, scanner_lock_timeout_seconds, scanner_exit_pin_hash, overtime_multiplier,
-                    tardiness_policy_enabled
+                    id, scanner_attendance_mode, scanner_lock_timeout_seconds, scanner_exit_pin_hash,
+                    overtime_multiplier, tardiness_policy_enabled
                 )
-                VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (1, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
-                    id_signatory_name = excluded.id_signatory_name,
-                    id_signatory_title = excluded.id_signatory_title,
-                    id_signature_file = excluded.id_signature_file,
                     scanner_attendance_mode = excluded.scanner_attendance_mode,
                     scanner_lock_timeout_seconds = excluded.scanner_lock_timeout_seconds,
                     scanner_exit_pin_hash = excluded.scanner_exit_pin_hash,
                     overtime_multiplier = excluded.overtime_multiplier,
                     tardiness_policy_enabled = excluded.tardiness_policy_enabled
             """, (
-                current_settings.get("id_signatory_name") or "Kirk Danny Fernandez",
-                current_settings.get("id_signatory_title") or "Head Of Operations",
-                current_settings.get("id_signature_file"),
                 scanner_attendance_mode,
                 scanner_lock_timeout_seconds,
                 scanner_exit_pin_hash,
@@ -12974,13 +12915,7 @@ def edit_employee(user_id):
     )
 
 
-@app.route("/admin/employee-id/<int:user_id>")
-@login_required(role="admin")
-def print_employee_id(user_id):
-    return redirect(url_for("download_employee_barcode", user_id=user_id))
-
-
-@app.route("/admin/employee-id/<int:user_id>/barcode")
+@app.route("/admin/employees/<int:user_id>/barcode")
 @login_required(role="admin")
 def download_employee_barcode(user_id):
     employee = fetchone("""
@@ -13008,6 +12943,12 @@ def download_employee_barcode(user_id):
             "Content-Disposition": f'attachment; filename="{safe_name}-barcode.svg"'
         },
     )
+
+
+@app.route("/admin/employee-id/<int:user_id>/barcode")
+@login_required(role="admin")
+def legacy_download_employee_barcode(user_id):
+    return redirect(url_for("download_employee_barcode", user_id=user_id))
 
 
 @app.route("/scanner")
@@ -13244,7 +13185,6 @@ def scanner_kiosk_scan():
         "barcode_value": barcode_value,
         "barcode_id": employee_for_payload["barcode_id"] or barcode_value,
         "match_type": barcode_lookup["match_type"],
-        "employee_code": employee_for_payload["employee_code"] or get_employee_card_number(employee_for_payload),
         "status": "On Overtime" if overtime_session else (attendance["status"] if attendance else "Offline"),
         "time_in": attendance["time_in"] if attendance else None,
         "time_out": attendance["time_out"] if attendance else None,

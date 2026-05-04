@@ -1460,7 +1460,7 @@ class AppFlowsTestCase(unittest.TestCase):
         )
         self.set_session_user(admin)
 
-        response = self.client.get(f"/admin/employee-id/{employee['id']}/barcode")
+        response = self.client.get(f"/admin/employees/{employee['id']}/barcode")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.mimetype, "image/svg+xml")
