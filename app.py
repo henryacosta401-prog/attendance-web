@@ -125,9 +125,7 @@ from attendance_core.date_ranges import (
     payroll_date_text,
 )
 from attendance_core.employee_ids import (
-    build_default_employee_code,
     get_employee_card_number,
-    normalize_employee_code,
 )
 from attendance_core.formatters import (
     format_currency,
@@ -465,12 +463,10 @@ def fetchall(query, params=()):
 
 find_employee_identifier_conflict = build_employee_identifier_conflict_finder(
     fetchone,
-    normalize_employee_code,
 )
 find_employee_barcode_matches = build_employee_scan_match_finder(
     fetchall,
     fetchone,
-    normalize_employee_code,
 )
 get_unread_notification_count = build_unread_notification_counter(fetchone)
 get_latest_notifications = build_latest_notifications_loader(fetchall)
@@ -5013,19 +5009,6 @@ def build_upload_storage_audit(action_limit=24):
             })
 
     action_rows.sort(key=lambda row: (0 if row["is_missing"] else 1, row["full_name"].lower(), row["user_id"]))
-    settings = get_company_settings()
-    signatory_assets = []
-    for label, filename, signatory_name in (
-        ("Operations Signature", settings.get("id_signature_file"), settings.get("id_signatory_name") or "Head Of Operations"),
-        ("HR Signature", settings.get("hr_signature_file"), settings.get("hr_signatory_name") or "Human Resources Manager"),
-    ):
-        asset_status = inspect_upload_reference(filename)
-        signatory_assets.append({
-            "label": label,
-            "signatory_name": signatory_name,
-            **asset_status,
-        })
-
     return {
         "cloudinary_enabled": cloudinary_storage_enabled(),
         "cloudinary_folder": CLOUDINARY_UPLOAD_FOLDER,
@@ -5036,7 +5019,6 @@ def build_upload_storage_audit(action_limit=24):
         "counts": counts,
         "action_rows": action_rows[:action_limit],
         "total_action_rows": len(action_rows),
-        "signatory_assets": signatory_assets,
     }
 
 
@@ -5063,10 +5045,6 @@ def remove_orphaned_proof_uploads():
             WHERE profile_image IS NOT NULL AND TRIM(profile_image) != ''
         """)
     }
-    company_settings = get_company_settings()
-    signatory_file = (company_settings.get("id_signature_file") or "").strip() if company_settings else ""
-    if signatory_file:
-        protected_files.add(signatory_file)
     removed = 0
     for name in os.listdir(app.config["UPLOAD_FOLDER"]):
         full_path = os.path.join(app.config["UPLOAD_FOLDER"], name)
@@ -5924,11 +5902,6 @@ def summarize_employee_admin_changes(before_row, after_values):
     labels = {
         "department": "Department",
         "position": "Position",
-        "emergency_contact_name": "Emergency Contact Name",
-        "emergency_contact_phone": "Emergency Contact Number",
-        "id_issue_date": "ID Issue Date",
-        "id_expiration_date": "ID Expiration Date",
-        "employee_code": "Employee ID",
         "barcode_id": "Barcode ID",
         "hourly_rate": "Hourly Rate",
         "sick_leave_days": "Sick Leave Allotment",
@@ -12321,33 +12294,6 @@ def delete_incident_report(report_id):
     return redirect(url_for("admin_error_reports"))
 
 
-def normalize_employee_id_dates(id_issue_date_raw, id_expiration_date_raw):
-    id_issue_date = (id_issue_date_raw or "").strip()
-    id_expiration_date = (id_expiration_date_raw or "").strip()
-
-    issue_date_obj = None
-    expiration_date_obj = None
-
-    if id_issue_date:
-        try:
-            issue_date_obj = datetime.strptime(id_issue_date, "%Y-%m-%d").date()
-            id_issue_date = issue_date_obj.strftime("%Y-%m-%d")
-        except ValueError:
-            return None, None, "ID Issue Date must be a valid date."
-
-    if id_expiration_date:
-        try:
-            expiration_date_obj = datetime.strptime(id_expiration_date, "%Y-%m-%d").date()
-            id_expiration_date = expiration_date_obj.strftime("%Y-%m-%d")
-        except ValueError:
-            return None, None, "ID Expiration Date must be a valid date."
-
-    if issue_date_obj and expiration_date_obj and expiration_date_obj < issue_date_obj:
-        return None, None, "ID Expiration Date cannot be earlier than ID Issue Date."
-
-    return id_issue_date, id_expiration_date, None
-
-
 @app.route("/admin/employees", methods=["GET", "POST"])
 @login_required(role="admin")
 def manage_employees():
@@ -12642,13 +12588,11 @@ def manage_employees():
         password = request.form.get("password", "").strip()
         department = request.form.get("department", "").strip() or "Stellar Seats"
         position = request.form.get("position", "").strip() or "Employee"
-        emergency_contact_name = request.form.get("emergency_contact_name", "").strip()
-        emergency_contact_phone = request.form.get("emergency_contact_phone", "").strip()
-        id_issue_date, id_expiration_date, id_date_error = normalize_employee_id_dates(
-            request.form.get("id_issue_date", ""),
-            request.form.get("id_expiration_date", "")
-        )
-        employee_code = normalize_employee_code(request.form.get("employee_code", ""))
+        emergency_contact_name = ""
+        emergency_contact_phone = ""
+        id_issue_date = ""
+        id_expiration_date = ""
+        employee_code = ""
         barcode_id = request.form.get("barcode_id", "").strip()
         hourly_rate = parse_money_value(request.form.get("hourly_rate", "0"))
         sick_leave_days = parse_non_negative_int(request.form.get("sick_leave_days", DEFAULT_SICK_LEAVE_DAYS), DEFAULT_SICK_LEAVE_DAYS)
@@ -12672,24 +12616,14 @@ def manage_employees():
             flash("Username already exists.", "warning")
             return redirect(url_for("manage_employees"))
 
-        if id_date_error:
-            flash(id_date_error, "danger")
-            return redirect(url_for("manage_employees"))
-
         if selected_preset and not schedule_preset_matches_department(selected_preset, department):
             flash(f"Preset {selected_preset['name']} is scoped to {selected_preset['department_scope']}. Choose a matching department or use a custom schedule.", "danger")
             return redirect(url_for("manage_employees"))
 
-        if employee_code:
-            existing_identifier = find_employee_identifier_conflict(employee_code)
-            if existing_identifier:
-                flash("Employee ID already exists or matches another employee barcode.", "warning")
-                return redirect(url_for("manage_employees"))
-
         if barcode_id:
             existing_barcode = find_employee_identifier_conflict(barcode_id)
             if existing_barcode:
-                flash("Barcode ID already exists or matches another employee ID.", "warning")
+                flash("Barcode ID already exists.", "warning")
                 return redirect(url_for("manage_employees"))
 
         profile_image = None
@@ -12740,13 +12674,6 @@ def manage_employees():
 
         new_user = fetchone("SELECT id FROM users WHERE username = ?", (username,))
         if new_user:
-            resolved_employee_code = employee_code or build_default_employee_code(new_user["id"])
-            if not employee_code:
-                execute_db(
-                    "UPDATE users SET employee_code = ? WHERE id = ?",
-                    (resolved_employee_code, new_user["id"]),
-                    commit=True,
-                )
             created_employee = get_user_by_id(new_user["id"])
             if created_employee:
                 record_employee_schedule_history(
@@ -12762,11 +12689,6 @@ def manage_employees():
                 f"Added employee: {full_name} | " + summarize_employee_admin_changes(None, {
                     "department": department,
                     "position": position,
-                    "emergency_contact_name": emergency_contact_name or "(not set)",
-                    "emergency_contact_phone": emergency_contact_phone or "(not set)",
-                    "id_issue_date": id_issue_date or "(auto)",
-                    "id_expiration_date": id_expiration_date or "(auto)",
-                    "employee_code": resolved_employee_code,
                     "barcode_id": barcode_id or "(not set)",
                     "hourly_rate": hourly_rate,
                     "sick_leave_days": sick_leave_days,
@@ -12801,12 +12723,11 @@ def manage_employees():
                 OR LOWER(username) LIKE ?
                 OR LOWER(COALESCE(department, '')) LIKE ?
                 OR LOWER(COALESCE(position, '')) LIKE ?
-                OR LOWER(COALESCE(employee_code, '')) LIKE ?
                 OR LOWER(COALESCE(barcode_id, '')) LIKE ?
             )
         """
         search_like = f"%{employee_search.lower()}%"
-        params.extend([search_like, search_like, search_like, search_like, search_like, search_like])
+        params.extend([search_like, search_like, search_like, search_like, search_like])
 
     sql += " ORDER BY u.id DESC"
     employees = fetchall(sql, params)
@@ -12936,13 +12857,11 @@ def edit_employee(user_id):
         username = request.form.get("username", "").strip()
         department = request.form.get("department", "").strip() or "Stellar Seats"
         position = request.form.get("position", "").strip() or "Employee"
-        emergency_contact_name = request.form.get("emergency_contact_name", "").strip()
-        emergency_contact_phone = request.form.get("emergency_contact_phone", "").strip()
-        id_issue_date, id_expiration_date, id_date_error = normalize_employee_id_dates(
-            request.form.get("id_issue_date", ""),
-            request.form.get("id_expiration_date", "")
-        )
-        employee_code = normalize_employee_code(request.form.get("employee_code", "")) or build_default_employee_code(user_id)
+        emergency_contact_name = user["emergency_contact_name"] or ""
+        emergency_contact_phone = user["emergency_contact_phone"] or ""
+        id_issue_date = user["id_issue_date"] or ""
+        id_expiration_date = user["id_expiration_date"] or ""
+        employee_code = user["employee_code"]
         barcode_id = request.form.get("barcode_id", "").strip()
         hourly_rate = parse_money_value(request.form.get("hourly_rate", user["hourly_rate"] or 0))
         sick_leave_days = parse_non_negative_int(request.form.get("sick_leave_days", user["sick_leave_days"] if user["sick_leave_days"] is not None else DEFAULT_SICK_LEAVE_DAYS), DEFAULT_SICK_LEAVE_DAYS)
@@ -12972,23 +12891,14 @@ def edit_employee(user_id):
             flash("Username already used by another employee.", "warning")
             return redirect(url_for("edit_employee", user_id=user_id))
 
-        if id_date_error:
-            flash(id_date_error, "danger")
-            return redirect(url_for("edit_employee", user_id=user_id))
-
         if selected_preset and not schedule_preset_matches_department(selected_preset, department):
             flash(f"Preset {selected_preset['name']} is scoped to {selected_preset['department_scope']}. Choose a matching department or use a custom schedule.", "danger")
-            return redirect(url_for("edit_employee", user_id=user_id))
-
-        existing_employee_code = find_employee_identifier_conflict(employee_code, exclude_user_id=user_id)
-        if existing_employee_code:
-            flash("Employee ID already exists or matches another employee barcode.", "warning")
             return redirect(url_for("edit_employee", user_id=user_id))
 
         if barcode_id:
             existing_barcode = find_employee_identifier_conflict(barcode_id, exclude_user_id=user_id)
             if existing_barcode:
-                flash("Barcode ID already used or matches another employee ID.", "warning")
+                flash("Barcode ID already used.", "warning")
                 return redirect(url_for("edit_employee", user_id=user_id))
 
         profile_image = user["profile_image"]
@@ -13031,11 +12941,6 @@ def edit_employee(user_id):
             f"Edited employee: {full_name} | " + summarize_employee_admin_changes(original_user, {
                 "department": department,
                 "position": position,
-                "emergency_contact_name": emergency_contact_name or "(not set)",
-                "emergency_contact_phone": emergency_contact_phone or "(not set)",
-                "id_issue_date": id_issue_date or "(auto)",
-                "id_expiration_date": id_expiration_date or "(auto)",
-                "employee_code": employee_code,
                 "barcode_id": barcode_id or "(not set)",
                 "hourly_rate": hourly_rate,
                 "sick_leave_days": sick_leave_days,
@@ -13072,55 +12977,7 @@ def edit_employee(user_id):
 @app.route("/admin/employee-id/<int:user_id>")
 @login_required(role="admin")
 def print_employee_id(user_id):
-    employee = fetchone("""
-        SELECT *
-        FROM users
-        WHERE id = ? AND role = 'employee'
-    """, (user_id,))
-
-    if not employee:
-        flash("Employee not found.", "danger")
-        return redirect(url_for("manage_employees"))
-    employee = dict(employee)
-
-    card_number = get_employee_card_number(employee)
-    barcode_value = (employee["barcode_id"] or card_number).strip()
-    company_settings = get_company_settings()
-    if employee["id_issue_date"]:
-        issue_date_value = employee["id_issue_date"]
-    else:
-        try:
-            issue_dt = datetime.strptime((employee["created_at"] or now_str())[:19], "%Y-%m-%d %H:%M:%S").date()
-        except Exception:
-            issue_dt = now_dt().date()
-        issue_date_value = issue_dt.strftime("%Y-%m-%d")
-
-    if employee["id_expiration_date"]:
-        expiration_date_value = employee["id_expiration_date"]
-    else:
-        try:
-            base_issue_dt = datetime.strptime(issue_date_value, "%Y-%m-%d").date()
-        except Exception:
-            base_issue_dt = now_dt().date()
-        expiration_date_value = (base_issue_dt + timedelta(days=365)).strftime("%Y-%m-%d")
-
-    try:
-        formatted_issue_date = datetime.strptime(issue_date_value, "%Y-%m-%d").strftime("%m/%d/%Y")
-    except Exception:
-        formatted_issue_date = issue_date_value
-    try:
-        formatted_expiration_date = datetime.strptime(expiration_date_value, "%Y-%m-%d").strftime("%m/%d/%Y")
-    except Exception:
-        formatted_expiration_date = expiration_date_value
-    return render_template(
-        "admin_employee_id_card.html",
-        employee=employee,
-        card_number=card_number,
-        barcode_value=barcode_value,
-        company_settings=company_settings,
-        issue_date=formatted_issue_date,
-        expiration_date=formatted_expiration_date
-    )
+    return redirect(url_for("download_employee_barcode", user_id=user_id))
 
 
 @app.route("/admin/employee-id/<int:user_id>/barcode")
@@ -13137,12 +12994,11 @@ def download_employee_barcode(user_id):
         return redirect(url_for("manage_employees"))
     employee = dict(employee)
 
-    card_number = get_employee_card_number(employee)
-    barcode_value = (employee["barcode_id"] or card_number).strip()
+    barcode_value = (employee["barcode_id"] or "").strip()
     svg_markup = generate_code128_svg_markup(barcode_value)
     if not svg_markup:
         flash("Barcode is not available for this employee yet.", "warning")
-        return redirect(url_for("print_employee_id", user_id=user_id))
+        return redirect(url_for("manage_employees"))
 
     safe_name = secure_filename(employee.get("full_name") or f"employee-{user_id}") or f"employee-{user_id}"
     return Response(
@@ -13328,31 +13184,31 @@ def scanner_kiosk_scan():
     if not barcode_value:
         log_scanner_activity(
             scanner_user_id, action_type, barcode_value, "error",
-            "Scan or enter an employee ID or barcode first.",
+            "Scan or enter a Barcode ID first.",
             **scanner_log_kwargs
         )
-        return jsonify({"ok": False, "message": "Scan or enter an employee ID or barcode first."}), 400
+        return jsonify({"ok": False, "message": "Scan or enter a Barcode ID first."}), 400
 
     barcode_lookup = find_employee_barcode_matches(barcode_value)
     if barcode_lookup["is_duplicate"]:
         log_scanner_activity(
             scanner_user_id, action_type, barcode_value, "error",
-            "This scan value matches multiple employees. Fix the employee ID or barcode records first.",
+            "This Barcode ID matches multiple employees. Fix the Barcode ID records first.",
             **scanner_log_kwargs
         )
         return jsonify({
             "ok": False,
-            "message": "This scan value matches multiple employees. Fix the employee ID or barcode records first."
+            "message": "This Barcode ID matches multiple employees. Fix the Barcode ID records first."
         }), 409
 
     employee = barcode_lookup["matches"][0] if barcode_lookup["matches"] else None
     if not employee:
         log_scanner_activity(
             scanner_user_id, action_type, barcode_value, "error",
-            "No employee matched that scan value. Check the employee ID or barcode first.",
+            "No employee matched that Barcode ID. Check the Barcode ID first.",
             **scanner_log_kwargs
         )
-        return jsonify({"ok": False, "message": "No employee matched that scan value. Check the employee ID or barcode first."}), 404
+        return jsonify({"ok": False, "message": "No employee matched that Barcode ID. Check the Barcode ID first."}), 404
 
     ok, message, employee_row = perform_attendance_action(
         employee["id"],
@@ -13386,6 +13242,7 @@ def scanner_kiosk_scan():
         "avatar_initials": get_avatar_initials(employee_for_payload["full_name"]),
         "profile_image_url": url_for("uploaded_file", filename=employee_for_payload["profile_image"]) if employee_for_payload["profile_image"] and uploaded_file_exists(employee_for_payload["profile_image"]) else None,
         "barcode_value": barcode_value,
+        "barcode_id": employee_for_payload["barcode_id"] or barcode_value,
         "match_type": barcode_lookup["match_type"],
         "employee_code": employee_for_payload["employee_code"] or get_employee_card_number(employee_for_payload),
         "status": "On Overtime" if overtime_session else (attendance["status"] if attendance else "Offline"),
@@ -13394,88 +13251,6 @@ def scanner_kiosk_scan():
         "break_minutes": break_minutes,
         "action_type": action_type
     }), (200 if ok else 400)
-
-
-@app.route("/admin/employee-id/signatory", methods=["POST"])
-@login_required(role="admin")
-def update_employee_id_signatory():
-    signatory_name = request.form.get("id_signatory_name", "").strip() or "Kirk Danny Fernandez"
-    signatory_title = request.form.get("id_signatory_title", "").strip() or "Head Of Operations"
-    hr_signatory_name = request.form.get("hr_signatory_name", "").strip()
-    hr_signatory_title = request.form.get("hr_signatory_title", "").strip() or "Human Resources Manager"
-    current_settings = get_company_settings()
-    signature_file = current_settings.get("id_signature_file") if current_settings else None
-    hr_signature_file = current_settings.get("hr_signature_file") if current_settings else None
-
-    file = request.files.get("id_signature_file")
-    if file and file.filename:
-        try:
-            saved = save_uploaded_file(file, prefix="id_signature", allowed_exts=IMAGE_EXTENSIONS)
-        except RuntimeError as exc:
-            flash(str(exc), "danger")
-            employee_id = request.form.get("employee_id", "").strip()
-            if employee_id:
-                return redirect(url_for("print_employee_id", user_id=employee_id))
-            return redirect(url_for("manage_employees"))
-        if not saved:
-            flash("Invalid signature image file type.", "danger")
-            employee_id = request.form.get("employee_id", "").strip()
-            if employee_id:
-                return redirect(url_for("print_employee_id", user_id=employee_id))
-            return redirect(url_for("manage_employees"))
-        signature_file = saved
-
-    hr_file = request.files.get("hr_signature_file")
-    if hr_file and hr_file.filename:
-        try:
-            saved_hr = save_uploaded_file(hr_file, prefix="hr_signature", allowed_exts=IMAGE_EXTENSIONS)
-        except RuntimeError as exc:
-            flash(str(exc), "danger")
-            employee_id = request.form.get("employee_id", "").strip()
-            if employee_id:
-                return redirect(url_for("print_employee_id", user_id=employee_id))
-            return redirect(url_for("manage_employees"))
-        if not saved_hr:
-            flash("Invalid Human Resources signature image file type.", "danger")
-            employee_id = request.form.get("employee_id", "").strip()
-            if employee_id:
-                return redirect(url_for("print_employee_id", user_id=employee_id))
-            return redirect(url_for("manage_employees"))
-        hr_signature_file = saved_hr
-
-    execute_db("""
-        INSERT INTO company_settings (
-            id, id_signatory_name, id_signatory_title, id_signature_file,
-            hr_signatory_name, hr_signatory_title, hr_signature_file
-        )
-        VALUES (1, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-            id_signatory_name = excluded.id_signatory_name,
-            id_signatory_title = excluded.id_signatory_title,
-            id_signature_file = excluded.id_signature_file,
-            hr_signatory_name = excluded.hr_signatory_name,
-            hr_signatory_title = excluded.hr_signatory_title,
-            hr_signature_file = excluded.hr_signature_file
-    """, (
-        signatory_name,
-        signatory_title,
-        signature_file,
-        hr_signatory_name,
-        hr_signatory_title,
-        hr_signature_file,
-    ), commit=True)
-
-    hr_log_name = hr_signatory_name or "Human Resources Manager"
-    log_activity(
-        session["user_id"],
-        "UPDATE ID SIGNATORY",
-        f"Updated ID signatories to {signatory_name} | {signatory_title} and {hr_log_name} | {hr_signatory_title}"
-    )
-    flash("ID signatory details updated.", "success")
-    employee_id = request.form.get("employee_id", "").strip()
-    if employee_id:
-        return redirect(url_for("print_employee_id", user_id=employee_id))
-    return redirect(url_for("manage_employees"))
 
 
 @app.route("/admin/delete-employee/<int:user_id>", methods=["POST"])

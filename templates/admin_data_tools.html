@@ -158,21 +158,6 @@
         </div>
     </div>
 
-    <div style="margin-top:14px; padding:14px; border-radius:16px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);">
-        <div style="font-weight:900;color:#fff;">ID Signatory Storage</div>
-        <div style="display:grid; gap:10px; margin-top:12px;">
-            {% for asset in storage_audit.signatory_assets %}
-                <div style="display:flex; justify-content:space-between; gap:12px; align-items:center; flex-wrap:wrap;">
-                    <div>
-                        <div style="font-weight:800; color:#fff;">{{ asset.label }}</div>
-                        <div class="small muted" style="margin-top:4px;">{{ asset.signatory_name }} | {{ asset.storage_label }}</div>
-                    </div>
-                    <div class="status {% if asset.cloudinary_backed %}status-green{% elif asset.is_missing %}status-red{% elif asset.storage_type == 'local' %}status-yellow{% else %}status-gray{% endif %}">{{ asset.status_label }}</div>
-                </div>
-            {% endfor %}
-        </div>
-    </div>
-
     <div class="divider"></div>
     <div style="display:flex; justify-content:space-between; gap:12px; align-items:center; flex-wrap:wrap;">
         <h4 style="margin:0;">Employees That Still Need Re-Upload</h4>
@@ -286,7 +271,7 @@
     <div class="small muted" style="margin-top:10px;">
         Reset keeps:
         employee accounts, admin/scanner accounts, passwords, schedules, hourly rates, departments, positions, profile images,
-        barcode IDs, company settings, and the uploaded ID signatory file.
+        barcode IDs and company settings.
     </div>
     {% if using_postgres_reset %}
         <div class="small" style="margin-top:12px;color:#fca5a5;">Warning: this Render/Postgres reset does not create an automatic database backup. Make an external backup first.</div>

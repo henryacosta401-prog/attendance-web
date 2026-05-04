@@ -32,22 +32,6 @@
                 <label style="display:block; margin-top:12px;">Position</label>
                 <input class="input" type="text" name="position" placeholder="e.g. VA / Team Member">
 
-                <label style="display:block; margin-top:12px;">Emergency Contact Name</label>
-                <input class="input" type="text" name="emergency_contact_name" placeholder="e.g. Jennifer Fermano">
-
-                <label style="display:block; margin-top:12px;">Emergency Contact Number</label>
-                <input class="input" type="text" name="emergency_contact_phone" placeholder="e.g. +63 935 829 5749">
-
-                <label style="display:block; margin-top:12px;">ID Issue Date</label>
-                <input class="input" type="date" name="id_issue_date">
-
-                <label style="display:block; margin-top:12px;">ID Expiration Date</label>
-                <input class="input" type="date" name="id_expiration_date">
-
-                <label style="display:block; margin-top:12px;">Employee ID</label>
-                <input class="input" type="text" name="employee_code" placeholder="e.g. ID-0001">
-                <div class="small muted" style="margin-top:8px;">Leave blank to auto-generate the employee ID shown on the card front.</div>
-
                 <label style="display:block; margin-top:12px;">Barcode ID</label>
                 <input class="input" type="text" name="barcode_id" placeholder="e.g. SS-2026-0001">
 
@@ -401,7 +385,6 @@
                             <th>Position</th>
                             <th>Schedule</th>
                             <th>Shift</th>
-                            <th>Employee ID</th>
                             <th>Barcode</th>
                             <th>Hourly Rate</th>
                             <th>Leave Balance</th>
@@ -450,7 +433,6 @@
                                 {% endif %}
                             </td>
                             <td>{{ emp.shift_start if emp.shift_start else '09:00' }} - {{ emp.shift_end if emp.shift_end else '18:00' }}</td>
-                            <td>{{ get_employee_card_number(emp) }}</td>
                             <td>{{ emp.barcode_id if emp.barcode_id else '-' }}</td>
                             <td>{{ format_currency(emp.hourly_rate) }}</td>
                             <td>
@@ -468,7 +450,7 @@
                             <td>{{ emp.created_at }}</td>
                             <td>
                                 <div class="top-actions">
-                                    <a class="btn btn-gray" href="{{ url_for('print_employee_id', user_id=emp.id) }}" target="_blank" rel="noopener">Print ID</a>
+                                    <a class="btn btn-gray" href="{{ url_for('download_employee_barcode', user_id=emp.id) }}">Download Barcode Only</a>
                                     <a class="btn btn-primary" href="{{ url_for('edit_employee', user_id=emp.id) }}">Edit</a>
                                     <form method="POST" action="{{ url_for('delete_employee', user_id=emp.id) }}" onsubmit="return confirm('Delete this employee permanently? Only use delete for accounts with no historical attendance or payroll records.')">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

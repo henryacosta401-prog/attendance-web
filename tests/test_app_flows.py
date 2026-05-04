@@ -261,7 +261,7 @@ class AppFlowsTestCase(unittest.TestCase):
         self.assertEqual(scanner_log["result_status"], "success")
         self.assertEqual(scanner_log["employee_name_snapshot"], "Henry Scanner")
 
-    def test_scanner_scan_accepts_employee_id_value(self):
+    def test_scanner_scan_rejects_employee_id_value(self):
         scanner = self.create_user("scanner-employee-id", role="scanner", position="Scanner")
         employee = self.create_user(
             "employee-id-user",
@@ -282,11 +282,10 @@ class AppFlowsTestCase(unittest.TestCase):
             headers={"User-Agent": "Codex Test Scanner"},
         )
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 404)
         payload = response.get_json()
-        self.assertTrue(payload["ok"])
-        self.assertEqual(payload["match_type"], "employee_code")
-        self.assertEqual(payload["employee_code"], "ID-0420")
+        self.assertFalse(payload["ok"])
+        self.assertIn("Barcode ID", payload["message"])
 
         with attendance_app.app.app_context():
             attendance = attendance_app.fetchone(
@@ -294,8 +293,7 @@ class AppFlowsTestCase(unittest.TestCase):
                 (employee["id"],),
             )
 
-        self.assertIsNotNone(attendance)
-        self.assertIsNotNone(attendance["time_in"])
+        self.assertIsNone(attendance)
 
     def test_tardiness_policy_adjusts_recorded_time_and_break_limit(self):
         employee = self.create_user(
@@ -1446,57 +1444,6 @@ class AppFlowsTestCase(unittest.TestCase):
         self.assertIn(b"Missing Employee", response.data)
         self.assertIn(b"Legacy Employee", response.data)
         self.assertNotIn(b"Cloud Employee", response.data)
-
-    def test_employee_id_signatory_update_supports_hr_manager(self):
-        admin = self.create_user(
-            "id-admin",
-            role="admin",
-            admin_permissions="dashboard,settings,employees",
-            admin_role_preset="custom",
-        )
-        employee = self.create_user(
-            "id-employee",
-            role="employee",
-            full_name="Deo Dame Saligumba",
-            department="People Operations",
-            position="Human Resources Manager",
-        )
-        with attendance_app.app.app_context():
-            attendance_app.execute_db(
-                "UPDATE users SET emergency_contact_name = ?, emergency_contact_phone = ? WHERE id = ?",
-                ("Shiela Mae Saligumba", "+63 975 355 1397", employee["id"]),
-                commit=True,
-            )
-        csrf_token = self.set_session_user(admin)
-
-        response = self.client.post(
-            "/admin/employee-id/signatory",
-            data={
-                "csrf_token": csrf_token,
-                "employee_id": str(employee["id"]),
-                "id_signatory_name": "Kirk Danny Fernandez",
-                "id_signatory_title": "Director of Operations",
-                "hr_signatory_name": "Deo Dame M. Saligumba",
-                "hr_signatory_title": "Human Resources Manager",
-            },
-            follow_redirects=False,
-        )
-
-        self.assertEqual(response.status_code, 302)
-        self.assertIn(f"/admin/employee-id/{employee['id']}", response.headers.get("Location", ""))
-        with attendance_app.app.app_context():
-            settings = attendance_app.get_company_settings()
-
-        self.assertEqual(settings["id_signatory_title"], "Director of Operations")
-        self.assertEqual(settings["hr_signatory_name"], "Deo Dame M. Saligumba")
-        self.assertEqual(settings["hr_signatory_title"], "Human Resources Manager")
-
-        page_response = self.client.get(f"/admin/employee-id/{employee['id']}")
-        self.assertEqual(page_response.status_code, 200)
-        self.assertIn(b"Portrait ID", page_response.data)
-        self.assertIn(b"Human Resources Manager", page_response.data)
-        self.assertIn(b"Director of Operations", page_response.data)
-        self.assertIn(b"Global ID Signatories", page_response.data)
 
     def test_admin_can_download_employee_barcode_svg(self):
         admin = self.create_user(
