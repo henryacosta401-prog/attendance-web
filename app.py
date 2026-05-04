@@ -157,6 +157,7 @@ from attendance_core.reports_routes import register_reports_routes
 from attendance_core.leave_routes import register_leave_routes
 from attendance_core.history_routes import register_history_routes
 from attendance_core.notification_routes import register_notification_routes
+from attendance_core.asset_routes import register_asset_routes
 from attendance_core.workflows import (
     build_correction_change_summary,
     build_schedule_special_rule_label,
@@ -8737,37 +8738,6 @@ def time_out():
     return redirect(url_for("dashboard"))
 
 
-@app.route("/uploads/<path:filename>")
-@login_required()
-def uploaded_file(filename):
-    user = get_user_by_id(session["user_id"])
-    if not can_access_uploaded_file(user, filename):
-        abort(403)
-    if is_cloudinary_reference(filename):
-        asset_url = build_cloudinary_asset_url(filename)
-        if not asset_url:
-            abort(404)
-        return redirect(asset_url)
-    return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
-
-
-@app.route("/manifest.webmanifest")
-def web_manifest():
-    manifest_path = os.path.join(app.static_folder, "manifest.webmanifest")
-    with open(manifest_path, "r", encoding="utf-8") as manifest_file:
-        payload = manifest_file.read()
-    response = Response(payload, mimetype="application/manifest+json")
-    response.headers["Cache-Control"] = "no-cache"
-    return response
-
-
-@app.route("/service-worker.js")
-def service_worker():
-    response = send_from_directory(app.static_folder, "service-worker.js")
-    response.headers["Cache-Control"] = "no-cache"
-    return response
-
-
 # =========================
 # ADMIN
 # =========================
@@ -11114,6 +11084,21 @@ def delete_incident_report(report_id):
     return redirect(url_for("admin_error_reports"))
 
 
+
+
+register_asset_routes(app, {
+    "Response": Response,
+    "abort": abort,
+    "build_cloudinary_asset_url": build_cloudinary_asset_url,
+    "can_access_uploaded_file": can_access_uploaded_file,
+    "get_user_by_id": get_user_by_id,
+    "is_cloudinary_reference": is_cloudinary_reference,
+    "login_required": login_required,
+    "os": os,
+    "redirect": redirect,
+    "send_from_directory": send_from_directory,
+    "session": session,
+})
 
 
 register_notification_routes(app, {
