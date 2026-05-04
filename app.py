@@ -150,6 +150,7 @@ from attendance_core.scanner import (
     build_employee_scan_match_finder,
     resolve_client_ip,
 )
+from attendance_core.scanner_routes import register_scanner_routes
 from attendance_core.workflows import (
     build_correction_change_summary,
     build_schedule_special_rule_label,
@@ -12951,107 +12952,32 @@ def legacy_download_employee_barcode(user_id):
     return redirect(url_for("download_employee_barcode", user_id=user_id))
 
 
-@app.route("/scanner")
-@login_required(role="scanner")
-def scanner_kiosk():
-    return render_template("scanner.html")
-
-
-@app.route("/scanner/unlock", methods=["POST"])
-@login_required(role="scanner")
-def scanner_kiosk_unlock():
-    pin_value = (request.form.get("pin", "") or "").strip()
-    if not has_scanner_exit_pin():
-        return jsonify({"ok": True, "message": "Scanner unlocked."})
-    if verify_scanner_exit_pin(pin_value):
-        return jsonify({"ok": True, "message": "Scanner unlocked."})
-    return jsonify({"ok": False, "message": "Incorrect kiosk PIN."}), 403
-
-
-@app.route("/admin/scanner-logs")
-@login_required(role="admin")
-def admin_scanner_logs():
-    date_from = (request.args.get("date_from", "") or "").strip()
-    date_to = (request.args.get("date_to", "") or "").strip()
-    action_type = (request.args.get("action_type", "") or "").strip()
-    result_status = (request.args.get("result_status", "") or "").strip()
-    employee_id = (request.args.get("employee_id", "") or "").strip()
-
-    if date_from and date_to:
-        try:
-            start_date = datetime.strptime(date_from, "%Y-%m-%d").date()
-            end_date = datetime.strptime(date_to, "%Y-%m-%d").date()
-            if start_date > end_date:
-                date_from, date_to = date_to, date_from
-        except ValueError:
-            pass
-
-    where_clauses = []
-    params = []
-
-    if date_from:
-        where_clauses.append("sl.created_at >= ?")
-        params.append(f"{date_from} 00:00:00")
-    if date_to:
-        where_clauses.append("sl.created_at <= ?")
-        params.append(f"{date_to} 23:59:59")
-    if action_type:
-        where_clauses.append("sl.action_type = ?")
-        params.append(action_type)
-    if result_status:
-        where_clauses.append("sl.result_status = ?")
-        params.append(result_status)
-    if employee_id.isdigit():
-        where_clauses.append("sl.employee_user_id = ?")
-        params.append(int(employee_id))
-
-    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
-    scanner_exprs = get_scanner_log_select_expressions()
-
-    rows = fetchall(f"""
-        SELECT
-            sl.*,
-            {scanner_exprs['scanner_name']} AS scanner_name,
-            {scanner_exprs['scanner_username']} AS scanner_username,
-            {scanner_exprs['employee_name']} AS employee_name,
-            {scanner_exprs['employee_department']} AS employee_department,
-            {scanner_exprs['employee_position']} AS employee_position
-        FROM scanner_logs sl
-        LEFT JOIN users scanner ON scanner.id = sl.scanner_user_id
-        LEFT JOIN users employee ON employee.id = sl.employee_user_id
-        {where_sql}
-        ORDER BY sl.created_at DESC, sl.id DESC
-        LIMIT 300
-    """, tuple(params))
-
-    stats = fetchone(f"""
-        SELECT
-            COUNT(*) AS total_scans,
-            SUM(CASE WHEN sl.result_status = 'success' THEN 1 ELSE 0 END) AS success_count,
-            SUM(CASE WHEN sl.result_status = 'error' THEN 1 ELSE 0 END) AS error_count,
-            SUM(CASE WHEN substr(sl.created_at, 1, 10) = ? THEN 1 ELSE 0 END) AS today_count
-        FROM scanner_logs sl
-        {where_sql}
-    """, tuple([today_str(), *params])) or {}
-
-    employees = fetchall("""
-        SELECT id, full_name, department
-        FROM users
-        WHERE role = 'employee'
-        ORDER BY full_name
-    """)
-
-    return render_template(
-        "admin_scanner_logs.html",
-        scanner_logs=rows,
-        stats=stats,
-        date_from=date_from,
-        date_to=date_to,
-        action_type=action_type,
-        result_status=result_status,
-        employee_id=employee_id,
-        employees=employees
-    )
+register_scanner_routes(app, {
+    "datetime": datetime,
+    "fetchall": fetchall,
+    "fetchone": fetchone,
+    "find_employee_barcode_matches": find_employee_barcode_matches,
+    "get_avatar_initials": get_avatar_initials,
+    "get_client_ip": get_client_ip,
+    "get_current_attendance": get_current_attendance,
+    "get_open_overtime_session": get_open_overtime_session,
+    "get_scanner_log_select_expressions": get_scanner_log_select_expressions,
+    "get_user_by_id": get_user_by_id,
+    "has_scanner_exit_pin": has_scanner_exit_pin,
+    "jsonify": jsonify,
+    "login_required": login_required,
+    "log_scanner_activity": log_scanner_activity,
+    "perform_attendance_action": perform_attendance_action,
+    "render_template": render_template,
+    "request": request,
+    "row_get": row_get,
+    "session": session,
+    "today_str": today_str,
+    "total_break_minutes": total_break_minutes,
+    "uploaded_file_exists": uploaded_file_exists,
+    "url_for": url_for,
+    "verify_scanner_exit_pin": verify_scanner_exit_pin,
+})
 
 
 @app.route("/admin/attendance-audit")
@@ -13092,105 +13018,6 @@ def admin_attendance_audit():
         source_filter=source_filter,
         employees=employees
     )
-
-
-@app.route("/scanner/scan", methods=["POST"])
-@login_required(role="scanner")
-def scanner_kiosk_scan():
-    action_type = (request.form.get("action_type", "") or "").strip()
-    barcode_value = (request.form.get("barcode_value", "") or "").strip()
-    scanner_user_id = session.get("user_id")
-    scanner_user = get_user_by_id(scanner_user_id)
-    source_label = "Tablet kiosk"
-    device_label = "Tablet camera kiosk"
-    ip_address = get_client_ip()
-    user_agent = request.headers.get("User-Agent", "")
-    scanner_log_kwargs = {
-        "source_label": source_label,
-        "device_label": device_label,
-        "ip_address": ip_address,
-        "user_agent": user_agent,
-        "scanner_name_snapshot": row_get(scanner_user, "full_name"),
-        "scanner_username_snapshot": row_get(scanner_user, "username"),
-    }
-
-    if action_type not in {"time_in", "start_break", "end_break", "time_out", "overtime_start", "overtime_end"}:
-        log_scanner_activity(
-            scanner_user_id, action_type, barcode_value, "error",
-            "Please choose a valid attendance action.",
-            **scanner_log_kwargs
-        )
-        return jsonify({"ok": False, "message": "Please choose a valid attendance action."}), 400
-
-    if not barcode_value:
-        log_scanner_activity(
-            scanner_user_id, action_type, barcode_value, "error",
-            "Scan or enter a Barcode ID first.",
-            **scanner_log_kwargs
-        )
-        return jsonify({"ok": False, "message": "Scan or enter a Barcode ID first."}), 400
-
-    barcode_lookup = find_employee_barcode_matches(barcode_value)
-    if barcode_lookup["is_duplicate"]:
-        log_scanner_activity(
-            scanner_user_id, action_type, barcode_value, "error",
-            "This Barcode ID matches multiple employees. Fix the Barcode ID records first.",
-            **scanner_log_kwargs
-        )
-        return jsonify({
-            "ok": False,
-            "message": "This Barcode ID matches multiple employees. Fix the Barcode ID records first."
-        }), 409
-
-    employee = barcode_lookup["matches"][0] if barcode_lookup["matches"] else None
-    if not employee:
-        log_scanner_activity(
-            scanner_user_id, action_type, barcode_value, "error",
-            "No employee matched that Barcode ID. Check the Barcode ID first.",
-            **scanner_log_kwargs
-        )
-        return jsonify({"ok": False, "message": "No employee matched that Barcode ID. Check the Barcode ID first."}), 404
-
-    ok, message, employee_row = perform_attendance_action(
-        employee["id"],
-        action_type,
-        actor_id=scanner_user_id,
-        source_label=source_label
-    )
-    employee_for_payload = employee_row or employee
-    attendance = get_current_attendance(employee["id"])
-    overtime_session = get_open_overtime_session(employee["id"])
-    break_minutes = total_break_minutes(attendance["id"], include_open=True) if attendance else 0
-    log_scanner_activity(
-        scanner_user_id,
-        action_type,
-        barcode_value,
-        "success" if ok else "error",
-        message,
-        employee_user_id=employee["id"],
-        employee_name_snapshot=row_get(employee_for_payload, "full_name"),
-        employee_department_snapshot=row_get(employee_for_payload, "department"),
-        employee_position_snapshot=row_get(employee_for_payload, "position"),
-        **scanner_log_kwargs
-    )
-
-    return jsonify({
-        "ok": ok,
-        "message": message,
-        "employee_name": employee_for_payload["full_name"],
-        "department": employee_for_payload["department"] or "",
-        "position": employee_for_payload["position"] or "",
-        "avatar_initials": get_avatar_initials(employee_for_payload["full_name"]),
-        "profile_image_url": url_for("uploaded_file", filename=employee_for_payload["profile_image"]) if employee_for_payload["profile_image"] and uploaded_file_exists(employee_for_payload["profile_image"]) else None,
-        "barcode_value": barcode_value,
-        "barcode_id": employee_for_payload["barcode_id"] or barcode_value,
-        "match_type": barcode_lookup["match_type"],
-        "status": "On Overtime" if overtime_session else (attendance["status"] if attendance else "Offline"),
-        "time_in": attendance["time_in"] if attendance else None,
-        "time_out": attendance["time_out"] if attendance else None,
-        "break_minutes": break_minutes,
-        "action_type": action_type
-    }), (200 if ok else 400)
 
 
 @app.route("/admin/delete-employee/<int:user_id>", methods=["POST"])
