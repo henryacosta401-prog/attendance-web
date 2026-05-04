@@ -156,6 +156,7 @@ from attendance_core.payroll_routes import register_payroll_routes
 from attendance_core.reports_routes import register_reports_routes
 from attendance_core.leave_routes import register_leave_routes
 from attendance_core.history_routes import register_history_routes
+from attendance_core.notification_routes import register_notification_routes
 from attendance_core.workflows import (
     build_correction_change_summary,
     build_schedule_special_rule_label,
@@ -7965,36 +7966,6 @@ def employee_activity():
     return render_template("employee_activity.html", user=user, logs=logs)
 
 
-@app.route("/notifications")
-@login_required()
-def notifications_page():
-    user = get_user_by_id(session["user_id"])
-    notifications = get_latest_notifications(session["user_id"], limit=100)
-
-    return render_template(
-        "notifications.html",
-        user=user,
-        notifications=notifications
-    )
-
-
-@app.route("/notifications/preview")
-@login_required()
-def notifications_preview():
-    current_user = get_user_by_id(session["user_id"])
-    if current_user and current_user.get("role") == "employee":
-        clear_resolved_break_limit_notifications(
-            current_user,
-            include_open_overtime=True,
-        )
-    unread_count = get_unread_notification_count(session["user_id"])
-    preview_rows = build_notification_preview_rows(
-        get_latest_notifications(session["user_id"], limit=6),
-        format_datetime_12h,
-    )
-    return jsonify({"unread_count": unread_count, "items": preview_rows})
-
-
 @app.route("/history")
 @login_required(role="employee")
 def employee_history():
@@ -8764,33 +8735,6 @@ def time_out():
     invalidate_admin_employee_rows_cache()
     flash("Time out successful.", "success")
     return redirect(url_for("dashboard"))
-
-
-@app.route("/notifications/read/<int:notif_id>", methods=["POST"])
-@login_required()
-def read_notification(notif_id):
-    execute_db("""
-        UPDATE notifications
-        SET is_read = 1
-        WHERE id = ? AND user_id = ?
-    """, (notif_id, session["user_id"]), commit=True)
-
-    if session.get("role") == "admin":
-        return redirect(request.referrer or url_for("admin_dashboard"))
-    return redirect(request.referrer or url_for("dashboard"))
-
-
-@app.route("/notifications/read-all", methods=["POST"])
-@login_required()
-def read_all_notifications():
-    execute_db("""
-        UPDATE notifications
-        SET is_read = 1
-        WHERE user_id = ? AND is_read = 0
-    """, (session["user_id"],), commit=True)
-
-    flash("All notifications marked as read.", "success")
-    return redirect(request.referrer or url_for("notifications_page"))
 
 
 @app.route("/uploads/<path:filename>")
@@ -11172,6 +11116,27 @@ def delete_incident_report(report_id):
 
 
 
+register_notification_routes(app, {
+    "build_notification_preview_rows": build_notification_preview_rows,
+    "clear_resolved_break_limit_notifications": clear_resolved_break_limit_notifications,
+    "create_notification": create_notification,
+    "execute_db": execute_db,
+    "flash": flash,
+    "format_datetime_12h": format_datetime_12h,
+    "get_latest_notifications": get_latest_notifications,
+    "get_unread_notification_count": get_unread_notification_count,
+    "get_user_by_id": get_user_by_id,
+    "jsonify": jsonify,
+    "log_activity": log_activity,
+    "login_required": login_required,
+    "redirect": redirect,
+    "render_template": render_template,
+    "request": request,
+    "session": session,
+    "url_for": url_for,
+})
+
+
 register_history_routes(app, {
     "BytesIO": BytesIO,
     "Response": Response,
@@ -11412,23 +11377,6 @@ def admin_attendance_audit():
     )
 
 
-
-
-@app.route("/admin/send-notification", methods=["POST"])
-@login_required(role="admin")
-def send_admin_notification():
-    user_id = request.form.get("user_id")
-    title = request.form.get("title", "").strip()
-    message = request.form.get("message", "").strip()
-
-    if not user_id or not title or not message:
-        flash("All notification fields are required.", "danger")
-        return redirect(url_for("admin_dashboard"))
-
-    create_notification(user_id, title, message)
-    log_activity(session["user_id"], "SEND NOTIFICATION", f"Sent notification to user ID {user_id}")
-    flash("Notification sent successfully.", "success")
-    return redirect(url_for("admin_dashboard"))
 
 
 @app.route("/admin/create-incident", methods=["POST"])
