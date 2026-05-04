@@ -75,10 +75,10 @@ def register_scanner_routes(app, deps):
 
         stats = deps["fetchone"](f"""
             SELECT
-                COUNT(*) AS total_scans,
-                SUM(CASE WHEN sl.result_status = 'success' THEN 1 ELSE 0 END) AS success_count,
-                SUM(CASE WHEN sl.result_status = 'error' THEN 1 ELSE 0 END) AS error_count,
-                SUM(CASE WHEN substr(sl.created_at, 1, 10) = ? THEN 1 ELSE 0 END) AS today_count
+                SUM(COALESCE(sl.repeat_count, 1)) AS total_scans,
+                SUM(CASE WHEN sl.result_status = 'success' THEN COALESCE(sl.repeat_count, 1) ELSE 0 END) AS success_count,
+                SUM(CASE WHEN sl.result_status = 'error' THEN COALESCE(sl.repeat_count, 1) ELSE 0 END) AS error_count,
+                SUM(CASE WHEN substr(sl.created_at, 1, 10) = ? THEN COALESCE(sl.repeat_count, 1) ELSE 0 END) AS today_count
             FROM scanner_logs sl
             {where_sql}
         """, tuple([deps["today_str"](), *params])) or {}

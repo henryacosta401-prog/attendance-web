@@ -138,6 +138,9 @@
                                 </td>
                                 <td>
                                     <div>{{ row.result_message or '-' }}</div>
+                                    {% if (row.repeat_count or 1) > 1 %}
+                                        <div class="scanner-log-subtext" style="margin-top:6px;">{{ row.repeat_count }} repeated attempts{% if row.last_seen_at %} | Last {{ row.last_seen_at }}{% endif %}</div>
+                                    {% endif %}
                                     <div class="scanner-log-subtext" style="margin-top:6px;">{{ row.user_agent or '-' }}</div>
                                 </td>
                             </tr>

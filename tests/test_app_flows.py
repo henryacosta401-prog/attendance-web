@@ -261,6 +261,44 @@ class AppFlowsTestCase(unittest.TestCase):
         self.assertEqual(scanner_log["result_status"], "success")
         self.assertEqual(scanner_log["employee_name_snapshot"], "Henry Scanner")
 
+    def test_scanner_repeated_employee_errors_are_collapsed(self):
+        scanner = self.create_user("scanner-repeat", role="scanner", position="Scanner")
+        employee = self.create_user(
+            "repeat-barcode-employee",
+            role="employee",
+            full_name="Henry Repeat",
+            barcode_id="REPEAT123",
+            shift_start="16:00",
+            shift_end="00:00",
+        )
+        csrf_token = self.set_session_user(scanner)
+
+        payload = {
+            "csrf_token": csrf_token,
+            "action_type": "time_in",
+            "barcode_value": "REPEAT123",
+        }
+        first = self.client.post("/scanner/scan", data=payload)
+        second = self.client.post("/scanner/scan", data=payload)
+        third = self.client.post("/scanner/scan", data=payload)
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 400)
+        self.assertEqual(third.status_code, 400)
+
+        with attendance_app.app.app_context():
+            rows = attendance_app.fetchall(
+                "SELECT * FROM scanner_logs WHERE employee_user_id = ? ORDER BY id ASC",
+                (employee["id"],),
+            )
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["result_status"], "success")
+        self.assertEqual(rows[1]["result_status"], "error")
+        self.assertEqual(rows[1]["result_message"], "Employee is already timed in.")
+        self.assertEqual(rows[1]["repeat_count"], 2)
+        self.assertIsNotNone(rows[1]["last_seen_at"])
+
     def test_scanner_scan_rejects_employee_id_value(self):
         scanner = self.create_user("scanner-employee-id", role="scanner", position="Scanner")
         employee = self.create_user(

@@ -918,6 +918,8 @@ def init_sqlite_db():
             employee_name_snapshot TEXT,
             employee_department_snapshot TEXT,
             employee_position_snapshot TEXT,
+            repeat_count INTEGER NOT NULL DEFAULT 1,
+            last_seen_at TEXT,
             created_at TEXT NOT NULL,
             FOREIGN KEY (scanner_user_id) REFERENCES users (id),
             FOREIGN KEY (employee_user_id) REFERENCES users (id)
@@ -1453,6 +1455,8 @@ def init_sqlite_db():
                 employee_name_snapshot TEXT,
                 employee_department_snapshot TEXT,
                 employee_position_snapshot TEXT,
+                repeat_count INTEGER NOT NULL DEFAULT 1,
+                last_seen_at TEXT,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (scanner_user_id) REFERENCES users (id),
                 FOREIGN KEY (employee_user_id) REFERENCES users (id)
@@ -1489,6 +1493,10 @@ def init_sqlite_db():
         cursor.execute("ALTER TABLE scanner_logs ADD COLUMN employee_department_snapshot TEXT")
     if "employee_position_snapshot" not in existing_cols_scanner_logs:
         cursor.execute("ALTER TABLE scanner_logs ADD COLUMN employee_position_snapshot TEXT")
+    if "repeat_count" not in existing_cols_scanner_logs:
+        cursor.execute("ALTER TABLE scanner_logs ADD COLUMN repeat_count INTEGER NOT NULL DEFAULT 1")
+    if "last_seen_at" not in existing_cols_scanner_logs:
+        cursor.execute("ALTER TABLE scanner_logs ADD COLUMN last_seen_at TEXT")
     if "created_at" not in existing_cols_scanner_logs:
         cursor.execute("ALTER TABLE scanner_logs ADD COLUMN created_at TEXT")
 
@@ -2022,6 +2030,8 @@ def init_postgres_db():
                 employee_name_snapshot TEXT,
                 employee_department_snapshot TEXT,
                 employee_position_snapshot TEXT,
+                repeat_count INTEGER NOT NULL DEFAULT 1,
+                last_seen_at TEXT,
                 created_at TEXT NOT NULL
             )
         """)
@@ -2040,6 +2050,8 @@ def init_postgres_db():
         cur.execute("ALTER TABLE scanner_logs ADD COLUMN IF NOT EXISTS employee_name_snapshot TEXT")
         cur.execute("ALTER TABLE scanner_logs ADD COLUMN IF NOT EXISTS employee_department_snapshot TEXT")
         cur.execute("ALTER TABLE scanner_logs ADD COLUMN IF NOT EXISTS employee_position_snapshot TEXT")
+        cur.execute("ALTER TABLE scanner_logs ADD COLUMN IF NOT EXISTS repeat_count INTEGER NOT NULL DEFAULT 1")
+        cur.execute("ALTER TABLE scanner_logs ADD COLUMN IF NOT EXISTS last_seen_at TEXT")
         cur.execute("ALTER TABLE scanner_logs ADD COLUMN IF NOT EXISTS created_at TEXT")
 
         cur.execute("""
@@ -2920,14 +2932,71 @@ def log_scanner_activity(scanner_user_id, action_type, barcode_value, result_sta
                          ip_address=None, user_agent=None, scanner_name_snapshot=None,
                          scanner_username_snapshot=None, employee_name_snapshot=None,
                          employee_department_snapshot=None, employee_position_snapshot=None):
+    timestamp = now_str()
+    can_collapse_duplicate = (
+        result_status == "error"
+        and employee_user_id is not None
+        and result_message
+        and column_exists("scanner_logs", "repeat_count")
+        and column_exists("scanner_logs", "last_seen_at")
+    )
+    if can_collapse_duplicate:
+        cutoff = (now_dt() - timedelta(minutes=2)).strftime("%Y-%m-%d %H:%M:%S")
+        recent_duplicate = fetchone("""
+            SELECT id, repeat_count
+            FROM scanner_logs
+            WHERE scanner_user_id = ?
+              AND employee_user_id = ?
+              AND action_type = ?
+              AND barcode_value = ?
+              AND result_status = ?
+              AND result_message = ?
+              AND COALESCE(last_seen_at, created_at) >= ?
+            ORDER BY COALESCE(last_seen_at, created_at) DESC, id DESC
+            LIMIT 1
+        """, (
+            scanner_user_id,
+            employee_user_id,
+            action_type,
+            barcode_value,
+            result_status,
+            result_message,
+            cutoff,
+        ))
+        if recent_duplicate:
+            execute_db("""
+                UPDATE scanner_logs
+                SET repeat_count = COALESCE(repeat_count, 1) + 1,
+                    last_seen_at = ?,
+                    ip_address = ?,
+                    user_agent = ?,
+                    scanner_name_snapshot = COALESCE(?, scanner_name_snapshot),
+                    scanner_username_snapshot = COALESCE(?, scanner_username_snapshot),
+                    employee_name_snapshot = COALESCE(?, employee_name_snapshot),
+                    employee_department_snapshot = COALESCE(?, employee_department_snapshot),
+                    employee_position_snapshot = COALESCE(?, employee_position_snapshot)
+                WHERE id = ?
+            """, (
+                timestamp,
+                ip_address,
+                user_agent,
+                scanner_name_snapshot,
+                scanner_username_snapshot,
+                employee_name_snapshot,
+                employee_department_snapshot,
+                employee_position_snapshot,
+                recent_duplicate["id"],
+            ), commit=True)
+            return
+
     execute_db("""
         INSERT INTO scanner_logs (
             scanner_user_id, employee_user_id, action_type, barcode_value, result_status,
             result_message, source_label, device_label, ip_address, user_agent,
             scanner_name_snapshot, scanner_username_snapshot, employee_name_snapshot,
-            employee_department_snapshot, employee_position_snapshot, created_at
+            employee_department_snapshot, employee_position_snapshot, repeat_count, last_seen_at, created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         scanner_user_id,
         employee_user_id,
@@ -2944,7 +3013,9 @@ def log_scanner_activity(scanner_user_id, action_type, barcode_value, result_sta
         employee_name_snapshot,
         employee_department_snapshot,
         employee_position_snapshot,
-        now_str()
+        1,
+        timestamp,
+        timestamp
     ), commit=True)
 
 
