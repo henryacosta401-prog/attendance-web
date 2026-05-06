@@ -166,6 +166,7 @@ from attendance_core.admin_dashboard_routes import register_admin_dashboard_rout
 from attendance_core.admin_correction_routes import register_admin_correction_routes
 from attendance_core.admin_data_tools_routes import register_admin_data_tools_routes
 from attendance_core.admin_incident_routes import register_admin_incident_routes
+from attendance_core.admin_audit_routes import register_admin_audit_routes
 from attendance_core.workflows import (
     build_correction_change_summary,
     build_schedule_special_rule_label,
@@ -9529,6 +9530,16 @@ def apply_attendance_correction(user_id, work_date, time_in_value="", break_star
     return build_correction_change_summary(before_values, after_values)
 
 
+register_admin_audit_routes(app, {
+    "build_attendance_audit_rows": build_attendance_audit_rows,
+    "datetime": datetime,
+    "fetchall": fetchall,
+    "login_required": login_required,
+    "render_template": render_template,
+    "request": request,
+})
+
+
 register_admin_incident_routes(app, {
     "BytesIO": BytesIO,
     "DISCIPLINARY_ACTION_TYPES": DISCIPLINARY_ACTION_TYPES,
@@ -10016,48 +10027,6 @@ register_scanner_routes(app, {
     "url_for": url_for,
     "verify_scanner_exit_pin": verify_scanner_exit_pin,
 })
-
-
-@app.route("/admin/attendance-audit")
-@login_required(role="admin")
-def admin_attendance_audit():
-    date_from = (request.args.get("date_from", "") or "").strip()
-    date_to = (request.args.get("date_to", "") or "").strip()
-    employee_id = (request.args.get("employee_id", "") or "").strip()
-    source_filter = (request.args.get("source", "") or "").strip()
-
-    if date_from and date_to:
-        try:
-            start_date = datetime.strptime(date_from, "%Y-%m-%d").date()
-            end_date = datetime.strptime(date_to, "%Y-%m-%d").date()
-            if start_date > end_date:
-                date_from, date_to = date_to, date_from
-        except ValueError:
-            pass
-
-    rows = build_attendance_audit_rows(
-        date_from=date_from,
-        date_to=date_to,
-        employee_id=employee_id,
-        source_filter=source_filter
-    )
-    employees = fetchall("""
-        SELECT id, full_name, department
-        FROM users
-        WHERE role = 'employee'
-        ORDER BY full_name
-    """)
-    return render_template(
-        "admin_attendance_audit.html",
-        audit_rows=rows,
-        date_from=date_from,
-        date_to=date_to,
-        employee_id=employee_id,
-        source_filter=source_filter,
-        employees=employees
-    )
-
-
 
 
 # =========================
