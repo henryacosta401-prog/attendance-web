@@ -4111,7 +4111,7 @@ def is_undertime_record(user_row, attendance_row):
     scheduled_minutes = max(int((shift_end_naive - shift_start_naive).total_seconds() // 60), 0)
     if worked_minutes <= 0 or scheduled_minutes <= 0:
         return False
-    if worked_minutes > scheduled_minutes:
+    if worked_minutes >= scheduled_minutes:
         return False
     return shift_start_naive <= actual_time_out < shift_end_naive
 

@@ -119,6 +119,26 @@ class AttendanceRulesTestCase(unittest.TestCase):
         self.assertEqual(updated["time_out"], "2026-03-26 22:00:00")
         self.assertEqual(break_row["break_end"], "2026-03-26 22:00:00")
 
+    def test_full_early_shift_is_not_undertime(self):
+        user = self.create_employee(
+            username="early-shift",
+            shift_start="09:00",
+            shift_end="17:00",
+            schedule_days="Sun",
+        )
+        attendance = self.create_attendance(
+            user["id"],
+            "2026-03-29",
+            "2026-03-29 07:00:00",
+            "2026-03-29 15:00:00",
+            status="Timed Out",
+        )
+
+        with attendance_app.app.app_context():
+            result = attendance_app.is_undertime_record(user, attendance)
+
+        self.assertFalse(result)
+
     def test_open_break_minutes_map_handles_timezone_aware_now(self):
         user = self.create_employee(username="openbreak-user")
         attendance = self.create_attendance(user["id"], "2026-03-26", "2026-03-26 16:00:00", None, status="On Break")
