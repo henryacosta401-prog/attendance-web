@@ -87,6 +87,189 @@ def build_employee_payslip_pdf_filename(payslip):
     return base_name or "employee_payslip.pdf"
 
 
+def build_admin_payroll_pdf_filename(payroll_run):
+    base_name = secure_filename(
+        f"payroll_run_{payroll_run.get('id', '')}_{payroll_run.get('date_from', '')}_{payroll_run.get('date_to', '')}.pdf"
+    )
+    return base_name or "payroll_run.pdf"
+
+
+def build_admin_payroll_pdf_bytes(payroll_run, payroll_items, stats=None, printed_at_text=""):
+    stats = stats or {}
+    payroll_items = list(payroll_items or [])
+    page_width = 612
+    page_height = 792
+    margin = 36
+    content_width = page_width - (margin * 2)
+    body_color = (0.12, 0.16, 0.25)
+    muted_color = (0.37, 0.47, 0.62)
+    brand_blue = (0.10, 0.20, 0.42)
+    header_fill = (0.91, 0.95, 1.0)
+    line_color = (0.82, 0.87, 0.94)
+
+    rows_per_page = 22
+    pages = []
+
+    def build_page(page_items, page_number, page_count):
+        commands = []
+
+        def add_fill_color(r, g, b):
+            commands.append(f"{r:.3f} {g:.3f} {b:.3f} rg")
+
+        def add_stroke_color(r, g, b):
+            commands.append(f"{r:.3f} {g:.3f} {b:.3f} RG")
+
+        def add_rect(x, y, width, height, fill_rgb=None, stroke_rgb=None, line_width=1):
+            if fill_rgb:
+                add_fill_color(*fill_rgb)
+            if stroke_rgb:
+                add_stroke_color(*stroke_rgb)
+                commands.append(f"{line_width:.2f} w")
+            commands.append(f"{x:.2f} {y:.2f} {width:.2f} {height:.2f} re")
+            if fill_rgb and stroke_rgb:
+                commands.append("B")
+            elif fill_rgb:
+                commands.append("f")
+            else:
+                commands.append("S")
+
+        def add_text(x, y, text, size=9, font="F1", rgb=body_color):
+            safe_text = pdf_escape_text(text)
+            add_fill_color(*rgb)
+            commands.append(f"BT /{font} {size:.2f} Tf 1 0 0 1 {x:.2f} {y:.2f} Tm ({safe_text}) Tj ET")
+
+        def fit_text(value, width):
+            text = str(value or "")
+            return text if len(text) <= width else text[: max(width - 3, 0)].rstrip() + "..."
+
+        add_rect(0, page_height - 88, page_width, 88, fill_rgb=brand_blue)
+        add_text(margin, page_height - 38, "STELLAR SEATS", size=18, font="F2", rgb=(1, 1, 1))
+        add_text(margin, page_height - 58, "Released Payroll Copy", size=10, font="F1", rgb=(0.88, 0.93, 1))
+        add_text(page_width - 232, page_height - 38, payroll_run.get("period_label") or "Payroll Period", size=11, font="F2", rgb=(1.0, 0.93, 0.55))
+        add_text(page_width - 232, page_height - 56, f"{payroll_run.get('date_from', '')} to {payroll_run.get('date_to', '')}", size=9, font="F1", rgb=(0.88, 0.93, 1))
+        if printed_at_text:
+            add_text(page_width - 232, page_height - 74, f"Generated {printed_at_text}", size=8, font="F1", rgb=(0.88, 0.93, 1))
+
+        summary_y = page_height - 126
+        summary_cards = [
+            ("Employees", stats.get("employees", len(payroll_items))),
+            ("Gross", format_currency(stats.get("total_gross", 0))),
+            ("Overtime", format_currency(stats.get("total_overtime_pay", 0))),
+            ("Final Payroll", format_currency(stats.get("total_final_pay", 0))),
+        ]
+        card_gap = 8
+        card_width = (content_width - (card_gap * 3)) / 4
+        for index, (label, value) in enumerate(summary_cards):
+            card_x = margin + index * (card_width + card_gap)
+            add_rect(card_x, summary_y - 42, card_width, 42, fill_rgb=(0.96, 0.98, 1), stroke_rgb=line_color)
+            add_text(card_x + 8, summary_y - 16, label.upper(), size=7, font="F2", rgb=muted_color)
+            add_text(card_x + 8, summary_y - 32, value, size=10, font="F2", rgb=body_color)
+
+        meta_y = summary_y - 62
+        scope_label = get_payroll_scope_label(
+            employee_filter=payroll_run.get("employee_filter"),
+            department_filter=payroll_run.get("department_filter"),
+        )
+        add_text(margin, meta_y, f"Scope: {scope_label}", size=9, font="F2", rgb=body_color)
+        add_text(margin + 240, meta_y, f"Status: {payroll_run.get('status', 'Released')}", size=9, font="F2", rgb=body_color)
+        add_text(margin, meta_y - 14, f"Released: {payroll_run.get('released_display') or payroll_run.get('released_at') or ''}", size=8, rgb=muted_color)
+        add_text(margin + 240, meta_y - 14, f"Prepared By: {payroll_run.get('created_by_name') or 'Administrator'}", size=8, rgb=muted_color)
+
+        table_top = meta_y - 42
+        columns = [
+            ("Employee", margin + 6, 140),
+            ("Dept", margin + 154, 72),
+            ("Reg Hrs", margin + 234, 42),
+            ("OT Hrs", margin + 286, 38),
+            ("Gross", margin + 334, 58),
+            ("Adj", margin + 402, 54),
+            ("Final", margin + 466, 70),
+        ]
+        add_rect(margin, table_top - 20, content_width, 20, fill_rgb=header_fill, stroke_rgb=line_color)
+        for label, x, _ in columns:
+            add_text(x, table_top - 14, label, size=7.5, font="F2", rgb=muted_color)
+
+        y = table_top - 38
+        for item in page_items:
+            adjustment_balance = float(item.get("allowances") or 0) - float(item.get("deductions") or 0)
+            row_values = [
+                fit_text(item.get("full_name"), 24),
+                fit_text(item.get("department"), 12),
+                f"{float(item.get('total_hours') or 0):.2f}",
+                f"{float(item.get('overtime_hours') or 0):.2f}",
+                format_currency(item.get("gross_pay")),
+                format_currency(adjustment_balance),
+                format_currency(item.get("final_pay")),
+            ]
+            add_rect(margin, y - 5, content_width, 18, stroke_rgb=(0.90, 0.93, 0.97), line_width=0.5)
+            for (_, x, _), value in zip(columns, row_values):
+                add_text(x, y, value, size=7.4, rgb=body_color)
+            y -= 20
+
+        if not payroll_items:
+            add_text(margin + 12, table_top - 50, "No payroll rows were saved in this released snapshot.", size=9, rgb=muted_color)
+
+        add_text(margin, 28, f"Payroll Run #{payroll_run.get('id', '')}", size=8, rgb=muted_color)
+        add_text(page_width - 104, 28, f"Page {page_number} of {page_count}", size=8, rgb=muted_color)
+        return "\n".join(commands).encode("latin-1", "replace")
+
+    page_chunks = [payroll_items[index:index + rows_per_page] for index in range(0, len(payroll_items), rows_per_page)] or [[]]
+    for page_number, chunk in enumerate(page_chunks, start=1):
+        pages.append(build_page(chunk, page_number, len(page_chunks)))
+
+    objects = []
+
+    def add_object(payload):
+        objects.append(payload)
+        return len(objects)
+
+    font_regular_id = add_object("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    font_bold_id = add_object("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>")
+    page_refs = []
+    page_payloads = []
+    for content_stream in pages:
+        content_id = add_object(
+            f"<< /Length {len(content_stream)} >>\nstream\n".encode("latin-1") + content_stream + b"\nendstream"
+        )
+        page_payloads.append(content_id)
+        page_refs.append(None)
+
+    pages_id = len(objects) + len(page_payloads) + 1
+    for index, content_id in enumerate(page_payloads):
+        page_id = add_object(
+            f"<< /Type /Page /Parent {pages_id} 0 R /MediaBox [0 0 {page_width} {page_height}] "
+            f"/Resources << /Font << /F1 {font_regular_id} 0 R /F2 {font_bold_id} 0 R >> >> "
+            f"/Contents {content_id} 0 R >>"
+        )
+        page_refs[index] = page_id
+    kids = " ".join(f"{page_id} 0 R" for page_id in page_refs)
+    actual_pages_id = add_object(f"<< /Type /Pages /Kids [{kids}] /Count {len(page_refs)} >>")
+    catalog_id = add_object(f"<< /Type /Catalog /Pages {actual_pages_id} 0 R >>")
+
+    pdf = BytesIO()
+    pdf.write(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    offsets = [0]
+    for obj_id, payload in enumerate(objects, start=1):
+        offsets.append(pdf.tell())
+        pdf.write(f"{obj_id} 0 obj\n".encode("latin-1"))
+        if isinstance(payload, bytes):
+            pdf.write(payload)
+        else:
+            pdf.write(str(payload).encode("latin-1"))
+        pdf.write(b"\nendobj\n")
+    xref_offset = pdf.tell()
+    pdf.write(f"xref\n0 {len(objects) + 1}\n".encode("latin-1"))
+    pdf.write(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        pdf.write(f"{offset:010d} 00000 n \n".encode("latin-1"))
+    pdf.write(
+        f"trailer\n<< /Size {len(objects) + 1} /Root {catalog_id} 0 R >>\nstartxref\n{xref_offset}\n%%EOF".encode(
+            "latin-1"
+        )
+    )
+    return pdf.getvalue()
+
+
 def build_employee_payslip_pdf_bytes(payslip, printed_at_text=""):
     page_width = 612
     page_height = 792

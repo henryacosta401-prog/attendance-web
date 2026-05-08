@@ -136,6 +136,8 @@ from attendance_core.parsing import (
     parse_positive_int,
 )
 from attendance_core.payroll import (
+    build_admin_payroll_pdf_bytes,
+    build_admin_payroll_pdf_filename,
     build_employee_payslip_pdf_bytes,
     build_employee_payslip_pdf_filename,
     format_payroll_period_label,
@@ -1053,6 +1055,9 @@ def init_sqlite_db():
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             released_at TEXT,
+            payroll_pdf_path TEXT,
+            payroll_pdf_filename TEXT,
+            payroll_pdf_generated_at TEXT,
             FOREIGN KEY (created_by) REFERENCES users (id)
         )
     """)
@@ -1631,9 +1636,19 @@ def init_sqlite_db():
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 released_at TEXT,
+                payroll_pdf_path TEXT,
+                payroll_pdf_filename TEXT,
+                payroll_pdf_generated_at TEXT,
                 FOREIGN KEY (created_by) REFERENCES users (id)
             )
         """)
+    else:
+        if "payroll_pdf_path" not in existing_cols_payroll_runs:
+            cursor.execute("ALTER TABLE payroll_runs ADD COLUMN payroll_pdf_path TEXT")
+        if "payroll_pdf_filename" not in existing_cols_payroll_runs:
+            cursor.execute("ALTER TABLE payroll_runs ADD COLUMN payroll_pdf_filename TEXT")
+        if "payroll_pdf_generated_at" not in existing_cols_payroll_runs:
+            cursor.execute("ALTER TABLE payroll_runs ADD COLUMN payroll_pdf_generated_at TEXT")
 
     existing_cols_payroll_run_items = [row[1] for row in cursor.execute("PRAGMA table_info(payroll_run_items)").fetchall()]
     if not existing_cols_payroll_run_items:
@@ -2276,7 +2291,10 @@ def init_postgres_db():
                 created_by INTEGER,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
-                released_at TEXT
+                released_at TEXT,
+                payroll_pdf_path TEXT,
+                payroll_pdf_filename TEXT,
+                payroll_pdf_generated_at TEXT
             )
         """)
         cur.execute("ALTER TABLE payroll_runs ADD COLUMN IF NOT EXISTS date_from TEXT")
@@ -2289,6 +2307,9 @@ def init_postgres_db():
         cur.execute("ALTER TABLE payroll_runs ADD COLUMN IF NOT EXISTS created_at TEXT")
         cur.execute("ALTER TABLE payroll_runs ADD COLUMN IF NOT EXISTS updated_at TEXT")
         cur.execute("ALTER TABLE payroll_runs ADD COLUMN IF NOT EXISTS released_at TEXT")
+        cur.execute("ALTER TABLE payroll_runs ADD COLUMN IF NOT EXISTS payroll_pdf_path TEXT")
+        cur.execute("ALTER TABLE payroll_runs ADD COLUMN IF NOT EXISTS payroll_pdf_filename TEXT")
+        cur.execute("ALTER TABLE payroll_runs ADD COLUMN IF NOT EXISTS payroll_pdf_generated_at TEXT")
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS payroll_run_items (
@@ -6003,6 +6024,76 @@ def enrich_admin_payroll_run(row):
     return item
 
 
+def get_payroll_run_items(payroll_run_id):
+    return [
+        dict(row)
+        for row in fetchall("""
+            SELECT *
+            FROM payroll_run_items
+            WHERE payroll_run_id = ?
+            ORDER BY full_name ASC, id ASC
+        """, (payroll_run_id,))
+    ]
+
+
+def build_payroll_run_item_stats(items):
+    items = list(items or [])
+    return {
+        "employees": len(items),
+        "total_gross": round(sum(float(item.get("gross_pay") or 0) for item in items), 2),
+        "total_overtime_pay": round(sum(float(item.get("overtime_pay") or 0) for item in items), 2),
+        "total_allowances": round(sum(float(item.get("allowances") or 0) for item in items), 2),
+        "total_deductions": round(sum(float(item.get("deductions") or 0) for item in items), 2),
+        "total_final_pay": round(sum(float(item.get("final_pay") or 0) for item in items), 2),
+    }
+
+
+def get_payroll_pdf_export_folder():
+    root = PERSISTENT_DISK_PATH if PERSISTENT_DISK_PATH else BASE_DIR
+    return os.path.join(root, "exports", "payroll")
+
+
+def save_released_payroll_pdf_copy(payroll_run_id, printed_at_text=""):
+    payroll_run = fetchone("""
+        SELECT pr.*, creator.full_name AS created_by_name
+        FROM payroll_runs pr
+        LEFT JOIN users creator ON creator.id = pr.created_by
+        WHERE pr.id = ?
+    """, (payroll_run_id,))
+    if not payroll_run or payroll_run["status"] != "Released":
+        return None
+
+    payroll_run = enrich_admin_payroll_run(payroll_run)
+    payroll_items = get_payroll_run_items(payroll_run_id)
+    stats = build_payroll_run_item_stats(payroll_items)
+    generated_at = now_str()
+    pdf_bytes = build_admin_payroll_pdf_bytes(
+        payroll_run,
+        payroll_items,
+        stats=stats,
+        printed_at_text=printed_at_text or format_datetime_12h(generated_at),
+    )
+    filename = build_admin_payroll_pdf_filename(payroll_run)
+    export_folder = get_payroll_pdf_export_folder()
+    os.makedirs(export_folder, exist_ok=True)
+    absolute_path = os.path.join(export_folder, filename)
+    with open(absolute_path, "wb") as pdf_file:
+        pdf_file.write(pdf_bytes)
+
+    relative_path = os.path.relpath(absolute_path, BASE_DIR)
+    execute_db("""
+        UPDATE payroll_runs
+        SET payroll_pdf_path = ?,
+            payroll_pdf_filename = ?,
+            payroll_pdf_generated_at = ?
+        WHERE id = ?
+    """, (relative_path, filename, generated_at, payroll_run_id), commit=True)
+    payroll_run["payroll_pdf_path"] = relative_path
+    payroll_run["payroll_pdf_filename"] = filename
+    payroll_run["payroll_pdf_generated_at"] = generated_at
+    return payroll_run
+
+
 def get_recent_payroll_runs(limit=8):
     rows = fetchall("""
         SELECT pr.*, creator.full_name AS created_by_name
@@ -8824,6 +8915,7 @@ register_payroll_routes(app, {
     "get_payroll_recurring_rule": get_payroll_recurring_rule,
     "get_payroll_recurring_rules": get_payroll_recurring_rules,
     "get_payroll_run": get_payroll_run,
+    "get_payroll_pdf_export_folder": get_payroll_pdf_export_folder,
     "get_payslip_download_request_summary": get_payslip_download_request_summary,
     "get_recent_payroll_runs": get_recent_payroll_runs,
     "get_recent_payslip_download_requests": get_recent_payslip_download_requests,
@@ -8841,7 +8933,9 @@ register_payroll_routes(app, {
     "render_template": render_template,
     "request": request,
     "review_payslip_download_request": review_payslip_download_request,
+    "save_released_payroll_pdf_copy": save_released_payroll_pdf_copy,
     "save_payroll_run_snapshot": save_payroll_run_snapshot,
+    "send_from_directory": send_from_directory,
     "session": session,
     "submit_payslip_download_request": submit_payslip_download_request,
     "url_for": url_for,

@@ -23,6 +23,7 @@ def register_payroll_routes(app, deps):
     get_payroll_recurring_rule = deps["get_payroll_recurring_rule"]
     get_payroll_recurring_rules = deps["get_payroll_recurring_rules"]
     get_payroll_run = deps["get_payroll_run"]
+    get_payroll_pdf_export_folder = deps["get_payroll_pdf_export_folder"]
     get_payslip_download_request_summary = deps["get_payslip_download_request_summary"]
     get_recent_payroll_runs = deps["get_recent_payroll_runs"]
     get_recent_payslip_download_requests = deps["get_recent_payslip_download_requests"]
@@ -40,7 +41,9 @@ def register_payroll_routes(app, deps):
     render_template = deps["render_template"]
     request = deps["request"]
     review_payslip_download_request = deps["review_payslip_download_request"]
+    save_released_payroll_pdf_copy = deps["save_released_payroll_pdf_copy"]
     save_payroll_run_snapshot = deps["save_payroll_run_snapshot"]
+    send_from_directory = deps["send_from_directory"]
     session = deps["session"]
     submit_payslip_download_request = deps["submit_payslip_download_request"]
     url_for = deps["url_for"]
@@ -591,12 +594,47 @@ def register_payroll_routes(app, deps):
             "RELEASE PAYROLL" if status == "Released" else "SAVE PAYROLL DRAFT",
             f"{status} payroll for {filters['date_from_text']} to {filters['date_to_text']} ({len(payroll_rows)} employee row(s))"
         )
+        saved_pdf = None
+        if status == "Released":
+            saved_pdf = save_released_payroll_pdf_copy(
+                payroll_run["id"],
+                printed_at_text=format_datetime_12h(now_str()),
+            )
         invalidate_reports_cache()
         flash(
             f"Payroll {status.lower()} saved for {filters['date_from_text']} to {filters['date_to_text']}.",
             "success"
         )
+        if saved_pdf:
+            flash(f"Admin PDF copy saved as {saved_pdf['payroll_pdf_filename']}.", "success")
         return redirect(url_for("admin_payroll", **redirect_args))
+
+
+    @app.route("/admin/payroll/runs/<int:payroll_run_id>/download.pdf")
+    @login_required(role="admin")
+    def download_admin_payroll_pdf(payroll_run_id):
+        payroll_run = fetchone("SELECT * FROM payroll_runs WHERE id = ?", (payroll_run_id,))
+        if not payroll_run or payroll_run["status"] != "Released":
+            flash("Released payroll PDF was not found.", "warning")
+            return redirect(url_for("admin_payroll", **payroll_filter_redirect_args(request.args)))
+
+        payroll_run = save_released_payroll_pdf_copy(
+            payroll_run_id,
+            printed_at_text=format_datetime_12h(now_str()),
+        )
+        filename = payroll_run.get("payroll_pdf_filename") if payroll_run else ""
+
+        if not filename:
+            flash("Unable to prepare the payroll PDF copy.", "danger")
+            return redirect(url_for("admin_payroll", **payroll_filter_redirect_args(request.args)))
+
+        return send_from_directory(
+            get_payroll_pdf_export_folder(),
+            filename,
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name=filename,
+        )
 
 
     @app.route("/admin/payroll/runs/<int:payroll_run_id>/delete", methods=["POST"])
@@ -710,6 +748,14 @@ def register_payroll_routes(app, deps):
             db.rollback()
             raise
 
+        saved_pdf_count = 0
+        for run in releasable_runs:
+            if save_released_payroll_pdf_copy(
+                run["id"],
+                printed_at_text=format_datetime_12h(timestamp),
+            ):
+                saved_pdf_count += 1
+
         released_labels = ", ".join(run["period_label"] for run in releasable_runs[:3])
         if len(releasable_runs) > 3:
             released_labels += f", and {len(releasable_runs) - 3} more"
@@ -720,6 +766,8 @@ def register_payroll_routes(app, deps):
         )
         invalidate_reports_cache()
         flash(f"Released {len(releasable_runs)} payroll run(s).", "success")
+        if saved_pdf_count:
+            flash(f"Saved {saved_pdf_count} admin payroll PDF copy/copies.", "success")
         for message in skipped_messages[:4]:
             flash(message, "info")
         return redirect(url_for("admin_payroll", **redirect_args))
