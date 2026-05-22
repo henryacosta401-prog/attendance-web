@@ -123,7 +123,7 @@ def register_scanner_routes(app, deps):
             "scanner_username_snapshot": deps["row_get"](scanner_user, "username"),
         }
 
-        if action_type not in {"time_in", "start_break", "end_break", "time_out", "overtime_start", "overtime_end"}:
+        if action_type not in {"time_in", "start_break", "power_nap_break", "end_break", "time_out", "overtime_start", "overtime_end"}:
             deps["log_scanner_activity"](
                 scanner_user_id, action_type, barcode_value, "error",
                 "Please choose a valid attendance action.",

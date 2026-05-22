@@ -117,6 +117,10 @@ from attendance_core.admin_access import (
     row_get,
     sync_admin_role_preset,
 )
+REGULAR_BREAK_TYPE = 'regular'
+POWER_NAP_BREAK_TYPE = 'power_nap'
+POWER_NAP_BREAK_MINUTES = 60
+
 from attendance_core.date_ranges import (
     get_admin_report_period_dates,
     get_payroll_period_dates,
@@ -838,6 +842,7 @@ def init_sqlite_db():
             user_id INTEGER NOT NULL,
             attendance_id INTEGER,
             work_date TEXT NOT NULL,
+            break_type TEXT NOT NULL DEFAULT 'regular',
             break_start TEXT,
             break_end TEXT,
             created_at TEXT NOT NULL,
@@ -1381,6 +1386,10 @@ def init_sqlite_db():
         )
         WHERE effective_break_limit_minutes IS NULL
     """, (BREAK_LIMIT_MINUTES,))
+
+    existing_cols_breaks = [row[1] for row in cursor.execute("PRAGMA table_info(breaks)").fetchall()]
+    if "break_type" not in existing_cols_breaks:
+        cursor.execute("ALTER TABLE breaks ADD COLUMN break_type TEXT NOT NULL DEFAULT 'regular'")
 
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_login_attempts_ip_attempted_at ON login_attempts(ip_address, attempted_at)")
     try:
@@ -2030,6 +2039,7 @@ def init_postgres_db():
                 user_id INTEGER NOT NULL,
                 attendance_id INTEGER,
                 work_date TEXT NOT NULL,
+                break_type TEXT NOT NULL DEFAULT 'regular',
                 break_start TEXT,
                 break_end TEXT,
                 created_at TEXT NOT NULL
@@ -2386,6 +2396,7 @@ def init_postgres_db():
         cur.execute("ALTER TABLE payroll_run_item_adjustments ADD COLUMN IF NOT EXISTS created_by_name TEXT")
         cur.execute("ALTER TABLE payroll_run_item_adjustments ADD COLUMN IF NOT EXISTS adjustment_created_at TEXT")
         cur.execute("ALTER TABLE payroll_run_item_adjustments ADD COLUMN IF NOT EXISTS created_at TEXT")
+        cur.execute("ALTER TABLE breaks ADD COLUMN IF NOT EXISTS break_type TEXT NOT NULL DEFAULT 'regular'")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_login_attempts_ip_attempted_at ON login_attempts(ip_address, attempted_at)")
         try:
             cur.execute("SAVEPOINT attendance_open_index")
@@ -3643,7 +3654,7 @@ def auto_close_stale_attendance(user_row, attendance_row, actor_id=None, source_
         reference_datetime=get_attendance_reference_datetime(attendance_row),
         reference_date=attendance_row["work_date"]
     )
-    _, shift_end_dt = get_shift_bounds_for_work_date(effective_user, attendance_row["work_date"])
+    shift_end_dt = get_shift_end_with_power_nap(effective_user, attendance_row)
     stale_cutoff_dt = shift_end_dt + timedelta(minutes=LATE_GRACE_MINUTES)
     if now_dt() < stale_cutoff_dt:
         return attendance_row
@@ -3808,9 +3819,9 @@ def perform_attendance_action(user_id, action_type, actor_id=None, source_label=
             return False, f"Daily break limit already used ({break_limit_minutes} minutes).", user
 
         execute_db("""
-            INSERT INTO breaks (user_id, attendance_id, work_date, break_start, created_at)
-            VALUES (?, ?, ?, ?, ?)
-        """, (user_id, attendance["id"], attendance["work_date"], action_timestamp, action_timestamp), commit=True)
+            INSERT INTO breaks (user_id, attendance_id, work_date, break_type, break_start, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (user_id, attendance["id"], attendance["work_date"], REGULAR_BREAK_TYPE, action_timestamp, action_timestamp), commit=True)
         execute_db("""
             UPDATE attendance
             SET status = ?, updated_at = ?
@@ -3822,6 +3833,32 @@ def perform_attendance_action(user_id, action_type, actor_id=None, source_label=
         invalidate_admin_employee_rows_cache()
         return True, "Break started.", user
 
+    if action_key == "power_nap_break":
+        action_timestamp = now_str()
+        if not attendance or not attendance["time_in"] or attendance["time_out"]:
+            return False, "Employee must be timed in first.", user
+        if open_break:
+            return False, "Employee is already on break.", user
+        if has_power_nap_break(attendance["id"]):
+            return False, "POWER NAP BREAK has already been used for this shift.", user
+
+        execute_db("""
+            INSERT INTO breaks (user_id, attendance_id, work_date, break_type, break_start, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (user_id, attendance["id"], attendance["work_date"], POWER_NAP_BREAK_TYPE, action_timestamp, action_timestamp), commit=True)
+        execute_db("""
+            UPDATE attendance
+            SET status = ?, updated_at = ?
+            WHERE id = ?
+        """, ("On Power Nap Break", action_timestamp, attendance["id"]), commit=True)
+        create_notification(
+            user_id,
+            "POWER NAP BREAK Started",
+            f"You started POWER NAP BREAK at {action_timestamp} ET. Your required clock-out time is extended by 1 unpaid hour."
+        )
+        log_activity(actor_id or user_id, "KIOSK POWER NAP BREAK START", f"{source_label} power nap break start for {user['full_name']}")
+        invalidate_admin_employee_rows_cache()
+        return True, "POWER NAP BREAK started. Clock-out is extended by 1 unpaid hour.", user
     if action_key == "end_break":
         action_timestamp = now_str()
         if not open_break:
@@ -3863,7 +3900,7 @@ def perform_attendance_action(user_id, action_type, actor_id=None, source_label=
             return False, "Employee is not timed in.", user
         if attendance["time_out"]:
             recorded_time_out_dt = parse_db_datetime(attendance["time_out"])
-            _, shift_end_dt = get_shift_bounds_for_work_date(user, attendance["work_date"])
+            shift_end_dt = get_shift_end_with_power_nap(user, attendance)
             shift_end_naive = shift_end_dt.replace(tzinfo=None)
             if recorded_time_out_dt and recorded_time_out_dt == shift_end_naive and now_dt().replace(tzinfo=None) > shift_end_naive:
                 return False, "Regular shift already closed at the scheduled end. Use Overtime Start for work after midnight.", user
@@ -3920,7 +3957,7 @@ def perform_attendance_action(user_id, action_type, actor_id=None, source_label=
             reference_datetime=get_attendance_reference_datetime(latest_reference),
             reference_date=latest_reference["work_date"]
         )
-        _, shift_end_dt = get_shift_bounds_for_work_date(effective_user, latest_reference["work_date"])
+        shift_end_dt = get_shift_end_with_power_nap(effective_user, latest_reference)
         shift_end_naive = shift_end_dt.replace(tzinfo=None)
         regular_time_out_dt = parse_db_datetime(latest_reference["time_out"])
 
@@ -4000,7 +4037,7 @@ def get_user_live_status(user_id):
 
     if attendance["time_in"] and not attendance["time_out"]:
         if open_break:
-            return "On Break"
+            return "On Power Nap Break" if is_power_nap_break(open_break) else "On Break"
         return "Timed In"
 
     if attendance["time_out"]:
@@ -4307,36 +4344,85 @@ def calculate_late_info(time_in_str, shift_start):
     return core_calculate_late_info(time_in_str, shift_start)
 
 
-def total_break_minutes(attendance_id, include_open=False):
-    breaks_rows = get_break_rows(attendance_id)
+def get_break_type(break_row):
+    if not break_row:
+        return REGULAR_BREAK_TYPE
+    if hasattr(break_row, "get"):
+        return (break_row.get("break_type") or REGULAR_BREAK_TYPE).strip() or REGULAR_BREAK_TYPE
+    try:
+        return (break_row["break_type"] or REGULAR_BREAK_TYPE).strip() or REGULAR_BREAK_TYPE
+    except Exception:
+        return REGULAR_BREAK_TYPE
+
+
+def is_power_nap_break(break_row):
+    return get_break_type(break_row) == POWER_NAP_BREAK_TYPE
+
+
+def total_break_minutes(attendance_id, include_open=False, break_type=REGULAR_BREAK_TYPE):
+    breaks_rows = get_break_rows(attendance_id, break_type=break_type)
 
     total_minutes = 0
     for br in breaks_rows:
         if br["break_start"] and (br["break_end"] or include_open):
             start = datetime.strptime(br["break_start"], "%Y-%m-%d %H:%M:%S")
             end = datetime.strptime(br["break_end"] or now_str(), "%Y-%m-%d %H:%M:%S")
-            total_minutes += int((end - start).total_seconds() // 60)
+            total_minutes += max(int((end - start).total_seconds() // 60), 0)
     return total_minutes
 
 
-def get_break_rows(attendance_id):
+def total_power_nap_break_minutes(attendance_id, include_open=False):
+    return total_break_minutes(attendance_id, include_open=include_open, break_type=POWER_NAP_BREAK_TYPE)
+
+
+def has_power_nap_break(attendance_id):
+    if not attendance_id:
+        return False
+    row = fetchone("""
+        SELECT id FROM breaks
+        WHERE attendance_id = ? AND COALESCE(break_type, ?) = ?
+        LIMIT 1
+    """, (attendance_id, REGULAR_BREAK_TYPE, POWER_NAP_BREAK_TYPE))
+    return bool(row)
+
+
+def get_shift_end_with_power_nap(user_row, attendance_row):
+    _, shift_end_dt = get_shift_bounds_for_work_date(user_row, attendance_row["work_date"])
+    if has_power_nap_break(attendance_row["id"]):
+        shift_end_dt += timedelta(minutes=POWER_NAP_BREAK_MINUTES)
+    return shift_end_dt
+
+
+def total_paid_work_minutes(attendance_row):
+    return max(total_work_minutes(attendance_row) - total_power_nap_break_minutes(attendance_row["id"]), 0)
+
+
+def get_break_rows(attendance_id, break_type=None):
     if not attendance_id:
         return []
+    params = [attendance_id]
+    type_sql = ""
+    if break_type:
+        type_sql = " AND COALESCE(break_type, ?) = ?"
+        params.extend([REGULAR_BREAK_TYPE, break_type])
     return [
-        dict(row) for row in fetchall("""
+        dict(row) for row in fetchall(f"""
             SELECT * FROM breaks
-            WHERE attendance_id = ?
+            WHERE attendance_id = ?{type_sql}
             ORDER BY id ASC
-        """, (attendance_id,))
+        """, tuple(params))
     ]
 
 
 def build_break_sessions(attendance_id):
     sessions = []
     for br in get_break_rows(attendance_id):
+        break_type = get_break_type(br)
         sessions.append({
             "start": br.get("break_start"),
             "end": br.get("break_end"),
+            "type": break_type,
+            "label": "Power Nap Break" if break_type == POWER_NAP_BREAK_TYPE else "Break",
             "start_display": format_datetime_12h(br.get("break_start")) if br.get("break_start") else "-",
             "end_display": format_datetime_12h(br.get("break_end")) if br.get("break_end") else "Open",
         })
@@ -4348,9 +4434,9 @@ def summarize_break_sessions(break_sessions):
         return "No break sessions recorded."
     parts = []
     for index, session in enumerate(break_sessions, start=1):
-        parts.append(f"Break {index}: {session['start_display']} -> {session['end_display']}")
+        label = session.get("label") or "Break"
+        parts.append(f"{label} {index}: {session['start_display']} -> {session['end_display']}")
     return " | ".join(parts)
-
 
 def get_backup_files(limit=15):
     if not os.path.isdir(BACKUP_FOLDER):
@@ -5379,7 +5465,7 @@ def build_admin_reports_data(date_from, date_to, department_filter=""):
         if department_filter and department_name != department_filter:
             continue
         attendance_days_count += 1
-        minutes_worked = max(total_work_minutes(attendance), 0)
+        minutes_worked = total_paid_work_minutes(attendance)
         break_minutes = attendance_break_minutes_map.get(int(attendance["id"]), 0)
         hours_worked = round(minutes_worked / 60, 2)
         total_hours += hours_worked
@@ -6844,7 +6930,7 @@ def build_payroll_rows(date_from, date_to, department_filter="", employee_filter
         summary = employee_map.get(attendance["user_id"])
         if not summary:
             continue
-        minutes_worked = max(total_work_minutes(attendance), 0)
+        minutes_worked = total_paid_work_minutes(attendance)
         summary["days_worked"] += 1
         summary["total_minutes"] += minutes_worked
         summary["late_minutes"] += int(attendance["late_minutes"] or 0)
@@ -7075,6 +7161,7 @@ def get_break_minutes_map(attendance_ids, include_open=False):
         SELECT attendance_id, break_start, break_end
         FROM breaks
         WHERE attendance_id IN ({placeholders})
+          AND COALESCE(break_type, 'regular') = 'regular'
     """, tuple(attendance_ids)):
         row_dict = dict(row)
         break_start_dt = parse_db_datetime(row_dict.get("break_start"))
@@ -7146,7 +7233,9 @@ def get_admin_live_status_label(user_id, attendance_row=None, open_break_row=Non
     if not attendance:
         return "Offline"
     if attendance["time_in"] and not attendance["time_out"]:
-        return "On Break" if open_break_row else "Timed In"
+        if open_break_row:
+            return "On Power Nap Break" if is_power_nap_break(open_break_row) else "On Break"
+        return "Timed In"
     if attendance["time_out"]:
         return "Timed Out"
     return "Offline"
@@ -8773,7 +8862,7 @@ register_employee_portal_routes(app, {
     "session": session,
     "today_str": today_str,
     "total_break_minutes": total_break_minutes,
-    "total_work_minutes": total_work_minutes,
+    "total_work_minutes": total_paid_work_minutes,
     "url_for": url_for,
 })
 

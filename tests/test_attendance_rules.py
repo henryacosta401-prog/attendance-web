@@ -75,14 +75,14 @@ class AttendanceRulesTestCase(unittest.TestCase):
                 (user_id, work_date),
             )
 
-    def create_break(self, user_id, attendance_id, work_date, break_start, break_end=None):
+    def create_break(self, user_id, attendance_id, work_date, break_start, break_end=None, break_type="regular"):
         with attendance_app.app.app_context():
             attendance_app.execute_db(
                 """
-                INSERT INTO breaks (user_id, attendance_id, work_date, break_start, break_end, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO breaks (user_id, attendance_id, work_date, break_type, break_start, break_end, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (user_id, attendance_id, work_date, break_start, break_end, attendance_app.now_str()),
+                (user_id, attendance_id, work_date, break_type, break_start, break_end, attendance_app.now_str()),
                 commit=True,
             )
 
@@ -178,6 +178,50 @@ class AttendanceRulesTestCase(unittest.TestCase):
         with attendance_app.app.test_request_context("/"):
             self.assertEqual(attendance_app.get_home_route_for_user(user), "/dashboard")
 
+    def test_power_nap_break_does_not_count_against_paid_break_limit(self):
+        user = self.create_employee(username="nap-user", break_limit=20)
+        attendance = self.create_attendance(
+            user["id"],
+            "2026-03-26",
+            "2026-03-26 16:00:00",
+            "2026-03-27 01:00:00",
+            status="Timed Out",
+        )
+        self.create_break(user["id"], attendance["id"], "2026-03-26", "2026-03-26 19:00:00", "2026-03-26 19:20:00")
+        self.create_break(
+            user["id"],
+            attendance["id"],
+            "2026-03-26",
+            "2026-03-26 22:00:00",
+            "2026-03-26 23:00:00",
+            break_type=attendance_app.POWER_NAP_BREAK_TYPE,
+        )
+
+        with attendance_app.app.app_context():
+            regular_break_minutes = attendance_app.total_break_minutes(attendance["id"])
+            power_nap_minutes = attendance_app.total_power_nap_break_minutes(attendance["id"])
+            paid_work_minutes = attendance_app.total_paid_work_minutes(attendance)
+
+        self.assertEqual(regular_break_minutes, 20)
+        self.assertEqual(power_nap_minutes, 60)
+        self.assertEqual(paid_work_minutes, 480)
+
+    def test_power_nap_break_extends_shift_end_for_overtime(self):
+        user = self.create_employee(username="nap-shift", shift_start="16:00", shift_end="00:00")
+        attendance = self.create_attendance(user["id"], "2026-03-26", "2026-03-26 16:00:00", None, status="On Power Nap Break")
+        self.create_break(
+            user["id"],
+            attendance["id"],
+            "2026-03-26",
+            "2026-03-26 22:00:00",
+            "2026-03-26 23:00:00",
+            break_type=attendance_app.POWER_NAP_BREAK_TYPE,
+        )
+
+        with attendance_app.app.app_context():
+            extended_end = attendance_app.get_shift_end_with_power_nap(user, attendance)
+
+        self.assertEqual(extended_end.replace(tzinfo=None), attendance_app.datetime(2026, 3, 27, 1, 0, 0))
 
 if __name__ == "__main__":
     unittest.main()
