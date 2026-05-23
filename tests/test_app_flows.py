@@ -135,6 +135,21 @@ class AppFlowsTestCase(unittest.TestCase):
                 (user_id,),
             )
 
+    def create_break(self, user_id, attendance_id, work_date, break_start, break_end=None, break_type="regular"):
+        with attendance_app.app.app_context():
+            attendance_app.execute_db(
+                """
+                INSERT INTO breaks (user_id, attendance_id, work_date, break_type, break_start, break_end, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (user_id, attendance_id, work_date, break_type, break_start, break_end, attendance_app.now_str()),
+                commit=True,
+            )
+            return attendance_app.fetchone(
+                "SELECT * FROM breaks WHERE attendance_id = ? ORDER BY id DESC LIMIT 1",
+                (attendance_id,),
+            )
+
     def create_correction_request(self, user_id, request_type="Paid Leave", work_date="2026-04-08", end_work_date="2026-04-09"):
         with attendance_app.app.app_context():
             attendance_app.execute_db(
@@ -930,6 +945,136 @@ class AppFlowsTestCase(unittest.TestCase):
 
         self.assertNotEqual(first_run["id"], second_run["id"])
         self.assertEqual(release_count, 2)
+
+    def test_payroll_keeps_paid_break_paid_and_excludes_power_nap_time(self):
+        employee = self.create_user(
+            "payroll-power-nap-employee",
+            role="employee",
+            hourly_rate=100,
+            shift_start="16:00",
+            shift_end="00:00",
+            break_limit=20,
+        )
+        attendance = self.create_attendance(
+            employee["id"],
+            "2026-04-13",
+            "2026-04-13 16:00:00",
+            "2026-04-14 01:00:00",
+            status="Timed Out",
+        )
+        self.create_break(
+            employee["id"],
+            attendance["id"],
+            "2026-04-13",
+            "2026-04-13 19:00:00",
+            "2026-04-13 19:20:00",
+        )
+        self.create_break(
+            employee["id"],
+            attendance["id"],
+            "2026-04-13",
+            "2026-04-13 22:00:00",
+            "2026-04-13 23:00:00",
+            break_type=attendance_app.POWER_NAP_BREAK_TYPE,
+        )
+
+        with attendance_app.app.app_context():
+            rows = attendance_app.build_payroll_rows(
+                date(2026, 4, 13),
+                date(2026, 4, 13),
+                employee_filter=str(employee["id"]),
+            )
+            stats = attendance_app.build_payroll_stats(rows)
+
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["days_worked"], 1)
+        self.assertEqual(row["break_minutes"], 20)
+        self.assertEqual(row["total_hours"], 8.0)
+        self.assertEqual(row["overtime_hours"], 0.0)
+        self.assertEqual(row["gross_pay"], 800.0)
+        self.assertEqual(row["overtime_pay"], 0.0)
+        self.assertEqual(row["final_pay"], 800.0)
+        self.assertEqual(stats["total_hours"], 8.0)
+        self.assertEqual(stats["total_gross"], 800.0)
+        self.assertEqual(stats["total_final_pay"], 800.0)
+
+    def test_payroll_counts_overtime_after_power_nap_extension_separately(self):
+        admin = self.create_user("payroll-safety-admin", role="admin", admin_permissions="dashboard,payroll,reports")
+        employee = self.create_user(
+            "payroll-overtime-after-nap",
+            role="employee",
+            hourly_rate=100,
+            shift_start="16:00",
+            shift_end="00:00",
+            break_limit=20,
+        )
+        attendance = self.create_attendance(
+            employee["id"],
+            "2026-04-13",
+            "2026-04-13 16:00:00",
+            "2026-04-14 01:00:00",
+            status="Timed Out",
+        )
+        self.create_break(
+            employee["id"],
+            attendance["id"],
+            "2026-04-13",
+            "2026-04-13 19:00:00",
+            "2026-04-13 19:20:00",
+        )
+        self.create_break(
+            employee["id"],
+            attendance["id"],
+            "2026-04-13",
+            "2026-04-13 22:00:00",
+            "2026-04-13 23:00:00",
+            break_type=attendance_app.POWER_NAP_BREAK_TYPE,
+        )
+        self.create_overtime_session(
+            employee["id"],
+            "2026-04-13",
+            "2026-04-14 01:00:00",
+            "2026-04-14 02:30:00",
+            attendance_id=attendance["id"],
+        )
+
+        with attendance_app.app.app_context():
+            rows = attendance_app.build_payroll_rows(
+                date(2026, 4, 13),
+                date(2026, 4, 13),
+                employee_filter=str(employee["id"]),
+            )
+            stats = attendance_app.build_payroll_stats(rows)
+            payroll_run, _ = attendance_app.save_payroll_run_snapshot(
+                date(2026, 4, 13),
+                date(2026, 4, 13),
+                employee_filter=str(employee["id"]),
+                status="Released",
+                actor_id=admin["id"],
+            )
+            snapshot_item = attendance_app.fetchone(
+                "SELECT * FROM payroll_run_items WHERE payroll_run_id = ? AND user_id = ?",
+                (payroll_run["id"], employee["id"]),
+            )
+
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["break_minutes"], 20)
+        self.assertEqual(row["total_hours"], 8.0)
+        self.assertEqual(row["overtime_hours"], 1.5)
+        self.assertEqual(row["gross_pay"], 800.0)
+        self.assertEqual(row["overtime_pay"], 187.5)
+        self.assertEqual(row["final_pay"], 987.5)
+        self.assertEqual(stats["total_overtime_hours"], 1.5)
+        self.assertEqual(stats["total_overtime_pay"], 187.5)
+        self.assertEqual(stats["total_final_pay"], 987.5)
+        self.assertEqual(snapshot_item["break_minutes"], 20)
+        self.assertEqual(snapshot_item["total_hours"], 8.0)
+        self.assertEqual(snapshot_item["overtime_hours"], 1.5)
+        self.assertEqual(snapshot_item["gross_pay"], 800.0)
+        self.assertEqual(snapshot_item["overtime_pay"], 187.5)
+        self.assertEqual(snapshot_item["final_pay"], 987.5)
 
     def test_employee_payslip_pdf_requires_admin_approval_first(self):
         admin = self.create_user(
