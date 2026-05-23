@@ -27,13 +27,56 @@
     display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 0 14px; border-radius: 14px;
     background: rgba(15, 23, 42, 0.28); border: 1px solid rgba(148, 163, 184, 0.16); color: #dbe7ff; font-weight: 600;
 }
-.admin-table-wrap { overflow-x: auto; border-radius: 18px; border: 1px solid rgba(148, 163, 184, 0.14); background: rgba(8, 13, 24, 0.18); transition: opacity 0.16s ease; }
+.admin-table-wrap {
+    overflow: auto;
+    max-height: min(72vh, 820px);
+    border-radius: 18px;
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    background: rgba(8, 13, 24, 0.18);
+    transition: opacity 0.16s ease;
+}
 .admin-table-wrap[aria-busy="true"] { opacity: 0.72; }
-.admin-live-table { width: 100%; min-width: 1520px; border-collapse: collapse; table-layout: fixed; }
-.admin-live-table th, .admin-live-table td { padding: 14px 16px; border-bottom: 1px solid rgba(148, 163, 184, 0.12); vertical-align: top; }
-.admin-live-table th { background: rgba(59, 130, 246, 0.08); color: #bad0ff; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
-.admin-live-table td { color: #ecf3ff; font-size: 14px; overflow-wrap: anywhere; }
-.admin-row-user { display: flex; gap: 12px; align-items: center; }
+.admin-live-table { width: 100%; min-width: 1780px; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
+.admin-live-table th, .admin-live-table td { padding: 12px 14px; border-bottom: 1px solid rgba(148, 163, 184, 0.12); vertical-align: top; }
+.admin-live-table th {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    background: rgba(16, 28, 50, 0.98);
+    color: #bad0ff;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    box-shadow: 0 1px 0 rgba(148, 163, 184, 0.14);
+}
+.admin-live-table td { color: #ecf3ff; font-size: 13px; line-height: 1.35; overflow-wrap: anywhere; background: rgba(8, 13, 24, 0.08); }
+.admin-live-table tbody tr:hover td { background: rgba(30, 41, 59, 0.34); }
+.admin-live-table th:first-child,
+.admin-live-table td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    background: rgba(13, 23, 41, 0.98);
+    box-shadow: 1px 0 0 rgba(148, 163, 184, 0.14);
+}
+.admin-live-table th:first-child { z-index: 4; }
+.admin-live-table tbody tr:hover td:first-child { background: rgba(23, 35, 56, 0.98); }
+.admin-row-user { display: flex; gap: 12px; align-items: center; min-width: 0; }
+.admin-cell-main { color: #ffffff; font-weight: 850; }
+.admin-metric-value { color: #ffffff; font-size: 17px; line-height: 1.05; font-weight: 900; }
+.admin-clock-value { color: #ffffff; font-size: 12px; line-height: 1.35; font-weight: 800; }
+.admin-clock-stack, .admin-metric-stack { display: grid; gap: 5px; }
+.admin-live-table col.admin-col-employee { width: 230px; }
+.admin-live-table col.admin-col-team { width: 145px; }
+.admin-live-table col.admin-col-schedule { width: 155px; }
+.admin-live-table col.admin-col-status { width: 140px; }
+.admin-live-table col.admin-col-today { width: 190px; }
+.admin-live-table col.admin-col-paid-break { width: 125px; }
+.admin-live-table col.admin-col-power-nap { width: 135px; }
+.admin-live-table col.admin-col-paid-work { width: 125px; }
+.admin-live-table col.admin-col-scheduled-out { width: 170px; }
+.admin-live-table col.admin-col-adjusted-out { width: 175px; }
+.admin-live-table col.admin-col-alerts { width: 260px; }
 .admin-avatar, .admin-avatar-placeholder { width: 46px; height: 46px; border-radius: 50%; border: 1px solid rgba(148, 163, 184, 0.22); }
 .admin-avatar { object-fit: cover; }
 .admin-avatar-placeholder { display: inline-flex; align-items: center; justify-content: center; background: rgba(148, 163, 184, 0.18); color: #dbe7ff; font-weight: 800; }
@@ -236,22 +279,22 @@ document.addEventListener("DOMContentLoaded", function () {
                 const timeOut = emp.time_out ? `Out ${escapeHtml(formatDateTime12h(emp.time_out))}` : `Expected out ${displayValue(emp.shift_end)}`;
                 const paidBreakMinutes = safeMinutes(emp.paid_break_minutes !== undefined ? emp.paid_break_minutes : emp.break_minutes, 0);
                 const powerNapMinutes = safeMinutes(emp.power_nap_break_minutes, 0);
-                const powerNapHtml = emp.power_nap_break_used ? `<span class="admin-pill admin-pill-purple">Used</span><div class="admin-subtext">${powerNapMinutes}m unpaid</div>` : `<span class="admin-pill admin-pill-gray">No</span><div class="admin-subtext">No extension</div>`;
+                const powerNapHtml = emp.power_nap_break_used ? `<div class="admin-metric-stack"><span class="admin-pill admin-pill-purple">Used</span><div class="admin-subtext">${powerNapMinutes}m unpaid</div></div>` : `<div class="admin-metric-stack"><span class="admin-pill admin-pill-gray">No</span><div class="admin-subtext">No extension</div></div>`;
                 const scheduledClockOut = emp.scheduled_clock_out ? escapeHtml(formatDateTime12h(emp.scheduled_clock_out)) : "-";
                 const adjustedClockOut = emp.adjusted_clock_out ? escapeHtml(formatDateTime12h(emp.adjusted_clock_out)) : "-";
                 const adjustedClockNote = emp.power_nap_break_used ? "+1h POWER NAP" : "No extension";
                 const statusDisplay = displayValue(emp.status_display, "Offline");
                 return `<tr>
                     <td><div class="admin-row-user">${avatarMarkup(emp)}<div><div class="admin-name">${displayValue(emp.full_name, "Employee")}</div><div class="admin-username">@${displayValue(emp.username, "user")}</div></div></div></td>
-                    <td><div>${displayValue(emp.department)}</div><div class="admin-subtext">${displayValue(emp.position)}</div></td>
-                    <td><div>${displayValue(emp.schedule_summary)}</div><div class="admin-subtext">${displayValue(emp.schedule_window_summary)}</div></td>
+                    <td><div class="admin-cell-main">${displayValue(emp.department)}</div><div class="admin-subtext">${displayValue(emp.position)}</div></td>
+                    <td><div class="admin-cell-main">${displayValue(emp.schedule_summary)}</div><div class="admin-subtext">${displayValue(emp.schedule_window_summary)}</div></td>
                     <td><span class="admin-pill ${statusClass(emp.status_display)}">${statusDisplay}</span></td>
-                    <td><div>${timeIn}</div><div class="admin-subtext">${timeOut}</div></td>
-                    <td><div>${paidBreakMinutes}m</div><div class="admin-subtext">Limit ${safeMinutes(emp.break_limit_minutes, 15)}m</div></td>
+                    <td><div class="admin-clock-stack"><div class="admin-clock-value">${timeIn}</div><div class="admin-subtext">${timeOut}</div></div></td>
+                    <td><div class="admin-metric-stack"><div class="admin-metric-value">${paidBreakMinutes}m</div><div class="admin-subtext">Limit ${safeMinutes(emp.break_limit_minutes, 15)}m</div></div></td>
                     <td>${powerNapHtml}</td>
-                    <td><div>${formatHours(emp.paid_work_hours)}</div><div class="admin-subtext">${safeMinutes(emp.paid_work_minutes, 0)}m paid</div></td>
-                    <td><div>${scheduledClockOut}</div></td>
-                    <td><div>${adjustedClockOut}</div><div class="admin-subtext">${adjustedClockNote}</div></td>
+                    <td><div class="admin-metric-stack"><div class="admin-metric-value">${formatHours(emp.paid_work_hours)}</div><div class="admin-subtext">${safeMinutes(emp.paid_work_minutes, 0)}m paid</div></div></td>
+                    <td><div class="admin-clock-value">${scheduledClockOut}</div></td>
+                    <td><div class="admin-clock-stack"><div class="admin-clock-value">${adjustedClockOut}</div><div class="admin-subtext">${adjustedClockNote}</div></div></td>
                     <td><div class="admin-flags">${flags.join("") || `<span class="admin-pill admin-pill-gray">No alerts</span>`}</div><div style="margin-top:8px;">${proofHtml}</div></td>
                 </tr>`;
             }).join("");
@@ -359,21 +402,34 @@ document.addEventListener("DOMContentLoaded", function () {
             </div>
             <div class="admin-table-wrap" aria-busy="false">
                 <table class="admin-live-table">
+                    <colgroup>
+                        <col class="admin-col-employee">
+                        <col class="admin-col-team">
+                        <col class="admin-col-schedule">
+                        <col class="admin-col-status">
+                        <col class="admin-col-today">
+                        <col class="admin-col-paid-break">
+                        <col class="admin-col-power-nap">
+                        <col class="admin-col-paid-work">
+                        <col class="admin-col-scheduled-out">
+                        <col class="admin-col-adjusted-out">
+                        <col class="admin-col-alerts">
+                    </colgroup>
                     <thead><tr><th>Employee</th><th>Team</th><th>Schedule</th><th>Status</th><th>Today</th><th>Paid Break</th><th>Power Nap</th><th>Paid Work</th><th>Scheduled Out</th><th>Adjusted Out</th><th>Alerts & Proof</th></tr></thead>
                     <tbody id="liveStatusBody">
                         {% if employees %}
                             {% for emp in employees %}
                             <tr>
                                 <td><div class="admin-row-user">{% if emp.profile_image and emp.profile_image_available %}<img class="admin-avatar" src="{{ url_for('uploaded_file', filename=emp.profile_image) }}" alt="avatar" loading="lazy" decoding="async">{% else %}<div class="admin-avatar-placeholder">{{ emp.avatar_initials }}</div>{% endif %}<div><div class="admin-name">{{ emp.full_name }}</div><div class="admin-username">@{{ emp.username }}</div></div></div></td>
-                                <td><div>{{ emp.department or '-' }}</div><div class="admin-subtext">{{ emp.position or '-' }}</div></td>
-                                <td><div>{{ emp.schedule_summary }}</div><div class="admin-subtext">{{ emp.schedule_window_summary }}</div></td>
+                                <td><div class="admin-cell-main">{{ emp.department or '-' }}</div><div class="admin-subtext">{{ emp.position or '-' }}</div></td>
+                                <td><div class="admin-cell-main">{{ emp.schedule_summary }}</div><div class="admin-subtext">{{ emp.schedule_window_summary }}</div></td>
                                 <td>{% set live_class = 'admin-pill-gray' %}{% if emp.status_display == 'Timed In' %}{% set live_class = 'admin-pill-green' %}{% elif emp.status_display in ['On Break', 'On Paid Break', 'On Power Nap Break', 'On POWER NAP BREAK', 'Undertime'] %}{% set live_class = 'admin-pill-yellow' %}{% elif emp.status_display == 'Timed Out' %}{% set live_class = 'admin-pill-blue' %}{% elif emp.status_display == 'Suspended' %}{% set live_class = 'admin-pill-purple' %}{% elif emp.status_display in ['Absent', 'Not Timed In', 'Inactive', 'Missing Time Out'] %}{% set live_class = 'admin-pill-red' %}{% endif %}<span class="admin-pill {{ live_class }}">{{ emp.status_display }}</span></td>
-                                <td><div>{{ format_datetime_12h(emp.time_in) if emp.time_in else '-' }}</div><div class="admin-subtext">{% if emp.time_out %}Out {{ format_datetime_12h(emp.time_out) }}{% else %}Expected out {{ emp.shift_end }}{% endif %}</div></td>
-                                <td><div>{{ emp.paid_break_minutes }}m</div><div class="admin-subtext">Limit {{ emp.break_limit_minutes }}m</div></td>
-                                <td>{% if emp.power_nap_break_used == 1 %}<span class="admin-pill admin-pill-purple">Used</span><div class="admin-subtext">{{ emp.power_nap_break_minutes }}m unpaid</div>{% else %}<span class="admin-pill admin-pill-gray">No</span><div class="admin-subtext">No extension</div>{% endif %}</td>
-                                <td><div>{{ '%.2f'|format(emp.paid_work_hours) }}h</div><div class="admin-subtext">{{ emp.paid_work_minutes }}m paid</div></td>
-                                <td><div>{{ format_datetime_12h(emp.scheduled_clock_out) if emp.scheduled_clock_out else '-' }}</div></td>
-                                <td><div>{{ format_datetime_12h(emp.adjusted_clock_out) if emp.adjusted_clock_out else '-' }}</div><div class="admin-subtext">{% if emp.power_nap_break_used == 1 %}+1h POWER NAP{% else %}No extension{% endif %}</div></td>
+                                <td><div class="admin-clock-stack"><div class="admin-clock-value">{{ format_datetime_12h(emp.time_in) if emp.time_in else '-' }}</div><div class="admin-subtext">{% if emp.time_out %}Out {{ format_datetime_12h(emp.time_out) }}{% else %}Expected out {{ emp.shift_end }}{% endif %}</div></div></td>
+                                <td><div class="admin-metric-stack"><div class="admin-metric-value">{{ emp.paid_break_minutes }}m</div><div class="admin-subtext">Limit {{ emp.break_limit_minutes }}m</div></div></td>
+                                <td>{% if emp.power_nap_break_used == 1 %}<div class="admin-metric-stack"><span class="admin-pill admin-pill-purple">Used</span><div class="admin-subtext">{{ emp.power_nap_break_minutes }}m unpaid</div></div>{% else %}<div class="admin-metric-stack"><span class="admin-pill admin-pill-gray">No</span><div class="admin-subtext">No extension</div></div>{% endif %}</td>
+                                <td><div class="admin-metric-stack"><div class="admin-metric-value">{{ '%.2f'|format(emp.paid_work_hours) }}h</div><div class="admin-subtext">{{ emp.paid_work_minutes }}m paid</div></div></td>
+                                <td><div class="admin-clock-value">{{ format_datetime_12h(emp.scheduled_clock_out) if emp.scheduled_clock_out else '-' }}</div></td>
+                                <td><div class="admin-clock-stack"><div class="admin-clock-value">{{ format_datetime_12h(emp.adjusted_clock_out) if emp.adjusted_clock_out else '-' }}</div><div class="admin-subtext">{% if emp.power_nap_break_used == 1 %}+1h POWER NAP{% else %}No extension{% endif %}</div></div></td>
                                 <td><div class="admin-flags">{% if emp.absent_flag == 1 %}<span class="admin-pill admin-pill-red">Not Timed In</span>{% endif %}{% if emp.suspension_flag == 1 %}<span class="admin-pill admin-pill-purple">Suspended</span>{% endif %}{% if emp.late_flag == 1 %}<span class="admin-pill admin-pill-red">Late {{ emp.late_minutes }}m</span>{% endif %}{% if emp.undertime_flag == 1 %}<span class="admin-pill admin-pill-yellow">Undertime</span>{% endif %}{% if emp.over_break_flag == 1 %}<span class="admin-pill admin-pill-yellow">Over break {{ emp.over_break_minutes }}m</span>{% endif %}{% if emp.missing_timeout_flag == 1 %}<span class="admin-pill admin-pill-red">Missing time out</span>{% endif %}{% if emp.scheduled_today == 0 %}<span class="admin-pill admin-pill-gray">Off today</span>{% endif %}</div><div style="margin-top:8px;">{% if emp.proof_file and emp.proof_file_available %}<a class="admin-subtext" href="{{ url_for('uploaded_file', filename=emp.proof_file) }}" target="_blank" rel="noopener">Open proof</a>{% elif emp.proof_file %}<span class="admin-subtext">Proof file missing</span>{% else %}<span class="admin-subtext">No proof uploaded</span>{% endif %}</div></td>
                             </tr>
                             {% endfor %}
