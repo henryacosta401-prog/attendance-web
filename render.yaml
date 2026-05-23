@@ -1,7 +1,13 @@
+databases:
+  - name: attendance-web-db
+    databaseName: attendance_web
+    user: attendance_web_user
+    plan: basic-256mb
+
 services:
   - type: web
     name: attendance-web
-    env: python
+    runtime: python
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn --bind 0.0.0.0:$PORT app:app
     disk:
@@ -11,3 +17,13 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.11
+      - key: DATABASE_URL
+        fromDatabase:
+          name: attendance-web-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: BOOTSTRAP_ADMIN_PASSWORD
+        sync: false
+      - key: RENDER_DISK_PATH
+        value: /var/data

@@ -455,6 +455,20 @@ def verify_csrf_token():
 # =========================
 # DATABASE HELPERS
 # =========================
+
+def validate_production_database_config():
+    if not is_production_environment():
+        return
+    if not DATABASE_URL:
+        raise RuntimeError(
+            "DATABASE_URL must be set in production. Configure Render Postgres and wire DATABASE_URL from its connectionString."
+        )
+    if not POSTGRES_ENABLED:
+        raise RuntimeError(
+            "DATABASE_URL is set, but the Postgres driver is unavailable. Install psycopg2-binary before deploying."
+        )
+
+
 def using_postgres():
     return bool(DATABASE_URL) and POSTGRES_ENABLED
 
@@ -835,6 +849,7 @@ def apply_schema_migrations(cursor, postgres=False):
         record_schema_migration(cursor, migration_id, description, postgres=postgres)
 
 def init_db():
+    validate_production_database_config()
     if using_postgres():
         init_postgres_db()
     else:

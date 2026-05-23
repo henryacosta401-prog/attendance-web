@@ -233,5 +233,28 @@ class AttendanceRulesTestCase(unittest.TestCase):
         self.assertIsNotNone(migration)
         self.assertTrue(has_break_type)
 
+    def test_production_requires_postgres_database_url(self):
+        with patch.dict(os.environ, {"RENDER": "true"}, clear=True), patch.object(attendance_app, "DATABASE_URL", ""):
+            with self.assertRaisesRegex(RuntimeError, "DATABASE_URL must be set"):
+                attendance_app.validate_production_database_config()
+
+    def test_production_rejects_missing_postgres_driver(self):
+        with patch.dict(os.environ, {"RENDER": "true"}, clear=True), patch.object(
+            attendance_app,
+            "DATABASE_URL",
+            "postgresql://example",
+        ), patch.object(attendance_app, "POSTGRES_ENABLED", False):
+            with self.assertRaisesRegex(RuntimeError, "Postgres driver"):
+                attendance_app.validate_production_database_config()
+
+    def test_production_accepts_postgres_database_config(self):
+        with patch.dict(os.environ, {"RENDER": "true"}, clear=True), patch.object(
+            attendance_app,
+            "DATABASE_URL",
+            "postgresql://example",
+        ), patch.object(attendance_app, "POSTGRES_ENABLED", True):
+            attendance_app.validate_production_database_config()
+
+
 if __name__ == "__main__":
     unittest.main()
