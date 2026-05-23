@@ -70,7 +70,7 @@
                 <label>Action</label>
                 <select class="input" name="action_type">
                     <option value="">All Actions</option>
-                    {% for value, label in [('time_in','Time In'),('start_break','Break Start'),('power_nap_break','POWER NAP BREAK'),('end_break','Break End'),('time_out','Time Out'),('overtime_start','Overtime Start'),('overtime_end','Overtime End')] %}
+                    {% for value, label in [('time_in','Time In'),('start_break','Paid Break Start'),('power_nap_break','POWER NAP BREAK'),('end_break','Break End'),('time_out','Time Out'),('overtime_start','Overtime Start'),('overtime_end','Overtime End')] %}
                         <option value="{{ value }}" {% if action_type == value %}selected{% endif %}>{{ label }}</option>
                     {% endfor %}
                 </select>

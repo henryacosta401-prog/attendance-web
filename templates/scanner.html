@@ -1094,7 +1094,7 @@
             <div class="actions-title">Select Action Before Scanning</div>
             <div class="actions-list" id="actionsList">
                 <button class="action-btn action-time-in is-active" type="button" data-action="time_in">Time In</button>
-                <button class="action-btn action-break-start" type="button" data-action="start_break">Break Start</button>
+                <button class="action-btn action-break-start" type="button" data-action="start_break">Paid Break Start</button>
                 <button class="action-btn action-power-nap" type="button" data-action="power_nap_break">POWER NAP BREAK</button>
                 <button class="action-btn action-break-end" type="button" data-action="end_break">Break End</button>
                 <button class="action-btn action-time-out" type="button" data-action="time_out">Time Out</button>
@@ -1121,7 +1121,7 @@
                     <div class="meta-value" id="metaAction">Time In</div>
                 </div>
                 <div class="meta-item">
-                    <div class="meta-label">Status</div>
+                    <div class="meta-label">Current State</div>
                     <div class="meta-value" id="metaStatus">Idle</div>
                 </div>
                 <div class="meta-item">
@@ -1378,7 +1378,7 @@
         function getActionDisplay(actionType) {
             const labels = {
                 time_in: "Time In Recorded",
-                start_break: "Break Started",
+                start_break: "Paid Break Started",
                 power_nap_break: "POWER NAP BREAK Started",
                 end_break: "Break Ended",
                 time_out: "Time Out Recorded",
@@ -1417,7 +1417,7 @@
             employeeName.textContent = payload.employee_name || "Employee Not Found";
             employeeStatus.textContent = payload.message || (ok ? "Attendance recorded." : "Unable to record attendance.");
             scanResultChip.textContent = ok ? getActionDisplay(payload.action_type) : "Scan Failed";
-            metaStatus.textContent = payload.status || (ok ? "Updated" : "Error");
+            metaStatus.textContent = payload.status_label || payload.status || (ok ? "Updated" : "Error");
             metaBarcode.textContent = payload.barcode_id || payload.barcode_value || "-";
             metaEmployee.textContent = payload.employee_name || "-";
 

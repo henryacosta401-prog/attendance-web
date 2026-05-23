@@ -3844,10 +3844,10 @@ def perform_attendance_action(user_id, action_type, actor_id=None, source_label=
             WHERE id = ?
         """, ("On Break", action_timestamp, attendance["id"]), commit=True)
         remaining_break = max(break_limit_minutes - used_break_minutes, 0)
-        create_notification(user_id, "Break Started", f"You started break at {action_timestamp} ET. Remaining break allowance: {remaining_break} minute(s).")
+        create_notification(user_id, "Paid Break Started", f"You started paid break at {action_timestamp} ET. Remaining paid break allowance: {remaining_break} minute(s).")
         log_activity(actor_id or user_id, "KIOSK BREAK START", f"{source_label} break start for {user['full_name']}")
         invalidate_admin_employee_rows_cache()
-        return True, "Break started.", user
+        return True, "Paid break started.", user
 
     if action_key == "power_nap_break":
         action_timestamp = now_str()
@@ -3875,6 +3875,7 @@ def perform_attendance_action(user_id, action_type, actor_id=None, source_label=
         log_activity(actor_id or user_id, "KIOSK POWER NAP BREAK START", f"{source_label} power nap break start for {user['full_name']}")
         invalidate_admin_employee_rows_cache()
         return True, "POWER NAP BREAK started. Clock-out is extended by 1 unpaid hour.", user
+
     if action_key == "end_break":
         action_timestamp = now_str()
         if not open_break:
@@ -3893,22 +3894,24 @@ def perform_attendance_action(user_id, action_type, actor_id=None, source_label=
                 WHERE id = ?
             """, ("Timed In", action_timestamp, attendance["id"]), commit=True)
 
+        ending_power_nap_break = is_power_nap_break(open_break)
         total_break = total_break_minutes(attendance["id"]) if attendance else 0
         break_limit_minutes = get_employee_break_limit(
             attendance,
             reference_datetime=attendance.get("time_in") if attendance else None,
             reference_date=attendance.get("work_date") if attendance else "",
         )
-        create_notification(user_id, "Break Ended", f"You ended break at {action_timestamp} ET.")
-        if attendance and is_overbreak(total_break, break_limit_minutes):
+        ended_break_label = "POWER NAP BREAK" if ending_power_nap_break else "Paid Break"
+        create_notification(user_id, f"{ended_break_label} Ended", f"You ended {ended_break_label.lower()} at {action_timestamp} ET.")
+        if attendance and not ending_power_nap_break and is_overbreak(total_break, break_limit_minutes):
             create_notification(
                 user_id,
                 "Break Limit Exceeded",
-                f"Your total break time for today is {minutes_to_hm(total_break)}, which is over your {break_limit_minutes} minute limit."
+                f"Your total paid break time for today is {minutes_to_hm(total_break)}, which is over your {break_limit_minutes} minute limit."
             )
-        log_activity(actor_id or user_id, "KIOSK BREAK END", f"{source_label} break end for {user['full_name']}")
+        log_activity(actor_id or user_id, "KIOSK BREAK END", f"{source_label} {ended_break_label.lower()} end for {user['full_name']}")
         invalidate_admin_employee_rows_cache()
-        return True, "Break ended.", user
+        return True, f"{ended_break_label} ended.", user
 
     if action_key == "time_out":
         action_timestamp = now_str()
@@ -8765,6 +8768,7 @@ register_admin_dashboard_routes(app, {
     "get_exception_collections": get_exception_collections,
     "get_today_schedule_code": get_today_schedule_code,
     "get_user_by_id": get_user_by_id,
+    "is_power_nap_break": is_power_nap_break,
     "jsonify": jsonify,
     "login_required": login_required,
     "notify_admins_for_exceptions": notify_admins_for_exceptions,
@@ -9125,10 +9129,12 @@ register_scanner_routes(app, {
     "get_avatar_initials": get_avatar_initials,
     "get_client_ip": get_client_ip,
     "get_current_attendance": get_current_attendance,
+    "get_open_break": get_open_break,
     "get_open_overtime_session": get_open_overtime_session,
     "get_scanner_log_select_expressions": get_scanner_log_select_expressions,
     "get_user_by_id": get_user_by_id,
     "has_scanner_exit_pin": has_scanner_exit_pin,
+    "is_power_nap_break": is_power_nap_break,
     "jsonify": jsonify,
     "login_required": login_required,
     "log_scanner_activity": log_scanner_activity,
@@ -9139,6 +9145,7 @@ register_scanner_routes(app, {
     "session": session,
     "today_str": today_str,
     "total_break_minutes": total_break_minutes,
+    "total_power_nap_break_minutes": total_power_nap_break_minutes,
     "uploaded_file_exists": uploaded_file_exists,
     "url_for": url_for,
     "verify_scanner_exit_pin": verify_scanner_exit_pin,

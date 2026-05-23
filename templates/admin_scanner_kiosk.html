@@ -291,8 +291,12 @@ body.kiosk-mode .divider {
                     <span>Start the employee's workday</span>
                 </button>
                 <button class="scanner-action-btn" type="button" data-action="start_break">
-                    <strong>Start Break</strong>
-                    <span>Begin a break session</span>
+                    <strong>Paid Break Start</strong>
+                    <span>Begin a paid break session</span>
+                </button>
+                <button class="scanner-action-btn" type="button" data-action="power_nap_break">
+                    <strong>POWER NAP BREAK</strong>
+                    <span>Begin the unpaid 1-hour break</span>
                 </button>
                 <button class="scanner-action-btn" type="button" data-action="end_break">
                     <strong>End Break</strong>
@@ -549,7 +553,7 @@ document.addEventListener("DOMContentLoaded", () => {
             scannerBanner.textContent = payload.message || "Scan processed.";
 
             resultEmployee.textContent = payload.employee_name || "-";
-            resultStatus.textContent = payload.status || "-";
+            resultStatus.textContent = payload.status_label || payload.status || "-";
             resultBarcode.textContent = payload.barcode_id || payload.barcode_value || barcodeValue || "-";
             resultTimeIn.textContent = payload.time_in || "-";
             resultTimeOut.textContent = payload.time_out || "-";

@@ -261,6 +261,74 @@ class AppFlowsTestCase(unittest.TestCase):
         self.assertEqual(scanner_log["result_status"], "success")
         self.assertEqual(scanner_log["employee_name_snapshot"], "Henry Scanner")
 
+
+    def test_scanner_break_actions_return_specific_current_state_labels(self):
+        scanner = self.create_user("scanner-break-labels", role="scanner", position="Scanner")
+        self.create_user(
+            "paid-break-employee",
+            role="employee",
+            full_name="Parker Paid Break",
+            barcode_id="PAID-BREAK-1",
+            shift_start="16:00",
+            shift_end="00:00",
+            break_limit=20,
+        )
+        self.create_user(
+            "power-nap-employee",
+            role="employee",
+            full_name="Nico Power Nap",
+            barcode_id="POWER-NAP-1",
+            shift_start="16:00",
+            shift_end="00:00",
+            break_limit=20,
+        )
+        csrf_token = self.set_session_user(scanner)
+        paid_time_in_dt = datetime(2026, 4, 13, 16, 0, 0, tzinfo=attendance_app.APP_TIMEZONE)
+        paid_break_dt = datetime(2026, 4, 13, 16, 30, 0, tzinfo=attendance_app.APP_TIMEZONE)
+        nap_time_in_dt = datetime(2026, 4, 13, 16, 5, 0, tzinfo=attendance_app.APP_TIMEZONE)
+        nap_break_dt = datetime(2026, 4, 13, 16, 45, 0, tzinfo=attendance_app.APP_TIMEZONE)
+
+        with patch.object(attendance_app, "now_dt", return_value=paid_time_in_dt):
+            paid_time_in_response = self.client.post(
+                "/scanner/scan",
+                data={"csrf_token": csrf_token, "action_type": "time_in", "barcode_value": "PAID-BREAK-1"},
+            )
+        with patch.object(attendance_app, "now_dt", return_value=paid_break_dt):
+            paid_break_response = self.client.post(
+                "/scanner/scan",
+                data={"csrf_token": csrf_token, "action_type": "start_break", "barcode_value": "PAID-BREAK-1"},
+            )
+        paid_payload = paid_break_response.get_json()
+
+        self.assertEqual(paid_time_in_response.status_code, 200)
+        self.assertEqual(paid_break_response.status_code, 200)
+        self.assertTrue(paid_payload["ok"])
+        self.assertEqual(paid_payload["message"], "Paid break started.")
+        self.assertEqual(paid_payload["status"], "On Paid Break")
+        self.assertEqual(paid_payload["status_label"], "On Paid Break")
+        self.assertEqual(paid_payload["raw_status"], "On Break")
+
+        with patch.object(attendance_app, "now_dt", return_value=nap_time_in_dt):
+            nap_time_in_response = self.client.post(
+                "/scanner/scan",
+                data={"csrf_token": csrf_token, "action_type": "time_in", "barcode_value": "POWER-NAP-1"},
+            )
+        with patch.object(attendance_app, "now_dt", return_value=nap_break_dt):
+            power_nap_response = self.client.post(
+                "/scanner/scan",
+                data={"csrf_token": csrf_token, "action_type": "power_nap_break", "barcode_value": "POWER-NAP-1"},
+            )
+        power_payload = power_nap_response.get_json()
+
+        self.assertEqual(nap_time_in_response.status_code, 200)
+        self.assertEqual(power_nap_response.status_code, 200)
+        self.assertTrue(power_payload["ok"])
+        self.assertEqual(power_payload["status"], "On POWER NAP BREAK")
+        self.assertEqual(power_payload["status_label"], "On POWER NAP BREAK")
+        self.assertEqual(power_payload["raw_status"], "On Power Nap Break")
+        self.assertIn("Clock-out is extended", power_payload["message"])
+        self.assertIn("power_nap_break_minutes", power_payload)
+
     def test_scanner_repeated_employee_errors_are_collapsed(self):
         scanner = self.create_user("scanner-repeat", role="scanner", position="Scanner")
         employee = self.create_user(

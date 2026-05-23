@@ -1,5 +1,20 @@
 def register_scanner_routes(app, deps):
     login_required = deps["login_required"]
+    get_open_break = deps["get_open_break"]
+    is_power_nap_break = deps["is_power_nap_break"]
+
+    def build_scanner_status_label(attendance, open_break, overtime_session):
+        if overtime_session:
+            return "On Overtime"
+        if not attendance:
+            return "Offline"
+        if deps["row_get"](attendance, "time_in") and not deps["row_get"](attendance, "time_out"):
+            if open_break:
+                return "On POWER NAP BREAK" if is_power_nap_break(open_break) else "On Paid Break"
+            return "Timed In"
+        if deps["row_get"](attendance, "time_out"):
+            return "Timed Out"
+        return deps["row_get"](attendance, "status", "Offline") or "Offline"
 
     @app.route("/scanner")
     @login_required(role="scanner")
@@ -169,7 +184,10 @@ def register_scanner_routes(app, deps):
         employee_for_payload = employee_row or employee
         attendance = deps["get_current_attendance"](employee["id"])
         overtime_session = deps["get_open_overtime_session"](employee["id"])
+        open_break = get_open_break(employee["id"], attendance) if attendance else None
         break_minutes = deps["total_break_minutes"](attendance["id"], include_open=True) if attendance else 0
+        power_nap_break_minutes = deps["total_power_nap_break_minutes"](attendance["id"], include_open=True) if attendance else 0
+        status_label = build_scanner_status_label(attendance, open_break, overtime_session)
         deps["log_scanner_activity"](
             scanner_user_id,
             action_type,
@@ -198,9 +216,12 @@ def register_scanner_routes(app, deps):
             "barcode_value": barcode_value,
             "barcode_id": employee_for_payload["barcode_id"] or barcode_value,
             "match_type": barcode_lookup["match_type"],
-            "status": "On Overtime" if overtime_session else (attendance["status"] if attendance else "Offline"),
+            "status": status_label,
+            "status_label": status_label,
+            "raw_status": attendance["status"] if attendance else "Offline",
             "time_in": attendance["time_in"] if attendance else None,
             "time_out": attendance["time_out"] if attendance else None,
             "break_minutes": break_minutes,
+            "power_nap_break_minutes": power_nap_break_minutes,
             "action_type": action_type
         }), (200 if ok else 400)
