@@ -861,6 +861,69 @@ class AppFlowsTestCase(unittest.TestCase):
         self.assertEqual(dashboard_row["over_break_minutes"], 0)
         self.assertEqual(dashboard_row["over_break_flag"], 0)
 
+    def test_admin_dashboard_shows_power_nap_payroll_safety_columns(self):
+        admin = self.create_user("dashboard-payroll-safety-admin", role="admin", admin_permissions="dashboard")
+        employee = self.create_user(
+            "dashboard-power-nap-employee",
+            role="employee",
+            shift_start="16:00",
+            shift_end="00:00",
+            break_limit=20,
+        )
+        attendance = self.create_attendance(
+            employee["id"],
+            "2026-04-13",
+            "2026-04-13 16:00:00",
+            None,
+            status="Timed In",
+        )
+        self.create_break(
+            employee["id"],
+            attendance["id"],
+            "2026-04-13",
+            "2026-04-13 19:00:00",
+            "2026-04-13 19:20:00",
+        )
+        self.create_break(
+            employee["id"],
+            attendance["id"],
+            "2026-04-13",
+            "2026-04-13 22:00:00",
+            "2026-04-13 23:00:00",
+            break_type=attendance_app.POWER_NAP_BREAK_TYPE,
+        )
+        snapshot_now = datetime(2026, 4, 14, 0, 5, 0, tzinfo=attendance_app.APP_TIMEZONE)
+
+        with attendance_app.app.app_context(), patch.object(attendance_app, "now_dt", return_value=snapshot_now):
+            attendance_app.invalidate_admin_employee_rows_cache()
+            dashboard_rows = attendance_app.build_admin_employee_rows_snapshot()
+            dashboard_row = next(row for row in dashboard_rows if row["user_id"] == employee["id"])
+            live_payload = attendance_app.build_admin_live_status_payload([dashboard_row])[0]
+
+        self.set_session_user(admin, csrf_token="dashboard-payroll-safety-csrf")
+        with patch.object(attendance_app, "now_dt", return_value=snapshot_now):
+            response = self.client.get("/admin")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Paid Break", response.data)
+        self.assertIn(b"Power Nap", response.data)
+        self.assertIn(b"Paid Work", response.data)
+        self.assertIn(b"Scheduled Out", response.data)
+        self.assertIn(b"Adjusted Out", response.data)
+        self.assertEqual(dashboard_row["paid_break_minutes"], 20)
+        self.assertEqual(dashboard_row["break_minutes"], 20)
+        self.assertEqual(dashboard_row["power_nap_break_used"], 1)
+        self.assertEqual(dashboard_row["power_nap_break_minutes"], 60)
+        self.assertEqual(dashboard_row["paid_work_minutes"], 425)
+        self.assertEqual(dashboard_row["paid_work_hours"], 7.08)
+        self.assertEqual(dashboard_row["scheduled_clock_out"], "2026-04-14 00:00:00")
+        self.assertEqual(dashboard_row["adjusted_clock_out"], "2026-04-14 01:00:00")
+        self.assertEqual(dashboard_row["missing_timeout_flag"], 0)
+        self.assertEqual(live_payload["paid_break_minutes"], 20)
+        self.assertEqual(live_payload["power_nap_break_used"], 1)
+        self.assertEqual(live_payload["scheduled_clock_out"], "2026-04-14 00:00:00")
+        self.assertEqual(live_payload["adjusted_clock_out"], "2026-04-14 01:00:00")
+
     def test_payroll_admin_download_requests_panel_renders(self):
         admin = self.create_user(
             "payroll-panel-admin",

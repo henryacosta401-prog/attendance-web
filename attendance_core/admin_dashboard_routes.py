@@ -78,12 +78,13 @@ def register_admin_dashboard_routes(app, deps):
             LIMIT 8
         """, (session["user_id"],))
 
+        break_statuses = {"On Break", "On Paid Break", "On Power Nap Break", "On POWER NAP BREAK"}
         stats = {
             "total_employees": len(active_users),
             "scheduled_today": len([emp for emp in all_employee_rows if emp["scheduled_today"] == 1 and emp["is_active"] == 1]),
             "absent_today": len(exception_groups["absent"]),
             "timed_in": len([emp for emp in all_employee_rows if emp["status_display"] == "Timed In"]),
-            "on_break": len([emp for emp in all_employee_rows if emp["status_display"] == "On Break"]),
+            "on_break": len([emp for emp in all_employee_rows if emp["status_display"] in break_statuses]),
             "timed_out": len([emp for emp in all_employee_rows if emp["status_display"] == "Timed Out"]),
             "late_today": late_today,
             "over_break_today": len(exception_groups["over_break"]),

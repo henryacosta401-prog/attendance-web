@@ -7170,18 +7170,19 @@ def get_admin_open_break_map(attendance_ids):
     return result
 
 
-def get_break_minutes_map(attendance_ids, include_open=False):
+def get_break_minutes_map(attendance_ids, include_open=False, break_type=REGULAR_BREAK_TYPE):
     if not attendance_ids:
         return {}
     placeholders = ", ".join(["?"] * len(attendance_ids))
     result = {}
     current_dt = parse_db_datetime(now_str())
+    params = tuple(attendance_ids) + (REGULAR_BREAK_TYPE, break_type)
     for row in fetchall(f"""
         SELECT attendance_id, break_start, break_end
         FROM breaks
         WHERE attendance_id IN ({placeholders})
-          AND COALESCE(break_type, 'regular') = 'regular'
-    """, tuple(attendance_ids)):
+          AND COALESCE(break_type, ?) = ?
+    """, params):
         row_dict = dict(row)
         break_start_dt = parse_db_datetime(row_dict.get("break_start"))
         if not break_start_dt:
@@ -7194,6 +7195,20 @@ def get_break_minutes_map(attendance_ids, include_open=False):
         break_minutes = max(int((break_end_dt - break_start_dt).total_seconds() // 60), 0)
         result[int(row_dict["attendance_id"])] = result.get(int(row_dict["attendance_id"]), 0) + break_minutes
     return result
+
+
+def get_break_used_map(attendance_ids, break_type):
+    if not attendance_ids:
+        return {}
+    placeholders = ", ".join(["?"] * len(attendance_ids))
+    params = tuple(attendance_ids) + (REGULAR_BREAK_TYPE, break_type)
+    rows = fetchall(f"""
+        SELECT DISTINCT attendance_id
+        FROM breaks
+        WHERE attendance_id IN ({placeholders})
+          AND COALESCE(break_type, ?) = ?
+    """, params)
+    return {int(row["attendance_id"]): 1 for row in rows}
 
 
 def get_admin_break_minutes_map(attendance_ids):
@@ -7288,6 +7303,9 @@ def build_admin_employee_rows_snapshot():
     attendance_ids = [int(row["id"]) for row in attendance_map.values()]
     open_break_map = get_admin_open_break_map(attendance_ids)
     break_minutes_map = get_admin_break_minutes_map(attendance_ids)
+    power_nap_break_minutes_map = get_break_minutes_map(attendance_ids, include_open=True, break_type=POWER_NAP_BREAK_TYPE)
+    power_nap_break_used_map = get_break_used_map(attendance_ids, POWER_NAP_BREAK_TYPE)
+    current_snapshot_dt = parse_db_datetime(now_str())
     suspension_map, override_request_map = get_admin_override_maps()
     file_exists_cache = {}
     attendance_context_cache = {}
@@ -7356,7 +7374,7 @@ def build_admin_employee_rows_snapshot():
 
         missing_timeout_today = False
         if attendance and user["is_active"] == 1 and attendance.get("time_in") and not attendance.get("time_out"):
-            _, shift_end_dt = get_shift_bounds_for_work_date(attendance_context_user, attendance["work_date"])
+            shift_end_dt = get_shift_end_with_power_nap(attendance_context_user, attendance)
             missing_timeout_today = now_dt() >= (shift_end_dt + timedelta(minutes=LATE_GRACE_MINUTES))
 
         undertime_today = 1 if is_undertime_record(
@@ -7378,6 +7396,24 @@ def build_admin_employee_rows_snapshot():
         elif not scheduled_today and live_status == "Offline":
             status_display = "Off Day"
 
+        attendance_id = int(attendance["id"]) if attendance else None
+        paid_break_minutes = break_minutes_map.get(attendance_id, 0) if attendance_id else 0
+        power_nap_break_minutes = power_nap_break_minutes_map.get(attendance_id, 0) if attendance_id else 0
+        power_nap_break_used = 1 if attendance_id and power_nap_break_used_map.get(attendance_id) else 0
+        clock_work_date = attendance["work_date"] if attendance else today_str()
+        clock_context_user = attendance_context_user if attendance else display_user
+        _, scheduled_clock_out_dt = get_shift_bounds_for_work_date(clock_context_user, clock_work_date)
+        adjusted_clock_out_dt = scheduled_clock_out_dt + timedelta(minutes=POWER_NAP_BREAK_MINUTES) if power_nap_break_used else scheduled_clock_out_dt
+        scheduled_clock_out = scheduled_clock_out_dt.replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S")
+        adjusted_clock_out = adjusted_clock_out_dt.replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S")
+        paid_work_minutes = 0
+        if attendance and attendance.get("time_in"):
+            time_in_dt = parse_db_datetime(attendance.get("time_in"))
+            time_out_dt = parse_db_datetime(attendance.get("time_out")) or current_snapshot_dt
+            if time_in_dt and time_out_dt and time_out_dt >= time_in_dt:
+                total_elapsed_minutes = int((time_out_dt - time_in_dt).total_seconds() // 60)
+                paid_work_minutes = max(total_elapsed_minutes - power_nap_break_minutes, 0)
+
         row = {
             "id": display_user["id"],
             "user_id": display_user["id"],
@@ -7393,6 +7429,8 @@ def build_admin_employee_rows_snapshot():
             "leave_flag": 1 if leave_today else 0,
             "shift_start": display_user["shift_start"] or DEFAULT_SHIFT_START,
             "shift_end": display_user["shift_end"] or DEFAULT_SHIFT_END,
+            "scheduled_clock_out": scheduled_clock_out,
+            "adjusted_clock_out": adjusted_clock_out,
             "break_window_start": display_user["break_window_start"] or DEFAULT_BREAK_WINDOW_START,
             "break_window_end": display_user["break_window_end"] or DEFAULT_BREAK_WINDOW_END,
             "schedule_window_summary": f"{display_user['shift_start'] or DEFAULT_SHIFT_START} - {display_user['shift_end'] or DEFAULT_SHIFT_END}",
@@ -7413,7 +7451,12 @@ def build_admin_employee_rows_snapshot():
             "proof_file_available": 1 if attendance and cached_file_exists(attendance["proof_file"]) else 0,
             "late_flag": attendance["late_flag"] if attendance else 0,
             "late_minutes": attendance["late_minutes"] if attendance else 0,
-            "break_minutes": break_minutes_map.get(int(attendance["id"]), 0) if attendance else 0
+            "paid_break_minutes": paid_break_minutes,
+            "power_nap_break_used": power_nap_break_used,
+            "power_nap_break_minutes": power_nap_break_minutes,
+            "paid_work_minutes": paid_work_minutes,
+            "paid_work_hours": round(paid_work_minutes / 60, 2),
+            "break_minutes": paid_break_minutes
         }
         row["over_break_minutes"] = get_overbreak_minutes(row["break_minutes"], row["break_limit_minutes"])
         row["over_break_flag"] = 1 if row["over_break_minutes"] > 0 else 0
@@ -7479,6 +7522,13 @@ ADMIN_LIVE_STATUS_FIELDS = (
     "time_in",
     "time_out",
     "shift_end",
+    "scheduled_clock_out",
+    "adjusted_clock_out",
+    "paid_break_minutes",
+    "power_nap_break_used",
+    "power_nap_break_minutes",
+    "paid_work_minutes",
+    "paid_work_hours",
     "break_minutes",
     "break_limit_minutes",
     "proof_file",
