@@ -222,6 +222,16 @@ class AttendanceRulesTestCase(unittest.TestCase):
             extended_end = attendance_app.get_shift_end_with_power_nap(user, attendance)
 
         self.assertEqual(extended_end.replace(tzinfo=None), attendance_app.datetime(2026, 3, 27, 1, 0, 0))
+    def test_schema_migration_ledger_records_break_type_migration(self):
+        with attendance_app.app.app_context():
+            migration = attendance_app.fetchone(
+                "SELECT * FROM schema_migrations WHERE migration_id = ?",
+                ("20260523_001_break_type",),
+            )
+            has_break_type = attendance_app.column_exists("breaks", "break_type")
+
+        self.assertIsNotNone(migration)
+        self.assertTrue(has_break_type)
 
 if __name__ == "__main__":
     unittest.main()

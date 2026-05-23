@@ -1,4 +1,20 @@
-attendance-credentials.json
-__pycache__/
-uploads/
+# Secrets / environment
 .env
+attendance-credentials.json
+
+# Python/runtime caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+pytest-cache-files-*/
+
+# Local test/runtime data
+test_tmp/
+test_tmp_runtime/
+*.db
+attendance.db
+
+# App-generated files
+uploads/
+backups/
+exports/
